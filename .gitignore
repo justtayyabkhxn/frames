@@ -40,3 +40,7 @@ bin-ext/
 
 # Local agent e2e context (see AGENTS.md)
 .agent.yaml
+
+# Frames standalone
+standalone/data/
+standalone/bin/

@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frames</title>
+<style>
+  :root { --bg: #fff; --fg: #1f1f1f; --muted: #5f6368; --line: #e3e3e3; --accent: #1a73e8; --row: 200px; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #131314; --fg: #e3e3e3; --muted: #9aa0a6; --line: #2d2e30; --accent: #8ab4f8; } }
+  @media (max-width: 600px) { :root { --row: 110px; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 16px; padding: 12px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  #status { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bar { position: absolute; left: 0; bottom: -1px; height: 2px; background: var(--accent); transition: width .3s; }
+  button { font: inherit; color: var(--fg); background: none; border: 1px solid var(--line); border-radius: 18px; padding: 6px 14px; cursor: pointer; }
+  button:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  main { padding: 0 56px 40px 16px; }
+  section { content-visibility: auto; contain-intrinsic-size: auto 400px; }
+  h2 { margin: 24px 0 10px; font-size: 14px; font-weight: 500; }
+  .grid { display: flex; flex-wrap: wrap; gap: 4px; }
+  .grid::after { content: ''; flex-grow: 1e9; }
+  .grid a { position: relative; display: block; height: var(--row); flex-basis: calc(var(--r) * var(--row)); flex-grow: var(--r); max-width: 100%; background: var(--line); cursor: pointer; overflow: hidden; }
+  .grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .grid a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .badge { position: absolute; top: 6px; right: 6px; padding: 1px 6px; border-radius: 4px; background: #0009; color: #fff; font-size: 12px; }
+  #years { position: fixed; right: 0; top: 64px; bottom: 0; width: 48px; display: flex; flex-direction: column; gap: 2px; padding: 8px 0; overflow-y: auto; }
+  #years button { border: 0; border-radius: 4px; padding: 4px 0; font-size: 12px; color: var(--muted); }
+  .empty { margin: 20vh auto; max-width: 420px; text-align: center; color: var(--muted); }
+  #viewer { position: fixed; inset: 0; z-index: 5; display: flex; background: #000; color: #e3e3e3; }
+  #viewer[hidden] { display: none; }
+  #stage { flex: 1; min-width: 0; display: grid; place-items: center; }
+  #stage img, #stage video { max-width: 100%; max-height: 100vh; object-fit: contain; }
+  #stage p { padding: 24px; text-align: center; }
+  .vbtn { position: absolute; z-index: 1; border: 0; border-radius: 50%; width: 44px; height: 44px; padding: 0; background: #0006; color: #fff; font-size: 22px; }
+  .vbtn:hover { background: #fff3; }
+  #close { top: 12px; left: 12px; } #infoBtn { top: 12px; right: 12px; }
+  #prev { left: 12px; top: calc(50% - 22px); } #next { right: 12px; top: calc(50% - 22px); }
+  #info { width: 320px; padding: 64px 20px 20px; background: #1e1f20; overflow-y: auto; }
+  #info dt { margin-top: 14px; color: #9aa0a6; font-size: 12px; }
+  #info dd { margin: 2px 0 0; word-break: break-all; }
+  #info a { color: #8ab4f8; }
+  #viewer.info #infoBtn { right: 332px; } #viewer.info #next { right: 332px; }
+  @media (max-width: 600px) { #info { position: absolute; inset: auto 0 0 0; width: auto; max-height: 50vh; padding-top: 12px; } #viewer.info #infoBtn, #viewer.info #next { right: 12px; } main { padding-right: 16px; } #years { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Frames</h1>
+  <div id="status">Loading…</div>
+  <button id="rescan" type="button">Rescan</button>
+  <div id="bar" style="width:0"></div>
+</header>
+<nav id="years" aria-label="Jump to year"></nav>
+<main id="timeline"></main>
+
+<div id="viewer" hidden role="dialog" aria-modal="true" aria-label="Photo viewer">
+  <div id="stage"></div>
+  <button class="vbtn" id="close" type="button" aria-label="Close (Esc)">✕</button>
+  <button class="vbtn" id="infoBtn" type="button" aria-label="Info (i)">ⓘ</button>
+  <button class="vbtn" id="prev" type="button" aria-label="Previous (←)">‹</button>
+  <button class="vbtn" id="next" type="button" aria-label="Next (→)">›</button>
+  <aside id="info" hidden></aside>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const timeFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short', timeZone: 'UTC' });
+const dur = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : '');
+const mb = (b) => (b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.ceil(b / 1e3)} KB`);
+
+let photos = []; // [id, taken, w, h, video, duration], newest first
+let cur = -1;
+let shown = -1;
+let lastLoad = 0;
+
+async function load() {
+  photos = await (await fetch('api/photos')).json();
+  lastLoad = Date.now();
+  render();
+}
+
+// ponytail: renders every day at once (content-visibility skips offscreen work); window it if 100k+ items feel slow.
+function render() {
+  const days = new Map();
+  photos.forEach((p, i) => {
+    const d = p[1].slice(0, 10);
+    days.has(d) ? days.get(d).push(i) : days.set(d, [i]);
+  });
+  const years = [];
+  let html = '';
+  for (const [d, idx] of days) {
+    const y = d.slice(0, 4);
+    const anchor = years.includes(y) ? '' : (years.push(y), ` id="y${y}"`);
+    html += `<section${anchor}><h2>${dayFmt.format(new Date(`${d}T00:00:00Z`))}</h2><div class="grid">`;
+    for (const i of idx) {
+      const [id, , w, h, video, d2] = photos[i];
+      const r = Math.min(4, Math.max(0.4, w / h));
+      html += `<a tabindex="0" data-i="${i}" style="--r:${r.toFixed(3)}"><img loading="lazy" decoding="async" alt="" src="api/thumb/${id}">${video ? `<span class="badge">▶ ${dur(d2)}</span>` : ''}</a>`;
+    }
+    html += '</div></section>';
+  }
+  const y = scrollY;
+  $('#timeline').innerHTML = html || '<p class="empty">No photos or videos yet. They will appear here as the folder is indexed.</p>';
+  $('#years').innerHTML = years.map((yr) => `<button type="button" data-y="${yr}">${yr}</button>`).join('');
+  scrollTo(0, y);
+}
+
+async function poll() {
+  let s;
+  try {
+    s = await (await fetch('api/status')).json();
+  } catch {
+    $('#status').textContent = 'Frames is not running. Start it again and reload.';
+    return setTimeout(poll, 5000);
+  }
+  const text = {
+    idle: `${s.count.toLocaleString()} items · ${s.dir}`,
+    scanning: `Scanning ${s.dir}… ${s.found.toLocaleString()} files found`,
+    indexing: `Reading metadata and making thumbnails: ${s.done.toLocaleString()} / ${s.total.toLocaleString()}`,
+  }[s.phase];
+  $('#status').textContent = s.error ? `Error: ${s.error}` : text;
+  $('#status').title = $('#status').textContent;
+  $('#bar').style.width = s.phase === 'indexing' && s.total ? `${(100 * s.done) / s.total}%` : '0';
+  $('#rescan').disabled = s.phase !== 'idle';
+  if (s.count !== shown && (s.phase === 'idle' || Date.now() - lastLoad > 10000)) {
+    shown = s.count;
+    await load();
+  }
+  setTimeout(poll, s.phase === 'idle' ? 5000 : 1500);
+}
+
+function open(i) {
+  if (i < 0 || i >= photos.length) return;
+  cur = i;
+  const [id, , , , video] = photos[i];
+  const stage = $('#stage');
+  stage.innerHTML = video
+    ? `<video src="api/file/${id}" poster="api/thumb/${id}" controls autoplay playsinline></video>`
+    : `<img src="api/file/${id}" alt="">`;
+  const el = stage.firstElementChild;
+  el.onerror = () => {
+    if (video) stage.innerHTML = '<p>This video format can’t play in the browser. See ⓘ for the file location.</p>';
+    else if (!el.src.includes('/thumb/')) el.src = `api/thumb/${id}`;
+  };
+  $('#viewer').hidden = false;
+  document.body.style.overflow = 'hidden';
+  $('#prev').hidden = i === 0;
+  $('#next').hidden = i === photos.length - 1;
+  if (!$('#info').hidden) info();
+}
+
+function close() {
+  $('#stage').innerHTML = '';
+  $('#viewer').hidden = true;
+  document.body.style.overflow = '';
+  document.querySelector(`[data-i="${cur}"]`)?.focus();
+}
+
+async function info() {
+  const f = await (await fetch(`api/info/${photos[cur][0]}`)).json();
+  const rows = [
+    ['Date', timeFmt.format(new Date(`${f.taken}Z`))],
+    ['File', f.path],
+    ['Details', `${f.w} × ${f.h} · ${mb(f.size)}${f.duration ? ` · ${dur(f.duration)}` : ''}`],
+    ['Camera', [f.make, f.model].filter(Boolean).join(' ')],
+    ['Location', f.lat != null ? `${f.lat.toFixed(5)}, ${f.lon.toFixed(5)}` : ''],
+  ].filter(([, v]) => v);
+  $('#info').innerHTML = `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+}
+
+function toggleInfo() {
+  const show = $('#info').hidden;
+  $('#info').hidden = !show;
+  $('#viewer').classList.toggle('info', show);
+  if (show) info();
+}
+
+$('#timeline').addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-i]');
+  if (a) open(+a.dataset.i);
+});
+$('#timeline').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.dataset.i) open(+e.target.dataset.i);
+});
+$('#years').addEventListener('click', (e) => document.getElementById(`y${e.target.dataset.y}`)?.scrollIntoView());
+$('#rescan').addEventListener('click', async () => {
+  await fetch('api/rescan', { method: 'POST' });
+  $('#rescan').disabled = true;
+});
+$('#close').onclick = close;
+$('#prev').onclick = () => open(cur - 1);
+$('#next').onclick = () => open(cur + 1);
+$('#infoBtn').onclick = toggleInfo;
+document.addEventListener('keydown', (e) => {
+  if ($('#viewer').hidden) return;
+  if (e.key === 'Escape') close();
+  else if (e.key === 'ArrowLeft') open(cur - 1);
+  else if (e.key === 'ArrowRight') open(cur + 1);
+  else if (e.key === 'i') toggleInfo();
+});
+
+poll();
+</script>
+</body>
+</html>

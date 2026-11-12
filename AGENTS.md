@@ -88,6 +88,12 @@ Very important.
 - `go-vod` HTTP daemon generates HLS via `ffmpeg`.
 - VA-API and NVENC hardware acceleration supported.
 
+### Standalone offline app (`standalone/`)
+- Frames runs without Nextcloud: `frames.cmd` or `node standalone/server.mjs [--dir X]`.
+- Zero npm deps: `node:sqlite`, exiftool (auto-fetched on Windows), ffmpeg optional.
+- Data in `standalone/data/` (db, thumbs, config); UI is `standalone/index.html`.
+- Checks: `node standalone/test.mjs`.
+
 ### Frontend (`src/`)
 - Vue 3 + Webpack, built to `js/`.
 - History mode under `/apps/memories`.

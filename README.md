@@ -1,24 +1,21 @@
 ![Screenshot](appinfo/screenshot.png)
 
-# Memories: Photo Management for Nextcloud
+# Frames: Photo Management for Nextcloud
 
-[![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/7Dr9f9vNjJ)
-[![Website](https://img.shields.io/website?down_color=red&down_message=offline&label=website&style=for-the-badge&up_color=brightgreen&up_message=online&url=https%3A%2F%2Fmemories.gallery)](https://memories.gallery)
-[![Demo](https://img.shields.io/website?down_color=red&down_message=offline&label=demo&style=for-the-badge&up_color=brightgreen&up_message=online&url=https%3A%2F%2Fdemo.memories.gallery%2Fapps%2Fmemories%2Fapi%2Fdescribe)](https://demo.memories.gallery/apps/memories/)
-[![Nextcloud Store](https://img.shields.io/badge/nextcloud_store-blue?style=for-the-badge&logo=nextcloud&logoColor=white)](https://apps.nextcloud.com/apps/memories)
+> Frames is a fork of [Memories](https://github.com/pulsejet/memories) (https://github.com/pulsejet/memories.git) by Varun Patil, licensed under AGPL-3.0.
+> The internal app id, occ commands and URLs remain `memories`.
 
-![GitHub](https://img.shields.io/github/license/pulsejet/memories)
-[![GitHub issues](https://img.shields.io/github/issues/pulsejet/memories)](https://github.com/pulsejet/memories/issues)
-[![GitHub Sponsor](https://img.shields.io/github/sponsors/pulsejet?logo=GitHub)](https://github.com/sponsors/pulsejet)
+## 💻 Run offline on your computer (no Nextcloud, no Docker, no cloud)
 
-[![unit test](https://github.com/pulsejet/memories/actions/workflows/unit-test.yaml/badge.svg)](https://github.com/pulsejet/memories/actions/workflows/unit-test.yaml)
-[![e2e](https://github.com/pulsejet/memories/actions/workflows/e2e.yaml/badge.svg)](https://github.com/pulsejet/memories/actions/workflows/e2e.yaml)
-[![static analysis](https://github.com/pulsejet/memories/actions/workflows/static-analysis.yaml/badge.svg)](https://github.com/pulsejet/memories/actions/workflows/static-analysis.yaml)
+Requires [Node.js](https://nodejs.org) 22.5+. [ffmpeg](https://ffmpeg.org) on `PATH` is recommended for fast, sharp thumbnails.
 
-[![Shepherd](https://shepherd.dev/github/pulsejet/memories/coverage.svg)](https://shepherd.dev/github/pulsejet/memories)
-[![go-vod](https://github.com/pulsejet/memories/actions/workflows/go-vod.yml/badge.svg)](https://github.com/pulsejet/memories/actions/workflows/go-vod.yml)
+1. Double-click `frames.cmd` (Windows) or run `node standalone/server.mjs`.
+1. On first run, type the folder that holds your photos. It is remembered (change it with `--dir <folder>`).
+1. Your browser opens `http://localhost:7310`. Frames reads the metadata of every photo and video and makes thumbnails; items appear as they are indexed.
 
-Memories is a _batteries-included_ photo management solution for Nextcloud with advanced features
+Everything stays on your device: the index and thumbnails live in `standalone/data/`, the server only listens on `127.0.0.1`, and your photos are never modified. The only network access is a one-time, checksum-verified download of [exiftool](https://exiftool.org) on Windows if it is not already installed.
+
+Frames is a _batteries-included_ photo management solution for Nextcloud with advanced features
 
 ## 🎁 Features
 
@@ -41,7 +38,7 @@ Memories is a _batteries-included_ photo management solution for Nextcloud with 
 1. Install the app from the Nextcloud [app store](https://apps.nextcloud.com/apps/memories).
 1. Perform the recommended [configuration steps](https://memories.gallery/config/).
 1. Run `php occ memories:index` to generate metadata indices for existing photos.
-1. Open the 📷 Memories app in Nextcloud and set the directory containing your photos.
+1. Open the 📷 Frames app in Nextcloud and set the directory containing your photos.
 
 ## 📱 Mobile Apps
 
@@ -52,7 +49,7 @@ Memories is a _batteries-included_ photo management solution for Nextcloud with 
 
 ## 🏗 Development Setup
 
-You can use the dev container to quickly fire up an instance of Nextcloud with Memories pre-installed.
+You can use the dev container to quickly fire up an instance of Nextcloud with Frames pre-installed.
 See [`.devcontainer/README.md`](.devcontainer/README.md) for more information.
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/pulsejet/memories?quickstart=1)
@@ -106,4 +103,4 @@ Thanks to [GitHub](https://github.com) and [BrowserStack](https://www.browsersta
 
 ## 📄 License
 
-Memories is licensed under the [AGPLv3](COPYING). Subpackages such as [go-vod](go-vod) are licensed under their respective licenses. See the directory of the subpackage for more information.
+Frames is licensed under the [AGPLv3](COPYING). Subpackages such as [go-vod](go-vod) are licensed under their respective licenses. See the directory of the subpackage for more information.
