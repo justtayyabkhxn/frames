@@ -1,53 +1,59 @@
+import fs from 'node:fs';
+
+const THEME = fs.readFileSync(new URL('./theme.css', import.meta.url), 'utf8');
+
 /** HTML page standing in for Nextcloud's page template: globals, theme variables, user and translations. */
 
 const LIGHT = `
   --color-main-background: #ffffff; --color-main-background-rgb: 255, 255, 255;
-  --color-main-background-translucent: rgba(255, 255, 255, .97); --color-main-background-blur: rgba(255, 255, 255, .8);
-  --color-background-hover: #f3f3f3; --color-background-dark: #ededed; --color-background-darker: #dbdbdb;
-  --color-placeholder-light: #e6e6e6; --color-placeholder-dark: #cccccc;
-  --color-main-text: #222222; --color-text-maxcontrast: #6b6b6b; --color-text-maxcontrast-default: #6b6b6b;
-  --color-text-maxcontrast-background-blur: #595959; --color-text-light: #222222; --color-text-lighter: #6b6b6b;
-  --color-error: #db0606; --color-error-rgb: 219, 6, 6; --color-error-hover: #df2525; --color-error-text: #c20505;
-  --color-warning: #a37200; --color-warning-rgb: 163, 114, 0; --color-warning-hover: #8a6000; --color-warning-text: #7f5900;
-  --color-success: #2d7b41; --color-success-rgb: 45, 123, 65; --color-success-hover: #428854; --color-success-text: #286c39;
-  --color-info: #0071ad; --color-info-rgb: 0, 113, 173; --color-info-hover: #197fb5; --color-info-text: #0066a0;
-  --color-favorite: #a37200; --color-loading-light: #cccccc; --color-loading-dark: #444444;
-  --color-box-shadow-rgb: 77, 77, 77; --color-border: #ededed; --color-border-dark: #dbdbdb; --color-border-maxcontrast: #7d7d7d;
-  --color-primary: #00679e; --color-primary-text: #ffffff; --color-primary-hover: #3285b1;
-  --color-primary-light: #e5eff5; --color-primary-light-text: #00293f; --color-primary-light-hover: #dbe4e9;
-  --color-primary-element: #00679e; --color-primary-element-hover: #1a76a7; --color-primary-element-text: #ffffff;
-  --color-primary-element-light: #e5eff5; --color-primary-element-light-text: #00293f; --color-primary-element-light-hover: #dbe4e9;
-  --color-primary-element-text-dark: #f0f0f0; --color-primary-element-extra-light: #f2f7fa; --color-primary-element-extra-light-hover: #e8f0f5;
+  --color-main-background-translucent: rgba(255, 255, 255, .97); --color-main-background-blur: rgba(255, 255, 255, .86);
+  --color-background-hover: #f1f3f4; --color-background-dark: #eceef0; --color-background-darker: #dfe2e5;
+  --color-placeholder-light: #e9ebee; --color-placeholder-dark: #d5d8dc;
+  --color-main-text: #1c1d1f; --color-text-maxcontrast: #5d6167; --color-text-maxcontrast-default: #5d6167;
+  --color-text-maxcontrast-background-blur: #54585e; --color-text-light: #1c1d1f; --color-text-lighter: #5d6167;
+  --color-error: #c5221f; --color-error-rgb: 197, 34, 31; --color-error-hover: #d33b38; --color-error-text: #b31d1a;
+  --color-warning: #8a5a00; --color-warning-rgb: 138, 90, 0; --color-warning-hover: #774e00; --color-warning-text: #7a5000;
+  --color-success: #1e7e3e; --color-success-rgb: 30, 126, 62; --color-success-hover: #2b8a4a; --color-success-text: #1b7038;
+  --color-info: #2f5bd3; --color-info-rgb: 47, 91, 211; --color-info-hover: #2a51bd; --color-info-text: #2449b0;
+  --color-favorite: #c98a00; --color-loading-light: #d5d8dc; --color-loading-dark: #5d6167;
+  --color-box-shadow-rgb: 30, 33, 38; --color-border: #e7e9ec; --color-border-dark: #d5d8dc; --color-border-maxcontrast: #80858c;
+  --color-primary: #2f5bd3; --color-primary-text: #ffffff; --color-primary-hover: #2a51bd;
+  --color-primary-light: #e8eefc; --color-primary-light-text: #183a91; --color-primary-light-hover: #dce5fa;
+  --color-primary-element: #2f5bd3; --color-primary-element-hover: #2a51bd; --color-primary-element-text: #ffffff;
+  --color-primary-element-light: #e8eefc; --color-primary-element-light-text: #183a91; --color-primary-element-light-hover: #dce5fa;
+  --color-primary-element-text-dark: #f5f7fd; --color-primary-element-extra-light: #f3f6fe; --color-primary-element-extra-light-hover: #e9effc;
   --background-invert-if-dark: no; --background-invert-if-bright: invert(100%);
   --primary-invert-if-bright: no; --primary-invert-if-dark: invert(100%);
-  --color-background-plain: #00679e; --color-background-plain-text: #ffffff;
+  --color-background-plain: #ffffff; --color-background-plain-text: #1c1d1f;
+  --frames-logo-dark: none; --frames-logo-light: inline;
   color-scheme: light;`;
 
 const DARK = `
-  --color-main-background: #171717; --color-main-background-rgb: 23, 23, 23;
-  --color-main-background-translucent: rgba(23, 23, 23, .97); --color-main-background-blur: rgba(23, 23, 23, .85);
-  --color-background-hover: #292929; --color-background-dark: #212121; --color-background-darker: #333333;
-  --color-placeholder-light: #393939; --color-placeholder-dark: #424242;
-  --color-main-text: #ebebeb; --color-text-maxcontrast: #999999; --color-text-maxcontrast-default: #999999;
-  --color-text-maxcontrast-background-blur: #a3a3a3; --color-text-light: #ebebeb; --color-text-lighter: #999999;
-  --color-error: #ff5252; --color-error-rgb: 255, 82, 82; --color-error-hover: #ff7070; --color-error-text: #ff5252;
-  --color-warning: #ffcc00; --color-warning-rgb: 255, 204, 0; --color-warning-hover: #ffde5c; --color-warning-text: #ffcc00;
-  --color-success: #50bb50; --color-success-rgb: 80, 187, 80; --color-success-hover: #6fc96f; --color-success-text: #50bb50;
-  --color-info: #00aeff; --color-info-rgb: 0, 174, 255; --color-info-hover: #33beff; --color-info-text: #00aeff;
-  --color-favorite: #ffcc00; --color-loading-light: #777777; --color-loading-dark: #cccccc;
-  --color-box-shadow-rgb: 0, 0, 0; --color-border: #333333; --color-border-dark: #474747; --color-border-maxcontrast: #8c8c8c;
-  --color-primary: #1f7fc4; --color-primary-text: #ffffff; --color-primary-hover: #3a8fcc;
-  --color-primary-light: #12364e; --color-primary-light-text: #d6ecfb; --color-primary-light-hover: #18445f;
-  --color-primary-element: #3a9be0; --color-primary-element-hover: #57aae5; --color-primary-element-text: #00141f;
-  --color-primary-element-light: #12364e; --color-primary-element-light-text: #d6ecfb; --color-primary-element-light-hover: #18445f;
-  --color-primary-element-text-dark: #0a2233; --color-primary-element-extra-light: #0d2536; --color-primary-element-extra-light-hover: #123048;
+  --color-main-background: #121314; --color-main-background-rgb: 18, 19, 20;
+  --color-main-background-translucent: rgba(18, 19, 20, .97); --color-main-background-blur: rgba(18, 19, 20, .86);
+  --color-background-hover: #212225; --color-background-dark: #1b1c1e; --color-background-darker: #2b2d30;
+  --color-placeholder-light: #26282b; --color-placeholder-dark: #303236;
+  --color-main-text: #e6e7e9; --color-text-maxcontrast: #a2a6ab; --color-text-maxcontrast-default: #a2a6ab;
+  --color-text-maxcontrast-background-blur: #aeb2b6; --color-text-light: #e6e7e9; --color-text-lighter: #a2a6ab;
+  --color-error: #f28b82; --color-error-rgb: 242, 139, 130; --color-error-hover: #f6a39c; --color-error-text: #f28b82;
+  --color-warning: #fdd663; --color-warning-rgb: 253, 214, 99; --color-warning-hover: #fee28a; --color-warning-text: #fdd663;
+  --color-success: #81c995; --color-success-rgb: 129, 201, 149; --color-success-hover: #9ad5aa; --color-success-text: #81c995;
+  --color-info: #a8c1ff; --color-info-rgb: 168, 193, 255; --color-info-hover: #bccffd; --color-info-text: #a8c1ff;
+  --color-favorite: #fdd663; --color-loading-light: #5f6368; --color-loading-dark: #c4c7cb;
+  --color-box-shadow-rgb: 0, 0, 0; --color-border: #2b2d30; --color-border-dark: #3a3c40; --color-border-maxcontrast: #7d8187;
+  --color-primary: #a8c1ff; --color-primary-text: #0a1a3d; --color-primary-hover: #bccffd;
+  --color-primary-light: #1f2c48; --color-primary-light-text: #d5e1ff; --color-primary-light-hover: #283858;
+  --color-primary-element: #a8c1ff; --color-primary-element-hover: #bccffd; --color-primary-element-text: #0a1a3d;
+  --color-primary-element-light: #1f2c48; --color-primary-element-light-text: #d5e1ff; --color-primary-element-light-hover: #283858;
+  --color-primary-element-text-dark: #0a1a3d; --color-primary-element-extra-light: #182238; --color-primary-element-extra-light-hover: #1d2943;
   --background-invert-if-dark: invert(100%); --background-invert-if-bright: no;
   --primary-invert-if-bright: invert(100%); --primary-invert-if-dark: no;
-  --color-background-plain: #0e1a2b; --color-background-plain-text: #ffffff;
+  --color-background-plain: #121314; --color-background-plain-text: #e6e7e9;
+  --frames-logo-dark: inline; --frames-logo-light: none;
   color-scheme: dark;`;
 
 const COMMON = `
-  --font-face: system-ui, -apple-system, "Segoe UI", Roboto, Oxygen-Sans, Cantarell, Ubuntu, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-face: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji";
   --default-font-size: 15px; --font-size-small: 13px; --default-line-height: 1.5;
   --font-weight-default: 400; --font-weight-element: 600; --font-weight-heading: 700;
   --animation-quick: 100ms; --animation-slow: 300ms;
@@ -55,7 +61,7 @@ const COMMON = `
   --border-radius: 3px; --border-radius-small: 4px; --border-radius-element: 8px; --border-radius-large: 10px;
   --border-radius-rounded: 28px; --border-radius-container: 12px; --border-radius-container-large: 16px; --border-radius-pill: 100px;
   --default-clickable-area: 34px; --clickable-area-large: 48px; --clickable-area-small: 24px; --default-grid-baseline: 4px;
-  --header-height: 50px; --header-menu-item-height: 44px; --navigation-width: 300px;
+  --header-height: 64px; --frames-nav-w: 250px; --header-menu-item-height: 44px; --navigation-width: 300px;
   --sidebar-min-width: 300px; --sidebar-max-width: 500px;
   --body-container-radius: 0px; --body-container-margin: 0px;
   --body-height: calc(100% - env(safe-area-inset-bottom));
@@ -79,19 +85,6 @@ const BASE_CSS = `
   button, input, select, textarea { font: inherit; color: inherit; }
   a { color: inherit; text-decoration: none; }
   #content, #content-vue { display: flex; position: fixed; inset: var(--header-height) 0 0 0; height: auto; width: 100%; overflow: hidden; }
-  #header {
-    position: fixed; inset: 0 0 auto 0; height: var(--header-height); z-index: 2000;
-    display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px 0 12px;
-    background: var(--color-background-plain); color: var(--color-background-plain-text);
-  }
-  #header .header-start, #header .header-end { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  #header .frames-logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
-  #header .frames-logo img { width: 22px; height: 22px; }
-  #frames-status { display: flex; align-items: center; gap: 10px; font-size: var(--font-size-small); white-space: nowrap; opacity: .9; }
-  #frames-status[hidden] { display: none; }
-  #frames-status .bar { width: 120px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .25); overflow: hidden; }
-  #frames-status .bar i { display: block; height: 100%; width: 100%; background: #fff; transform-origin: left; transform: scaleX(0); transition: transform .4s; }
-  @media (max-width: 600px) { #frames-status .label { display: none; } }
   .hidden-visually { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 `;
 
@@ -106,10 +99,12 @@ export function renderShell(ctx) {
 <head data-user="${esc(ctx.uid)}" data-user-displayname="${esc(ctx.displayName)}" data-requesttoken="${esc(ctx.token)}">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#171717">
+<meta name="theme-color" content="#121314" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <title>Frames</title>
 <link rel="icon" href="/apps/memories/img/app.svg">
-<style>${BASE_CSS}</style>
+<style>${BASE_CSS}
+${THEME}</style>
 <script>
   window._oc_webroot = '';
   window._oc_appswebroots = { memories: '/apps/memories' };
@@ -144,43 +139,72 @@ export function renderShell(ctx) {
 <div id="skip-actions"></div>
 <header id="header">
   <div class="header-start">
-    <a class="frames-logo" href="/apps/memories/"><img src="/apps/memories/img/app.svg" alt=""><span>Frames</span></a>
+    <a class="frames-logo" href="/apps/memories/" aria-label="Frames home">
+      <img src="/apps/memories/img/app.svg" alt="" style="display: var(--frames-logo-dark)">
+      <img src="/apps/memories/img/app-dark.svg" alt="" style="display: var(--frames-logo-light)">
+      <span>Frames</span>
+    </a>
   </div>
   <div class="header-end">
-    <div id="frames-status" role="status" hidden><span class="label"></span><span class="bar"><i></i></span></div>
+    <div id="frames-status" role="status" aria-live="polite" hidden><span class="bar"></span><span class="dot"></span><span class="label"></span></div>
+    <button id="frames-rescan" class="frames-icon-btn" type="button" title="Rescan photo folder" aria-label="Rescan photo folder">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+    </button>
   </div>
 </header>
 <main id="content" class="app-memories"></main>
 <script>
-  // Indexing progress in the header; refreshes the timeline as photos become ready
+  // Header: scan/index/AI progress chip, rescan button, timeline refresh as photos become ready
   (function () {
     var box = document.getElementById('frames-status');
     var label = box.querySelector('.label');
-    var bar = box.querySelector('.bar i');
+    var bar = box.querySelector('.bar');
+    var rescan = document.getElementById('frames-rescan');
+    var token = document.head.dataset.requesttoken;
     var wasBusy = false;
     var lastRefresh = 0;
+    var timer = 0;
+    var n = function (v) { return Number(v || 0).toLocaleString(); };
     var refresh = function () {
       lastRefresh = Date.now();
       try { window._nc_event_bus && window._nc_event_bus.emit('memories:timeline:soft-refresh', null); } catch (e) {}
     };
-    function poll() {
-      fetch('/apps/memories/api/frames/status').then(function (r) { return r.json(); }).then(function (s) {
-        var busy = s.phase !== 'idle';
-        box.hidden = !busy;
-        if (s.phase === 'scanning') {
-          label.textContent = 'Looking for photos… ' + s.found.toLocaleString() + ' found';
-          bar.style.transform = 'scaleX(0)';
-        } else if (s.phase === 'indexing') {
-          label.textContent = 'Preparing photos ' + s.done.toLocaleString() + ' / ' + s.total.toLocaleString();
-          bar.style.transform = 'scaleX(' + (s.total ? s.done / s.total : 0) + ')';
-          if (Date.now() - lastRefresh > 20000) refresh();
-        }
-        box.title = label.textContent;
-        if (wasBusy && !busy) refresh();
-        wasBusy = busy;
-        setTimeout(poll, busy ? 1500 : 10000);
-      }).catch(function () { setTimeout(poll, 10000); });
+    function render(s) {
+      var ai = s.ai || {};
+      var aiBusy = s.phase === 'idle' && ai.queued > 0;
+      var busy = s.phase !== 'idle';
+      var text = '';
+      var frac = 0;
+      if (s.phase === 'scanning') text = 'Looking for photos \u00b7 ' + n(s.found) + ' found';
+      else if (s.phase === 'indexing') {
+        frac = s.total ? s.done / s.total : 0;
+        text = 'Preparing photos \u00b7 ' + n(s.done) + ' of ' + n(s.total);
+      } else if (aiBusy) text = 'Finding people and things \u00b7 ' + n(ai.queued) + ' left';
+      else if (s.error) text = 'Indexing stopped: ' + s.error;
+      box.hidden = !text;
+      label.textContent = text;
+      box.title = text;
+      bar.style.transform = 'scaleX(' + frac + ')';
+      rescan.disabled = busy;
+      rescan.classList.toggle('busy', busy);
+      rescan.title = busy ? 'Scanning\u2026' : 'Rescan photo folder' + (s.dir ? ' (' + s.dir + ')' : '');
+      if (s.phase === 'indexing' && Date.now() - lastRefresh > 20000) refresh();
+      if (wasBusy && !busy) refresh();
+      wasBusy = busy;
+      return busy || aiBusy;
     }
+    function poll() {
+      clearTimeout(timer);
+      fetch('/apps/memories/api/frames/status').then(function (r) { return r.json(); }).then(function (s) {
+        timer = setTimeout(poll, render(s) ? 1500 : 10000);
+      }).catch(function () { timer = setTimeout(poll, 10000); });
+    }
+    rescan.addEventListener('click', function () {
+      rescan.disabled = true;
+      rescan.classList.add('busy');
+      fetch('/apps/memories/api/frames/rescan', { method: 'POST', headers: { requesttoken: token } })
+        .then(function () { setTimeout(poll, 300); }, function () { rescan.disabled = false; rescan.classList.remove('busy'); });
+    });
     poll();
   })();
 </script>
