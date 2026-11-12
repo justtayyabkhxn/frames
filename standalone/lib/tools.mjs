@@ -1,6 +1,7 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 export const APP_ROOT = path.resolve(import.meta.dirname, '..', '..');
@@ -24,6 +25,22 @@ export function run(cmd, args, { input } = {}) {
     p.on('close', (code) => resolve({ code, out: Buffer.concat(out), err: Buffer.concat(err).toString() }));
     if (input != null) p.stdin.end(input);
   });
+}
+
+/**
+ * Run exiftool with every argument in a UTF-8 argfile. Windows hands command-line
+ * arguments to exiftool (Perl) in the ANSI code page, which mangles non-ASCII paths and values.
+ */
+export async function exiftool(et, args) {
+  const file = path.join(os.tmpdir(), `frames-et-${randomUUID()}.txt`);
+  const escape = args.some((a) => /[\r\n]/.test(a));
+  const lines = escape ? args.map((a) => a.replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/\r/g, '')) : args;
+  fs.writeFileSync(file, lines.join('\n'));
+  try {
+    return await run(et, ['-charset', 'filename=utf8', ...(escape ? ['-ec'] : []), '-@', file]);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 }
 
 /** exiftool: bundled tools/exiftool, then PATH; on Windows fetched once (checksum-verified). */

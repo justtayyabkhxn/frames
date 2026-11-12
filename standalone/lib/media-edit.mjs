@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { badRequest, HttpError } from './http.mjs';
 import { cleanRel, parentRel } from './library.mjs';
-import { run } from './tools.mjs';
+import { exiftool, run } from './tools.mjs';
 
 /**
  * Photo editor save: the @radialapps/memories-vips-editor edit list, rendered with
@@ -268,7 +268,7 @@ export function parsePam(buf) {
 
 async function decode(ctx, n) {
   const src = ctx.abs(n.path);
-  const { out: o } = await run(ctx.et, ['-n', '-s3', '-Orientation', '-charset', 'filename=utf8', src]);
+  const { out: o } = await exiftool(ctx.et, ['-n', '-s3', '-Orientation', src]);
   const orient = ORIENT[+o.toString().trim()];
   const pam = (file, vf) =>
     run(ctx.ff.ffmpeg, [
@@ -357,7 +357,9 @@ export async function editImage(ctx, n, body) {
   const live = !!ctx.db.q('SELECT liveid FROM media WHERE id = ?').get(n.id)?.liveid;
   const dir = parentRel(n.path);
   const join = (f) => (dir ? `${dir}/${f}` : f);
-  const asCopy = copy || live || name !== n.name;
+  // A new format never overwrites the original in place (a .jpg must not end up holding PNG bytes)
+  const sameFormat = FORMATS[n.name.split('.').pop().toLowerCase()] === fmt;
+  const asCopy = copy || live || name !== n.name || !sameFormat;
   const rel = asCopy ? ctx.lib.freeRel(join(name)) : n.path;
 
   const img = await decode(ctx, n);
@@ -381,10 +383,8 @@ export async function editImage(ctx, n, body) {
     // Carry metadata over; orientation is baked in, stale thumbnails and live-photo links dropped
     const drop = ['Orientation', 'ThumbnailImage', 'PreviewImage', 'XMP-GCamera:all', 'XMP-Container:all'];
     if (live) drop.push('MakerNotes:all', 'ContentIdentifier');
-    await run(ctx.et, [
+    await exiftool(ctx.et, [
       '-overwrite_original',
-      '-charset',
-      'filename=utf8',
       '-TagsFromFile',
       ctx.abs(n.path),
       '-all:all',

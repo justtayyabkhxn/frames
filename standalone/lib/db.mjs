@@ -91,6 +91,14 @@ export function openDb(file) {
       throw e;
     }
   };
+  /** Never-reused ids (the tables predate AUTOINCREMENT): a persisted high-water mark. */
+  db.nextId = (table) => {
+    const key = `seq.${table}`;
+    const max = db.q(`SELECT max(id) AS m FROM ${table}`).get().m ?? 0;
+    const id = Math.max(Number(db.getKv(key, 0)), max) + 1;
+    db.setKv(key, id);
+    return id;
+  };
   db.getKv = (key, def) => db.q('SELECT value FROM kv WHERE key = ?').get(key)?.value ?? def;
   db.setKv = (key, value) =>
     db

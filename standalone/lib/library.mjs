@@ -1,16 +1,34 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { badRequest, HttpError, notFound } from './http.mjs';
 import { ARCHIVE } from './indexer.mjs';
 
 /** Normalize a user-supplied path to a clean relative path ('' = root). Rejects traversal. */
+const WIN = process.platform === 'win32';
+// Names Windows cannot store or silently alters (reserved devices, trailing dot/space)
+const WIN_BAD = /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$|[. ]$/i;
+
+/** Rename, falling back to copy + delete across drives. */
+export function moveFs(src, dst) {
+  try {
+    fs.renameSync(src, dst);
+  } catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+    fs.cpSync(src, dst, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false });
+    fs.rmSync(src, { recursive: true, force: true });
+  }
+}
+
 export function cleanRel(p) {
   const parts = [];
   for (const seg of String(p ?? '')
     .replace(/\\/g, '/')
     .split('/')) {
     if (!seg || seg === '.') continue;
-    if (seg === '..' || seg.includes('\0') || /[<>:"|?*]/.test(seg)) throw badRequest(`Invalid path: ${p}`);
+    if (seg === '..' || seg.includes('\0') || /[<>:"|?*]/.test(seg) || (WIN && WIN_BAD.test(seg))) {
+      throw badRequest(`Invalid path: ${p}`);
+    }
     parts.push(seg);
   }
   return parts.join('/');
@@ -23,8 +41,21 @@ export class Library {
   constructor(ctx) {
     this.ctx = ctx;
     this.db = ctx.db;
-    this.trashDir = path.join(ctx.dataDir, 'trash');
-    fs.mkdirSync(this.trashDir, { recursive: true });
+    // Trash lives inside the library so moving into it never crosses drives; the scan skips dot folders
+    this.trashDir = path.join(ctx.root, '.frames-trash');
+    this.legacyTrashDir = path.join(ctx.dataDir, 'trash');
+  }
+
+  /** Same file on this filesystem? (Windows and macOS compare names case-insensitively.) */
+  samePath(a, b) {
+    return WIN || process.platform === 'darwin' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  }
+
+  /** Node at rel, matching case-insensitively where the filesystem does. */
+  nodeAt(rel) {
+    return WIN || process.platform === 'darwin'
+      ? this.db.q('SELECT * FROM nodes WHERE path = ? COLLATE NOCASE').get(rel)
+      : this.nodeByPath(rel);
   }
 
   abs(rel) {
@@ -64,14 +95,17 @@ export class Library {
     newRel = cleanRel(newRel);
     if (!newRel) throw badRequest('Cannot move to root');
     if (newRel === n.path) return n.id;
-    if (n.dir && (newRel + '/').startsWith(n.path + '/')) throw badRequest('Cannot move a folder into itself');
-    const dest = this.nodeByPath(newRel);
-    if (fs.existsSync(this.abs(newRel))) {
+    const caseOnly = this.samePath(newRel, n.path);
+    if (n.dir && !caseOnly && `${newRel}/`.toLowerCase().startsWith(`${n.path}/`.toLowerCase())) {
+      throw badRequest('Cannot move a folder into itself');
+    }
+    const dest = this.nodeAt(newRel);
+    if (!caseOnly && fs.existsSync(this.abs(newRel))) {
       if (!overwrite) throw new HttpError(412, 'Destination exists');
       this.trash(dest?.id ?? this.ctx.indexer.ensureNode(newRel, { dir: fs.statSync(this.abs(newRel)).isDirectory() }));
     }
     fs.mkdirSync(path.dirname(this.abs(newRel)), { recursive: true });
-    fs.renameSync(this.abs(n.path), this.abs(newRel));
+    moveFs(this.abs(n.path), this.abs(newRel));
     const parent = this.mkdir(parentRel(newRel));
     this.db.tx(() => {
       if (n.dir) {
@@ -102,12 +136,13 @@ export class Library {
     if (!rel) throw badRequest('Missing file name');
     fs.mkdirSync(path.dirname(this.abs(rel)), { recursive: true });
     const tmp = `${this.abs(rel)}.frames-upload`;
-    await new Promise((resolve, reject) => {
-      const out = fs.createWriteStream(tmp);
-      stream.pipe(out).on('finish', resolve).on('error', reject);
-      stream.on('error', reject);
-    });
-    fs.renameSync(tmp, this.abs(rel));
+    try {
+      await pipeline(stream, fs.createWriteStream(tmp));
+      fs.renameSync(tmp, this.abs(rel));
+    } catch (e) {
+      fs.rmSync(tmp, { force: true });
+      throw e;
+    }
     this.mkdir(parentRel(rel));
     return (await this.ctx.indexer.indexPath(rel)) ?? this.ctx.indexer.ensureNode(rel, { dir: false });
   }
@@ -117,29 +152,43 @@ export class Library {
     const n = this.mustNode(id);
     if (!n.path) throw badRequest('Cannot delete the library root');
     const meta = JSON.stringify({ favorite: n.favorite, dir: n.dir });
-    const { tid } = this.db
-      .q(
-        'INSERT INTO trash (name, orig_path, file, deleted_at, size, mime, meta) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id AS tid',
-      )
-      .get(n.name, n.path, '', Math.floor(Date.now() / 1000), n.size, n.mime, meta);
+    const tid = this.db.nextId('trash');
     const file = `${tid}-${n.name}`;
-    fs.renameSync(this.abs(n.path), path.join(this.trashDir, file));
-    this.db.q('UPDATE trash SET file = ? WHERE id = ?').run(file, tid);
+    // Move first: a failed move must leave no trash row behind
+    fs.mkdirSync(this.trashDir, { recursive: true });
+    moveFs(this.abs(n.path), path.join(this.trashDir, file));
+    this.db.tx(() => {
+      this.db
+        .q(
+          'INSERT INTO trash (id, name, orig_path, file, deleted_at, size, mime, meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(tid, n.name, n.path, file, Math.floor(Date.now() / 1000), n.size, n.mime, meta);
+      this.db.q('DELETE FROM nodes WHERE id = ?').run(n.id);
+    });
     this.ctx.previews.remove(n.id);
-    this.db.q('DELETE FROM nodes WHERE id = ?').run(n.id);
     return tid;
   }
 
+  /** Path of a trashed item; null for a row that never got its file. */
   trashFile(t) {
-    return path.join(this.trashDir, t.file);
+    if (!t?.file || t.file.includes('/') || t.file.includes('\\')) return null;
+    const f = path.join(this.trashDir, t.file);
+    if (fs.existsSync(f)) return f;
+    const legacy = path.join(this.legacyTrashDir, t.file);
+    return fs.existsSync(legacy) ? legacy : null;
   }
 
   async restore(tid, toRel) {
     const t = this.db.q('SELECT * FROM trash WHERE id = ?').get(Number(tid) | 0);
     if (!t) throw notFound('Not in trash');
+    const src = this.trashFile(t);
+    if (!src) {
+      this.db.q('DELETE FROM trash WHERE id = ?').run(t.id);
+      throw notFound('This item is no longer in the trash folder');
+    }
     const rel = this.freeRel(cleanRel(toRel ?? t.orig_path));
     fs.mkdirSync(path.dirname(this.abs(rel)), { recursive: true });
-    fs.renameSync(this.trashFile(t), this.abs(rel));
+    moveFs(src, this.abs(rel));
     this.db.q('DELETE FROM trash WHERE id = ?').run(t.id);
     this.ctx.previews.remove(`t${t.id}`);
     const meta = JSON.parse(t.meta);
@@ -156,7 +205,8 @@ export class Library {
   purge(tid) {
     const t = this.db.q('SELECT * FROM trash WHERE id = ?').get(Number(tid) | 0);
     if (!t) throw notFound('Not in trash');
-    fs.rmSync(this.trashFile(t), { recursive: true, force: true });
+    const src = this.trashFile(t);
+    if (src) fs.rmSync(src, { recursive: true, force: true });
     this.ctx.previews.remove(`t${t.id}`);
     this.db.q('DELETE FROM trash WHERE id = ?').run(t.id);
   }

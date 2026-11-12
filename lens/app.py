@@ -1,13 +1,15 @@
 """Memories Lens daemon: index API, search API, health/stats."""
 
 import asyncio
+import hmac
 import logging
 import os
 import sys
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from qdrant_client import AsyncQdrantClient
 
 from config import config
@@ -88,6 +90,18 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Memories Lens", lifespan=lifespan)
+
+if config.local:
+
+    @app.middleware("http")
+    async def local_guard(request: Request, call_next):
+        """Local mode: only the parent app (bearer token, localhost Host) may call the daemon."""
+
+        host = request.headers.get("host", "").rsplit(":", 1)[0]
+        auth = request.headers.get("authorization", "")
+        if host not in ("127.0.0.1", "localhost") or not hmac.compare_digest(auth, f"Bearer {config.nc_token}"):
+            return JSONResponse({"detail": "forbidden"}, status_code=403)
+        return await call_next(request)
 
 for router in routers:
     app.include_router(router)

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { run } from './tools.mjs';
+import { exiftool, run } from './tools.mjs';
 
 const FIT = [256, 512, 1024, 2048, 4096];
 const SQUARE = [64, 128, 256, 512, 1024];
@@ -77,7 +77,7 @@ export class Previews {
       // RAW / unsupported HEIC: use the camera's embedded preview
       const tmp = this.file(id, 'embedded');
       for (const tag of ['-JpgFromRaw', '-PreviewImage', '-ThumbnailImage']) {
-        const { out } = await run(this.et, ['-b', tag, src]);
+        const { out } = await exiftool(this.et, ['-b', tag, src]);
         if (!out.length) continue;
         fs.writeFileSync(tmp, out);
         r = await run(this.ff.ffmpeg, args(tmp, false));

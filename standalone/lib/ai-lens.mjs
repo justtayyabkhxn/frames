@@ -120,7 +120,7 @@ export class LensDaemon {
   async req(method, p, body) {
     const res = await fetch(this.base + p, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
+      headers: { Authorization: `Bearer ${this.token}`, ...(body && { 'Content-Type': 'application/json' }) },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(60_000),
     });

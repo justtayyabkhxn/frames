@@ -25,6 +25,10 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS faces_fileid ON faces (fileid);
   CREATE INDEX IF NOT EXISTS faces_cluster ON faces (cluster);
   CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, name TEXT UNIQUE, cover INTEGER);
+  -- A deleted file's faces must never attach to whatever file is indexed next
+  CREATE TRIGGER IF NOT EXISTS faces_node_deleted AFTER DELETE ON nodes BEGIN
+    DELETE FROM faces WHERE fileid = old.id;
+  END;
 `;
 
 /** New person id; same range as lens cluster ids (positive, exact in JS). */

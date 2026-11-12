@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { dims, takenFrom } from '../util.mjs';
 import { limiter } from './previews.mjs';
-import { run } from './tools.mjs';
+import { exiftool } from './tools.mjs';
 
 export const MIMES = {
   jpg: 'image/jpeg',
@@ -40,6 +40,7 @@ export const MIMES = {
   m2ts: 'video/MP2T',
   wmv: 'video/x-ms-wmv',
 };
+const KNOWN_MIMES = new Set(Object.values(MIMES));
 export const mimeOf = (name) => MIMES[path.extname(name).slice(1).toLowerCase()] ?? null;
 export const ARCHIVE = '.archive';
 
@@ -147,16 +148,28 @@ export class Indexer {
     return db
       .q(
         `
-      INSERT INTO nodes (path, parent, name, dir, size, mtime, etag, mime) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO nodes (id, path, parent, name, dir, size, mtime, etag, mime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (path) DO UPDATE SET parent = excluded.parent, name = excluded.name, dir = excluded.dir,
         size = excluded.size, mtime = excluded.mtime, etag = excluded.etag, mime = excluded.mime
       RETURNING id`,
       )
-      .get(rel, parent, name, dir ? 1 : 0, size, mtime, dir ? '' : etagOf(size, mtime), dir ? null : mimeOf(name)).id;
+      .get(
+        existing?.id ?? db.nextId('nodes'),
+        rel,
+        parent,
+        name,
+        dir ? 1 : 0,
+        size,
+        mtime,
+        dir ? '' : etagOf(size, mtime),
+        dir ? null : mimeOf(name),
+      ).id;
   }
 
+  /** Yields folders and media files; unreadable entries yield { keep } so the scan never deletes them. */
   async *walk(abs, rel) {
-    const entries = await fsp.readdir(abs, { withFileTypes: true }).catch(() => []);
+    const entries = await fsp.readdir(abs, { withFileTypes: true }).catch(() => null);
+    if (!entries) return yield { rel, keep: true };
     if (entries.some((e) => e.name === '.nomedia' || e.name === '.nomemories')) return;
     yield { rel, dir: true };
     for (const e of entries) {
@@ -166,26 +179,23 @@ export class Indexer {
       if (e.isDirectory()) yield* this.walk(childAbs, childRel);
       else if (e.isFile() && mimeOf(e.name)) {
         const s = await fsp.stat(childAbs).catch(() => null);
-        if (s) yield { rel: childRel, dir: false, size: s.size, mtime: Math.floor(s.mtimeMs / 1000) };
+        yield s
+          ? { rel: childRel, dir: false, size: s.size, mtime: Math.floor(s.mtimeMs / 1000) }
+          : { rel: childRel, keep: true };
       }
     }
   }
 
   async readMeta(absPaths) {
-    const argfile = path.join(this.ctx.dataDir, `exiftool-args-${process.pid}.txt`);
-    fs.writeFileSync(argfile, absPaths.join('\n'));
-    const { out } = await run(this.ctx.et, [
+    const { out } = await exiftool(this.ctx.et, [
       '-json',
       '-n',
-      '-charset',
-      'filename=utf8',
       '-api',
       'QuickTimeUTC',
       '-api',
       'LargeFileSupport=1',
       ...EXIF_TAGS.map((t) => `-${t}`),
-      '-@',
-      argfile,
+      ...absPaths,
     ]);
     try {
       return new Map(JSON.parse(out.toString('utf8')).map((m) => [path.resolve(m.SourceFile), m]));
@@ -217,15 +227,19 @@ export class Indexer {
         .map((id) => db.q('SELECT * FROM nodes WHERE id = ?').get(id))
         .filter(Boolean);
       const meta = await this.readMeta(nodes.map((n) => ctx.abs(n.path)));
+      const liveids = [];
       db.tx(() => {
         for (const n of nodes) {
           const m = meta.get(path.resolve(ctx.abs(n.path))) ?? {};
-          const mime = m.MIMEType && !/octet|text/.test(m.MIMEType) ? m.MIMEType : n.mime;
+          // Only trust known media types: a script disguised as .jpg must never be served as SVG/XML
+          const mime = KNOWN_MIMES.has(m.MIMEType) ? m.MIMEType : n.mime;
           if (mime !== n.mime) db.q('UPDATE nodes SET mime = ? WHERE id = ?').run(mime, n.id);
-          this.saveMedia(n.id, mediaRow(m, n.mtime, mime));
+          const row = mediaRow(m, n.mtime, mime);
+          if (row.liveid) liveids.push(row.liveid);
+          this.saveMedia(n.id, row);
         }
       });
-      this.linkLivePhotos();
+      this.linkLivePhotos(liveids);
       await Promise.all(
         nodes.map((n) =>
           this.thumbs(async () => {
@@ -238,12 +252,26 @@ export class Indexer {
     }
   }
 
-  /** Hide the video half of Apple live photos; the photo keeps the liveid. */
-  linkLivePhotos() {
+  /** Hide the video half of Apple live photos (only for the given liveids); the photo keeps the liveid. */
+  linkLivePhotos(liveids) {
+    for (const l of new Set(liveids)) {
+      if (l === 'self__trailer') continue;
+      this.db
+        .q(
+          `UPDATE media SET livevideo = EXISTS (
+            SELECT 1 FROM media p JOIN nodes pn ON pn.id = p.id
+            WHERE p.liveid = :l AND p.isvideo = 0 AND pn.parent = (SELECT parent FROM nodes WHERE id = media.id))
+          WHERE liveid = :l AND isvideo = 1`,
+        )
+        .run({ l });
+    }
+  }
+
+  /** Un-hide companion videos whose photo is gone (cheap: only rows currently hidden). */
+  unlinkOrphanLiveVideos() {
     this.db.exec(`
-      UPDATE media SET livevideo = (isvideo = 1 AND liveid IS NOT NULL AND EXISTS (
-        SELECT 1 FROM media p JOIN nodes pn ON pn.id = p.id JOIN nodes vn ON vn.id = media.id
-        WHERE p.liveid = media.liveid AND p.isvideo = 0 AND pn.parent = vn.parent))`);
+      UPDATE media SET livevideo = 0 WHERE livevideo = 1 AND NOT EXISTS (
+        SELECT 1 FROM media p WHERE p.liveid = media.liveid AND p.isvideo = 0)`);
   }
 
   async scan() {
@@ -252,8 +280,13 @@ export class Indexer {
     Object.assign(status, { phase: 'scanning', found: 0, done: 0, total: 0, error: '' });
     try {
       const seen = new Set();
+      const keep = [];
       const todo = [];
       for await (const e of this.walk(ctx.root, '')) {
+        if (e.keep) {
+          keep.push(e.rel);
+          continue;
+        }
         const before = e.dir
           ? null
           : db
@@ -267,11 +300,15 @@ export class Indexer {
         status.found++;
         if (!before?.indexed || before.size !== e.size || before.mtime !== e.mtime) todo.push(id);
       }
-      for (const { id } of db.q('SELECT id FROM nodes').all()) {
-        if (seen.has(id)) continue;
+      const kept = (p) => keep.some((k) => !k || p === k || p.startsWith(`${k}/`));
+      for (const { id, path: p } of db.q('SELECT id, path FROM nodes').all()) {
+        if (seen.has(id) || kept(p)) continue;
         db.q('DELETE FROM nodes WHERE id = ?').run(id);
         ctx.previews.remove(id);
       }
+      this.unlinkOrphanLiveVideos();
+      if (keep.length)
+        console.warn(`Could not read ${keep.length} item(s); kept their index entries: ${keep.slice(0, 5).join(', ')}`);
       Object.assign(status, { phase: 'indexing', total: todo.length });
       await this.indexIds(todo, () => status.done++);
     } catch (e) {

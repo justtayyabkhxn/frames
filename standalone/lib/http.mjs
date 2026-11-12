@@ -11,6 +11,14 @@ export const notFound = (what = 'Not found') => new HttpError(404, what);
 export const badRequest = (what = 'Bad request') => new HttpError(400, what);
 
 /** Minimal router: add(method, '/a/:b/*rest', fn); handlers get (req, res, params, url). */
+function decodeParam(s) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    throw badRequest('Malformed URL');
+  }
+}
+
 export class Router {
   routes = [];
   add(method, pattern, fn) {
@@ -27,9 +35,7 @@ export class Router {
       if (r.method !== '*' && r.method !== method) continue;
       const m = r.re.exec(pathname);
       if (!m) continue;
-      const params = Object.fromEntries(
-        r.keys.map((k, i) => [k, m[i + 1] == null ? '' : decodeURIComponent(m[i + 1])]),
-      );
+      const params = Object.fromEntries(r.keys.map((k, i) => [k, m[i + 1] == null ? '' : decodeParam(m[i + 1])]));
       return { fn: r.fn, params };
     }
     return null;
@@ -81,6 +87,14 @@ export function sendFile(req, res, file, { type, cache = 'private, max-age=86400
     'Cache-Control': cache,
     'Last-Modified': st.mtime.toUTCString(),
     ...(r && { 'Content-Range': `bytes ${start}-${end}/${st.size}` }),
+    // Library files are untrusted: never sniff them into HTML/SVG, and sandbox any direct navigation.
+    // Scripts are exempt (a worker script's own CSP would block its preview fetches).
+    ...(!/javascript/.test(type ?? '') && {
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy':
+        "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'",
+      'X-Frame-Options': 'DENY',
+    }),
     ...headers,
   });
   if (req.method === 'HEAD' || st.size === 0) return res.end();

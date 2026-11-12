@@ -403,7 +403,12 @@ export class Vod {
       ]);
       this.boards.set(key, job);
     }
-    await this.boards.get(key);
-    return { file: path.join(dir, `storyboard-${k}.jpg`) };
+    const r = await this.boards.get(key);
+    const out = path.join(dir, `storyboard-${k}.jpg`);
+    if (r.code !== 0 || !fs.existsSync(out)) {
+      this.boards.delete(key); // retry on the next request instead of caching the failure
+      throw notFound('Storyboard not available');
+    }
+    return { file: out };
   }
 }

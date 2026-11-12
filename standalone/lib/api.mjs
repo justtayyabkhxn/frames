@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { badRequest, contentDisposition, json, notFound, readJson, sendFile } from './http.mjs';
 import { ARCHIVE } from './indexer.mjs';
 import { cleanRel } from './library.mjs';
-import { run } from './tools.mjs';
+import { exiftool } from './tools.mjs';
 import { zipStream } from './zip.mjs';
 
 const API = '/apps/memories/api';
@@ -247,10 +247,10 @@ export function registerApi(router, ctx) {
   router.add('GET', `${API}/days`, (req, res, _, url) => json(res, preload(getDays(q(url)), q(url))));
   router.add('POST', `${API}/days`, async (req, res, _, url) => {
     const { dayIds = [] } = await readJson(req);
-    json(res, getDay(dayIds.map(Number).filter(Number.isFinite), q(url)));
+    json(res, getDay(dayIds.slice(0, 2000).map(Number).filter(Number.isFinite), q(url)));
   });
   router.add('GET', `${API}/days/:id`, (req, res, { id }, url) =>
-    json(res, getDay(id.split(',').map(Number).filter(Number.isFinite), q(url))),
+    json(res, getDay(id.split(',').slice(0, 2000).map(Number).filter(Number.isFinite), q(url))),
   );
 
   /* ---------------- folders ---------------- */
@@ -373,14 +373,12 @@ export function registerApi(router, ctx) {
       if (!EXIF_WRITABLE.includes(k)) throw badRequest('Invalid EXIF tag');
       args.push(`-${k}=${v ?? ''}`);
     }
-    const r = await run(ctx.et, [
+    const r = await exiftool(ctx.et, [
       '-overwrite_original',
       '-preserve',
       '-n',
       '-api',
       'QuickTimeUTC',
-      '-charset',
-      'filename=utf8',
       ...args,
       lib.abs(n.path),
     ]);

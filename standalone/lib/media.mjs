@@ -3,7 +3,7 @@ import path from 'node:path';
 import { badRequest, contentDisposition, HttpError, json, notFound, readJson, sendFile } from './http.mjs';
 import { editImage } from './media-edit.mjs';
 import { Vod } from './media-vod.mjs';
-import { run } from './tools.mjs';
+import { exiftool, run } from './tools.mjs';
 
 const API = '/apps/memories/api';
 const MP4_ATOMS = ['ftyp', 'moov', 'mdat', 'free', 'wide', 'skip'];
@@ -92,7 +92,7 @@ export function registerMedia(router, ctx) {
       const src = lib.abs(n.path);
       const out = path.join(liveDir, `${n.id}-${n.etag}.mp4`);
       for (const tag of ['MotionPhotoVideo', 'EmbeddedVideoFile']) {
-        const r = await run(ctx.et, ['-b', `-${tag}`, '-charset', 'filename=utf8', src]);
+        const r = await exiftool(ctx.et, ['-b', `-${tag}`, src]);
         if (r.out.length > 1024) return (fs.writeFileSync(out, r.out), out);
       }
       // ponytail: reads the whole photo into memory; motion photos are a few MB

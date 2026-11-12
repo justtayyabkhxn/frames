@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { badRequest, HttpError, notFound, readBody, sendFile } from './http.mjs';
 import { cleanRel, parentRel } from './library.mjs';
 
@@ -83,12 +84,13 @@ export function registerDav(router, ctx) {
       case 'PUT': {
         if (!chunk || !/^\d+$/.test(chunk)) throw badRequest('Bad chunk');
         fs.mkdirSync(dir, { recursive: true });
-        await new Promise((resolve, reject) =>
-          req
-            .pipe(fs.createWriteStream(path.join(dir, chunk)))
-            .on('finish', resolve)
-            .on('error', reject),
-        );
+        const part = path.join(dir, chunk);
+        try {
+          await pipeline(req, fs.createWriteStream(part));
+        } catch (e) {
+          fs.rmSync(part, { force: true });
+          throw e;
+        }
         return res.writeHead(201).end();
       }
       case 'MOVE': {
@@ -99,13 +101,12 @@ export function registerDav(router, ctx) {
           .filter((f) => /^\d+$/.test(f))
           .sort((a, b) => a - b);
         const tmp = path.join(dir, 'assembled');
-        const out = fs.createWriteStream(tmp);
-        for (const p of parts) {
-          await new Promise((resolve, reject) =>
-            fs.createReadStream(path.join(dir, p)).on('end', resolve).on('error', reject).pipe(out, { end: false }),
-          );
+        const fh = await fs.promises.open(tmp, 'w');
+        try {
+          for (const p of parts) for await (const c of fs.createReadStream(path.join(dir, p))) await fh.write(c);
+        } finally {
+          await fh.close();
         }
-        await new Promise((resolve) => out.end(resolve));
         const existed = fs.existsSync(lib.abs(rel));
         await lib.put(rel, fs.createReadStream(tmp));
         fs.rmSync(dir, { recursive: true, force: true });
@@ -172,12 +173,18 @@ export function registerDav(router, ctx) {
       case 'COPY': {
         if (!n) throw notFound();
         const dest = filesRel(destination(req));
+        if (req.method === 'COPY' && lib.samePath(dest, n.path))
+          throw new HttpError(403, 'Source and destination are the same');
         const overwrite = req.headers.overwrite !== 'F';
-        const existed = fs.existsSync(lib.abs(dest));
+        const existed = fs.existsSync(lib.abs(dest)) && !lib.samePath(dest, n.path);
         if (existed && !overwrite) throw new HttpError(412, 'Destination exists');
         if (req.method === 'MOVE') lib.move(n.id, dest, { overwrite });
         else {
-          if (existed) lib.trash(lib.nodeByPath(dest)?.id ?? lib.mkdir(dest));
+          if (existed) {
+            const d = lib.nodeAt(dest);
+            if (!d) throw new HttpError(409, 'Destination is not in the library index; rescan first');
+            lib.trash(d.id);
+          }
           await lib.copy(n.id, dest);
         }
         return res.writeHead(existed ? 204 : 201).end();
@@ -277,7 +284,7 @@ export function registerDav(router, ctx) {
   });
   router.add('GET', '/apps/files_trashbin/preview', async (req, res, _, url) => {
     const t = db.q('SELECT * FROM trash WHERE id = ?').get(Number(url.searchParams.get('fileId')) | 0);
-    if (!t) throw notFound();
+    if (!t || !lib.trashFile(t)) throw notFound();
     const p = url.searchParams;
     const file = await ctx.previews.get(
       `t${t.id}`,
@@ -288,6 +295,6 @@ export function registerDav(router, ctx) {
       p.get('a') !== '1',
     );
     if (!file) throw notFound();
-    sendFile(req, res, file, { type: 'image/jpeg' });
+    sendFile(req, res, file, { type: 'image/jpeg', cache: 'no-cache' });
   });
 }
