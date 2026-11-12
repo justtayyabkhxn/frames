@@ -44,6 +44,23 @@ const KNOWN_MIMES = new Set(Object.values(MIMES));
 export const mimeOf = (name) => MIMES[path.extname(name).slice(1).toLowerCase()] ?? null;
 export const ARCHIVE = '.archive';
 
+/** By extension, except .mts/.m2ts (also TypeScript modules): those need MPEG-TS sync bytes, 188 or 192 apart. */
+export function isMedia(abs) {
+  if (!mimeOf(abs)) return false;
+  if (!/\.m2?ts$/i.test(abs)) return true;
+  let fd;
+  try {
+    fd = fs.openSync(abs, 'r');
+    const b = Buffer.alloc(197);
+    fs.readSync(fd, b, 0, 197, 0);
+    return (b[0] === 0x47 && b[188] === 0x47) || (b[4] === 0x47 && b[196] === 0x47);
+  } catch {
+    return true;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 const EXIF_TAGS = [
   'DateTimeOriginal',
   'CreateDate',
@@ -177,7 +194,7 @@ export class Indexer {
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       const childAbs = path.join(abs, e.name);
       if (e.isDirectory()) yield* this.walk(childAbs, childRel);
-      else if (e.isFile() && mimeOf(e.name)) {
+      else if (e.isFile() && isMedia(childAbs)) {
         const s = await fsp.stat(childAbs).catch(() => null);
         yield s
           ? { rel: childRel, dir: false, size: s.size, mtime: Math.floor(s.mtimeMs / 1000) }
@@ -323,7 +340,7 @@ export class Indexer {
   /** Index (or re-index) a single file by relative path, e.g. after upload or move. */
   async indexPath(rel) {
     const s = fs.statSync(this.ctx.abs(rel), { throwIfNoEntry: false });
-    if (!s?.isFile() || !mimeOf(rel)) return null;
+    if (!s?.isFile() || !isMedia(this.ctx.abs(rel))) return null;
     const id = this.ensureNode(rel, { dir: false, size: s.size, mtime: Math.floor(s.mtimeMs / 1000) });
     await this.indexIds([id]);
     this.ctx.onIndexed?.();

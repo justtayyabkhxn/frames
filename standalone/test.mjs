@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { isMedia } from './lib/indexer.mjs';
 import { dims, parseRange, takenFrom } from './util.mjs';
 
 assert.equal(takenFrom({ DateTimeOriginal: '2019:07:14 10:20:00' }, 0), '2019-07-14T10:20:00');
@@ -20,5 +24,20 @@ assert.deepEqual(parseRange('bytes=-30', 100), { start: 70, end: 99 });
 assert.deepEqual(parseRange('bytes=-300', 100), { start: 0, end: 99 });
 assert.equal(parseRange('bytes=100-', 100), false);
 assert.equal(parseRange('bytes=20-10', 100), false);
+
+// .mts is also a TypeScript module: only MPEG-TS content is media
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-test-'));
+const write = (name, buf) => (fs.writeFileSync(path.join(tmp, name), buf), path.join(tmp, name));
+const ts = (packet, lead = 0) => {
+  const buf = Buffer.alloc(packet * 3);
+  for (let i = lead; i < buf.length; i += packet) buf[i] = 0x47;
+  return buf;
+};
+assert.equal(isMedia(write('index.d.mts', 'export declare const x: number;\n'.repeat(20))), false);
+assert.equal(isMedia(write('clip.mts', ts(192, 4))), true);
+assert.equal(isMedia(write('clip.m2ts', ts(188))), true);
+assert.equal(isMedia(write('photo.jpg', 'x')), true);
+assert.equal(isMedia(write('notes.txt', 'x')), false);
+fs.rmSync(tmp, { recursive: true, force: true });
 
 console.log('ok');
