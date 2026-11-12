@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isMedia } from './lib/indexer.mjs';
+import { previewKey } from './lib/previews.mjs';
 import { dims, parseRange, takenFrom } from './util.mjs';
 
 assert.equal(takenFrom({ DateTimeOriginal: '2019:07:14 10:20:00' }, 0), '2019-07-14T10:20:00');
@@ -39,5 +40,12 @@ assert.equal(isMedia(write('clip.m2ts', ts(188))), true);
 assert.equal(isMedia(write('photo.jpg', 'x')), true);
 assert.equal(isMedia(write('notes.txt', 'x')), false);
 fs.rmSync(tmp, { recursive: true, force: true });
+
+// Preview tiers; the viewer asks for x = y = -1, meaning the largest screen preview
+assert.equal(previewKey(256, 256, true), 's256');
+assert.equal(previewKey(511, 300, false), 'f512');
+assert.equal(previewKey(1921, 1201, false), 'f2048');
+assert.equal(previewKey(9999, 9999, false), 'f4096');
+assert.equal(previewKey(-1, -1, false), 'f2048');
 
 console.log('ok');

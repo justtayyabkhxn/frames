@@ -6,6 +6,15 @@ import { exiftool, run } from './tools.mjs';
 const FIT = [256, 512, 1024, 2048, 4096];
 const SQUARE = [64, 128, 256, 512, 1024];
 const BASE = 1024;
+const SCREEN = 2048;
+
+/** Cache key of the tier serving request (x, y); non-positive sizes mean the largest screen preview. */
+export function previewKey(x, y, square) {
+  const need = Math.max(x, y);
+  const tiers = square ? SQUARE : FIT;
+  const t = tiers.find((s) => s >= (need > 0 ? need : SCREEN)) ?? tiers.at(-1);
+  return `${square ? 's' : 'f'}${t}`;
+}
 
 const fitFilter = (t) => `scale=w=min(${t}\\,iw):h=min(${t}\\,ih):force_original_aspect_ratio=decrease`;
 const sqFilter = (t) => `scale=w=${t}:h=${t}:force_original_aspect_ratio=increase,crop=${t}:${t}`;
@@ -91,10 +100,8 @@ export class Previews {
 
   /** Path of a cached preview for request (x, y, a), generating it if needed. */
   async get(id, src, video, x, y, square) {
-    const need = Math.max(x, y, 1);
-    const tiers = square ? SQUARE : FIT;
-    const t = tiers.find((s) => s >= need) ?? tiers.at(-1);
-    const key = `${square ? 's' : 'f'}${t}`;
+    const key = previewKey(x, y, square);
+    const t = Number(key.slice(1));
     const out = this.file(id, key);
     if (fs.existsSync(out)) return out;
 
