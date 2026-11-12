@@ -279,6 +279,7 @@ export class Indexer {
       console.error(e);
     }
     status.phase = 'idle';
+    this.ctx.onIndexed?.();
     console.log(`Index ready: ${db.q('SELECT count(*) AS n FROM media').get().n} items.`);
   }
 
@@ -288,6 +289,7 @@ export class Indexer {
     if (!s?.isFile() || !mimeOf(rel)) return null;
     const id = this.ensureNode(rel, { dir: false, size: s.size, mtime: Math.floor(s.mtimeMs / 1000) });
     await this.indexIds([id]);
+    this.ctx.onIndexed?.();
     return id;
   }
 }

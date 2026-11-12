@@ -118,6 +118,7 @@ export function registerApi(router, ctx) {
     }
     return f;
   }
+  ctx.filter = filter;
   const from = (f) => `FROM media m JOIN nodes n ON n.id = m.id ${f.joins.join(' ')} WHERE ${f.where.join(' AND ')}`;
 
   const monthOf = (dayid) => {
@@ -211,8 +212,8 @@ export function registerApi(router, ctx) {
       vod_disable: false,
       video_default_quality: '0',
       places_gis: ctx.placesGis?.() ?? -1,
-      places_search_url: '',
-      map_tile_servers: null,
+      places_search_url: ctx.placesSearchUrl?.() ?? '',
+      map_tile_servers: ctx.mapTileServers ?? null,
       map_cluster_density: 1,
       language: ctx.language,
       locale: ctx.locale,
@@ -229,6 +230,7 @@ export function registerApi(router, ctx) {
     };
     for (const [key, name, , t] of SETTINGS)
       out[name] = castSetting(db.getKv(`user.${key}`, SETTINGS.find((s) => s[0] === key)[2]), t);
+    out.map_tile_server_url ||= ctx.mapTileUrl?.() ?? '';
     json(res, out);
   });
   router.add('PUT', `${API}/config/:key`, async (req, res, { key }) => {
