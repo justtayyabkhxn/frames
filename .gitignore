@@ -45,3 +45,4 @@ bin-ext/
 standalone/data/
 standalone/bin/
 /tools/
+/dist/
