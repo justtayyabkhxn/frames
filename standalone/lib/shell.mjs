@@ -20,6 +20,7 @@ const LIGHT = `
   --color-primary-element-text-dark: #f0f0f0; --color-primary-element-extra-light: #f2f7fa; --color-primary-element-extra-light-hover: #e8f0f5;
   --background-invert-if-dark: no; --background-invert-if-bright: invert(100%);
   --primary-invert-if-bright: no; --primary-invert-if-dark: invert(100%);
+  --color-background-plain: #00679e; --color-background-plain-text: #ffffff;
   color-scheme: light;`;
 
 const DARK = `
@@ -42,6 +43,7 @@ const DARK = `
   --color-primary-element-text-dark: #0a2233; --color-primary-element-extra-light: #0d2536; --color-primary-element-extra-light-hover: #123048;
   --background-invert-if-dark: invert(100%); --background-invert-if-bright: no;
   --primary-invert-if-bright: invert(100%); --primary-invert-if-dark: no;
+  --color-background-plain: #0e1a2b; --color-background-plain-text: #ffffff;
   color-scheme: dark;`;
 
 const COMMON = `
@@ -53,7 +55,7 @@ const COMMON = `
   --border-radius: 3px; --border-radius-small: 4px; --border-radius-element: 8px; --border-radius-large: 10px;
   --border-radius-rounded: 28px; --border-radius-container: 12px; --border-radius-container-large: 16px; --border-radius-pill: 100px;
   --default-clickable-area: 34px; --clickable-area-large: 48px; --clickable-area-small: 24px; --default-grid-baseline: 4px;
-  --header-height: 0px; --header-menu-item-height: 44px; --navigation-width: 300px;
+  --header-height: 50px; --header-menu-item-height: 44px; --navigation-width: 300px;
   --sidebar-min-width: 300px; --sidebar-max-width: 500px;
   --body-container-radius: 0px; --body-container-margin: 0px;
   --body-height: calc(100% - env(safe-area-inset-bottom));
@@ -61,7 +63,6 @@ const COMMON = `
   --color-box-shadow: rgba(var(--color-box-shadow-rgb), .5);
   --color-scrollbar: var(--color-border-maxcontrast) transparent;
   --gradient-primary-background: linear-gradient(40deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
-  --color-background-plain: var(--color-main-background); --color-background-plain-text: var(--color-main-text);
   --filter-background-blur: blur(25px);`;
 
 const BASE_CSS = `
@@ -77,7 +78,20 @@ const BASE_CSS = `
   *, *::before, *::after { box-sizing: border-box; }
   button, input, select, textarea { font: inherit; color: inherit; }
   a { color: inherit; text-decoration: none; }
-  #content, #content-vue { display: flex; position: fixed; inset: 0; height: 100%; width: 100%; overflow: hidden; }
+  #content, #content-vue { display: flex; position: fixed; inset: var(--header-height) 0 0 0; height: auto; width: 100%; overflow: hidden; }
+  #header {
+    position: fixed; inset: 0 0 auto 0; height: var(--header-height); z-index: 2000;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px 0 12px;
+    background: var(--color-background-plain); color: var(--color-background-plain-text);
+  }
+  #header .header-start, #header .header-end { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  #header .frames-logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+  #header .frames-logo img { width: 22px; height: 22px; }
+  #frames-status { display: flex; align-items: center; gap: 10px; font-size: var(--font-size-small); white-space: nowrap; opacity: .9; }
+  #frames-status[hidden] { display: none; }
+  #frames-status .bar { width: 120px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .25); overflow: hidden; }
+  #frames-status .bar i { display: block; height: 100%; width: 100%; background: #fff; transform-origin: left; transform: scaleX(0); transition: transform .4s; }
+  @media (max-width: 600px) { #frames-status .label { display: none; } }
   .hidden-visually { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 `;
 
@@ -127,7 +141,49 @@ export function renderShell(ctx) {
 <script defer src="/apps/memories/js/memories-main.js?v=${esc(ctx.buildId)}"></script>
 </head>
 <body id="body-user" class="theme--default">
+<div id="skip-actions"></div>
+<header id="header">
+  <div class="header-start">
+    <a class="frames-logo" href="/apps/memories/"><img src="/apps/memories/img/app.svg" alt=""><span>Frames</span></a>
+  </div>
+  <div class="header-end">
+    <div id="frames-status" role="status" hidden><span class="label"></span><span class="bar"><i></i></span></div>
+  </div>
+</header>
 <main id="content" class="app-memories"></main>
+<script>
+  // Indexing progress in the header; refreshes the timeline as photos become ready
+  (function () {
+    var box = document.getElementById('frames-status');
+    var label = box.querySelector('.label');
+    var bar = box.querySelector('.bar i');
+    var wasBusy = false;
+    var lastRefresh = 0;
+    var refresh = function () {
+      lastRefresh = Date.now();
+      try { window._nc_event_bus && window._nc_event_bus.emit('memories:timeline:soft-refresh', null); } catch (e) {}
+    };
+    function poll() {
+      fetch('/apps/memories/api/frames/status').then(function (r) { return r.json(); }).then(function (s) {
+        var busy = s.phase !== 'idle';
+        box.hidden = !busy;
+        if (s.phase === 'scanning') {
+          label.textContent = 'Looking for photos… ' + s.found.toLocaleString() + ' found';
+          bar.style.transform = 'scaleX(0)';
+        } else if (s.phase === 'indexing') {
+          label.textContent = 'Preparing photos ' + s.done.toLocaleString() + ' / ' + s.total.toLocaleString();
+          bar.style.transform = 'scaleX(' + (s.total ? s.done / s.total : 0) + ')';
+          if (Date.now() - lastRefresh > 20000) refresh();
+        }
+        box.title = label.textContent;
+        if (wasBusy && !busy) refresh();
+        wasBusy = busy;
+        setTimeout(poll, busy ? 1500 : 10000);
+      }).catch(function () { setTimeout(poll, 10000); });
+    }
+    poll();
+  })();
+</script>
 </body>
 </html>`;
 }

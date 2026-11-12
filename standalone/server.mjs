@@ -19,9 +19,11 @@ import { Previews } from './lib/previews.mjs';
 import { renderShell } from './lib/shell.mjs';
 import { APP_ROOT, findExiftool, findFfmpeg } from './lib/tools.mjs';
 
-const DATA = process.env.FRAMES_DATA ? path.resolve(process.env.FRAMES_DATA) : path.join(APP_ROOT, 'standalone', 'data');
+const DATA = process.env.FRAMES_DATA
+  ? path.resolve(process.env.FRAMES_DATA)
+  : path.join(APP_ROOT, 'standalone', 'data');
 const CONFIG = path.join(DATA, 'config.json');
-const JS = path.join(APP_ROOT, 'js');
+const JS = process.env.FRAMES_JS ? path.resolve(process.env.FRAMES_JS) : path.join(APP_ROOT, 'js');
 const PORT = Number(process.env.PORT) || 7310;
 const arg = (name) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
 
@@ -95,7 +97,15 @@ const server = http.createServer(async (req, res) => {
     // State changes need the page's token (blocks cross-site requests)
     const sameOrigin = req.headers['sec-fetch-site'] === 'same-origin' || req.headers.requesttoken === ctx.token;
     if (!SAFE.has(req.method) && !sameOrigin) throw new HttpError(403, 'Cross-site request blocked');
-    if (p.startsWith('/apps/memories/static/')) throw new HttpError(404, 'Not available offline');
+    // No offline caching worker: serve an empty one so registration succeeds quietly
+    if (p === '/apps/memories/static/service-worker.js') {
+      res.writeHead(200, {
+        'Content-Type': 'text/javascript',
+        'Service-Worker-Allowed': '/',
+        'Cache-Control': 'no-store',
+      });
+      return res.end('// Frames: no service worker cache');
+    }
 
     if (p === '/' || p === '/apps/memories') return res.writeHead(302, { Location: '/apps/memories/' }).end();
     if (p.startsWith('/apps/memories/js/'))
