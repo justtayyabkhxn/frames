@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { dims, parseRange, takenFrom } from './util.mjs';
 
 assert.equal(takenFrom({ DateTimeOriginal: '2019:07:14 10:20:00' }, 0), '2019-07-14T10:20:00');
-assert.equal(takenFrom({ DateTimeOriginal: '0000:00:00 00:00:00', CreateDate: '2023:03:04 12:00:00+05:30' }, 0), '2023-03-04T12:00:00');
+assert.equal(
+  takenFrom({ DateTimeOriginal: '0000:00:00 00:00:00', CreateDate: '2023:03:04 12:00:00+05:30' }, 0),
+  '2023-03-04T12:00:00',
+);
 assert.match(takenFrom({}, Date.UTC(2020, 0, 1)), /^20(19-12-31|20-01-01)T/);
 
 assert.deepEqual(dims({ ImageWidth: 1600, ImageHeight: 900, Orientation: 6 }), [900, 1600]);

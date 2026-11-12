@@ -44,3 +44,4 @@ bin-ext/
 # Frames standalone
 standalone/data/
 standalone/bin/
+/tools/
