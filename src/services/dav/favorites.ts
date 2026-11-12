@@ -1,0 +1,95 @@
+import { showError } from '@services/utils/dialog';
+
+import client from './client';
+import * as base from './base';
+import * as xml from './xml';
+
+import { translate as t } from '@services/l10n';
+import { constants } from '@services/constants';
+import { isAbortError } from '@services/utils/abort';
+
+import type { RouteLocationNormalized } from 'vue-router';
+import type { IFileInfo, IPhoto } from '@typings';
+import type { AbortOpts } from '@services/utils/abort';
+
+/**
+ * Favorite a file
+ * https://github.com/nextcloud/photos/blob/4c3f62ceb0ef2a0007f4a8117d9655f1303fde6e/src/store/files.js
+ *
+ * @param fileName - The file's name
+ * @param favoriteState - The new favorite state
+ */
+function favoriteFile(fileName: string, favoriteState: boolean, opts?: AbortOpts) {
+  return client.customRequest(fileName, {
+    method: 'PROPPATCH',
+    data: xml.propertyUpdate({ 'oc:favorite': favoriteState ? '1' : '0' }),
+    signal: opts?.signal,
+  });
+}
+
+/**
+ * Favorite all files in a given list of photos
+ *
+ * @param photos list of photos
+ * @param favoriteState the new favorite state
+ * @returns generator of lists of file ids that were state-changed
+ */
+export async function* favoritePhotos(
+  photos: IPhoto[],
+  favoriteState: boolean,
+  opts: { route: RouteLocationNormalized } & AbortOpts,
+) {
+  if (photos.length === 0) {
+    return;
+  }
+
+  // Get files data
+  let fileInfos: IFileInfo[] = [];
+  try {
+    fileInfos = await base.getFiles(photos, { route: opts.route, signal: opts.signal });
+  } catch (e) {
+    if (isAbortError(e)) throw e;
+    console.error('Failed to get file info', photos, e);
+    showError(t('memories', 'Failed to favorite files.'));
+    return;
+  }
+
+  if (fileInfos.length !== photos.length) {
+    showError(t('memories', 'Failed to favorite some files.'));
+  }
+
+  // Favorite each file
+  const photoMap = new Map(photos.map((p) => [p.fileid, p]));
+  const calls = fileInfos.map((fileInfo) => async () => {
+    try {
+      opts.signal?.throwIfAborted();
+      await favoriteFile(fileInfo.originalFilename, favoriteState, opts);
+      favoriteSetFlag(photoMap.get(fileInfo.fileid)!, favoriteState);
+      return fileInfo.fileid as number;
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      console.error('Failed to favorite', fileInfo, error);
+      showError(
+        t('memories', 'Failed to favorite {fileName}.', {
+          fileName: fileInfo.filename,
+        }),
+      );
+      return 0;
+    }
+  });
+
+  yield* base.runInParallel(calls, 10, opts);
+}
+
+/**
+ * Set the favorite flag on a photo
+ * @param photo Photo to set the flag on
+ * @param val New value of the flag
+ */
+export function favoriteSetFlag(photo: IPhoto, val: boolean) {
+  if (val) {
+    photo.flag |= constants.FLAG_IS_FAVORITE;
+  } else {
+    photo.flag &= ~constants.FLAG_IS_FAVORITE;
+  }
+}

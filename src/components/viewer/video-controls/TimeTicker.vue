@@ -1,0 +1,57 @@
+<template>
+  <div class="m-vc-time-ticker" role="timer" :title="tickerText" :aria-label="tickerText">
+    <span>{{ elapsedStr }}</span
+    ><span aria-hidden="true"> / </span><span>{{ totalStr }}</span>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue';
+import { useEventListener } from '@vueuse/core';
+
+import { t } from '@services/l10n';
+import * as vutils from './utils';
+
+import type { VideoController } from '@typings';
+
+const props = defineProps<{
+  video?: VideoController | null;
+}>();
+
+const currentTime = ref(0);
+const duration = ref(0);
+
+const showHours = computed(() => duration.value >= 3600);
+const elapsedStr = computed(() => vutils.formatMediaTime(currentTime.value, showHours.value));
+const totalStr = computed(() => vutils.formatMediaTime(duration.value, showHours.value));
+const tickerText = computed(() =>
+  t('memories', '{elapsed} / {total}', { elapsed: elapsedStr.value, total: totalStr.value }),
+);
+
+function onVideoTimeUpdate() {
+  if (props.video) {
+    currentTime.value = props.video.currentTime;
+  }
+}
+
+function onVideoDurationChange() {
+  if (props.video && Number.isFinite(props.video.duration)) {
+    duration.value = props.video.duration;
+  }
+}
+
+useEventListener(() => props.video, 'timeupdate', onVideoTimeUpdate);
+useEventListener(() => props.video, ['durationchange', 'loadedmetadata'], onVideoDurationChange);
+
+onMounted(() => {
+  onVideoTimeUpdate();
+  onVideoDurationChange();
+});
+</script>
+
+<style lang="scss" scoped>
+.m-vc-time-ticker {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+</style>

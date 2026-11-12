@@ -1,0 +1,345 @@
+<template>
+  <Modal ref="modal" @close="cleanup" size="normal" v-if="show">
+    <template #title>
+      {{ n('memories', 'Share File', 'Share Files', photos?.length ?? 0) }}
+    </template>
+
+    <div class="loading-icon fill-block" v-if="loading > 0">
+      <XLoadingIcon />
+    </div>
+
+    <ul class="options" v-else>
+      <NcListItem
+        v-if="canShareNative && canShareLowRes"
+        :name="t('memories', 'Reduced Size')"
+        :bold="false"
+        @click.prevent="shareLowRes()"
+      >
+        <template #icon>
+          <PhotoIcon class="avatar" :size="24" />
+        </template>
+
+        <template #subname>
+          {{ t('memories', 'Share in lower quality (small file size)') }}
+        </template>
+      </NcListItem>
+
+      <NcListItem
+        v-if="canShareNative && canShareHighRes"
+        :name="t('memories', 'High Resolution')"
+        :bold="false"
+        @click.prevent="shareHighRes()"
+      >
+        <template #icon>
+          <LargePhotoIcon class="avatar" :size="24" />
+        </template>
+
+        <template #subname>
+          {{ t('memories', 'Share in high quality (large file size)') }}
+        </template>
+      </NcListItem>
+
+      <NcListItem
+        v-if="canShareNative && canDownload"
+        :name="t('memories', 'Original File')"
+        :bold="false"
+        @click.prevent="shareOriginal()"
+      >
+        <template #icon>
+          <FileIcon class="avatar" :size="24" />
+        </template>
+
+        <template #subname>
+          {{ n('memories', 'Share the original file', 'Share the original files', photos?.length ?? 0) }}
+        </template>
+      </NcListItem>
+
+      <NcListItem v-if="canShareLink" :name="t('memories', 'Public Link')" :bold="false" @click.prevent="shareLink">
+        <template #icon>
+          <LinkIcon class="avatar" :size="24" />
+        </template>
+
+        <template #subname>
+          {{ t('memories', 'Share an external Nextcloud link') }}
+        </template>
+      </NcListItem>
+    </ul>
+  </Modal>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, useTemplateRef, defineAsyncComponent } from 'vue';
+
+import { showError } from '@services/utils/dialog';
+import axios from '@nextcloud/axios';
+
+const NcListItem = defineAsyncComponent(() => import('@nextcloud/vue/components/NcListItem'));
+
+import Modal from './Modal.vue';
+import XLoadingIcon from '@components/XLoadingIcon.vue';
+
+import { useModal } from '@services/modal';
+import { t, n } from '@services/l10n';
+import { config } from '@services/user-config';
+import { useRouteIs } from '@services/route-is';
+import { API } from '@services/API';
+import { ignoreAbort, isAbortError, useAbort } from '@services/utils/abort-vue';
+import * as dav from '@services/dav';
+import * as utils from '@services/utils/common';
+import * as nativex from '@native';
+
+import type { IPhoto } from '@typings';
+
+import PhotoIcon from 'vue-material-design-icons/Image.vue';
+import LargePhotoIcon from 'vue-material-design-icons/ImageArea.vue';
+import LinkIcon from 'vue-material-design-icons/LinkVariant.vue';
+import FileIcon from 'vue-material-design-icons/File.vue';
+
+defineOptions({
+  name: 'ShareModal',
+});
+
+const modal = useTemplateRef('modal');
+const { show, close } = useModal(modal);
+const photos = ref<IPhoto[] | null>(null);
+const loading = ref(0);
+const abort = useAbort();
+const routeIs = useRouteIs();
+
+const isSingle = computed(() => photos.value?.length === 1);
+const hasVideos = computed(() => Boolean(photos.value?.some(utils.isVideo)));
+const hasLocal = computed(() => Boolean(photos.value?.some(utils.isLocalPhoto)));
+
+const canDownload = computed(() => photos.value?.every((p) => !p.imageInfo?.permissions?.includes('L')) ?? true);
+const canShareNative = computed(() => 'share' in navigator || nativex.has());
+
+const canShareLowRes = computed(
+  // Only allow transcoding videos if a single video is selected
+  () => !hasLocal.value && (!hasVideos.value || (!config.vod_disable && isSingle.value)),
+);
+
+const canShareHighRes = computed(
+  // High-CPU operations only permitted for single node
+  () => isSingle.value && canShareLowRes.value,
+);
+
+const canShareLink = computed(() => {
+  if (routeIs.Albums || !photos.value?.length || hasLocal.value) return false;
+
+  // Check if all imageInfos are loaded (e.g. on viewer)
+  // Then check if all images can be shared
+  if (photos.value.every((p) => !!p.imageInfo)) {
+    return Boolean(photos.value.every((p) => p.imageInfo?.permissions?.includes('S')));
+  }
+
+  // If imageInfos are not loaded, fail later
+  return true;
+});
+
+console.assert(!_m.modals.sharePhotos, 'ShareModal created twice');
+_m.modals.sharePhotos = open;
+
+function open(photosIn: IPhoto[]) {
+  photos.value = photosIn;
+  loading.value = 0;
+  show.value = true;
+}
+
+function cleanup() {
+  abort.abort();
+  show.value = false;
+  photos.value = null;
+}
+
+async function l<T>(cb: () => Promise<T>): Promise<T> {
+  try {
+    loading.value++;
+    return await cb();
+  } finally {
+    loading.value--;
+  }
+}
+
+async function shareLowRes() {
+  await shareWithHref(
+    photos.value!.map((photo) => ({
+      auid: String(), // no local
+      href: utils.isVideo(photo)
+        ? API.VIDEO_TRANSCODE(photo.fileid, '480p.mp4', [])
+        : utils.getPreviewUrl({ photo, size: 2048 }),
+    })),
+  );
+}
+
+async function shareHighRes() {
+  await shareWithHref(
+    photos.value!.map((photo) => ({
+      auid: String(), // no local
+      href: utils.isVideo(photo)
+        ? API.VIDEO_TRANSCODE(photo.fileid, '1080p.mp4', [])
+        : API.IMAGE_DECODABLE(photo.fileid, photo.etag),
+    })),
+  );
+}
+
+async function shareOriginal() {
+  await shareWithHref(
+    photos.value!.map((photo) => ({
+      auid: photo.auid ?? String(),
+      href: dav.getDownloadLink(photo),
+    })),
+  );
+}
+
+async function shareLink() {
+  // Check if we have photos
+  if (!photos.value) return;
+  const signal = abort.renew();
+
+  // Fill in image infos to get permissions and paths
+  await ignoreAbort(l(async () => await dav.fillImageInfo(photos.value!, undefined, undefined, { signal })));
+  if (signal.aborted) return;
+
+  // Check if permissions allow sharing
+  for (const photo of photos.value!) {
+    // Error shown by fillImageInfo
+    if (!photo.imageInfo) return;
+
+    // Check if we can share this file
+    if (!photo.imageInfo.permissions?.includes('S')) {
+      const err = t('memories', 'Not allowed to share file: {name}', {
+        name: photo.basename ?? photo.fileid,
+      });
+      showError(err);
+      return;
+    }
+  }
+
+  // Open node share modal if single file
+  if (photos.value.length === 1) {
+    const filename = photos.value[0].imageInfo!.filename;
+    if (!filename) return;
+    await close(); // wait till transition is done
+    _m.modals.shareNodeLink(filename, true);
+    return;
+  }
+
+  // Generate random alphanumeric string name for album
+  const name = `.link-${(Math.random() + 1).toString(36).slice(2)}`;
+
+  // Create hidden album if multiple files are selected
+  await ignoreAbort(
+    l(async () => {
+      // Create album using WebDAV
+      try {
+        signal.throwIfAborted();
+        await dav.createAlbum(name, { signal });
+      } catch (e) {
+        if (isAbortError(e)) return null;
+        showError(t('memories', 'Failed to create album for public link'));
+        return null;
+      }
+
+      // Album is created, now add photos to it
+      for await (const _ of dav.addToAlbum(utils.uid!, name, photos.value!, { signal })) {
+        signal.throwIfAborted();
+      }
+      signal.throwIfAborted();
+
+      // Open album share modal
+      await close(); // wait till transition is done (aborts signal via cleanup)
+      await _m.modals.albumShare(utils.uid!, name, true);
+    }),
+  );
+}
+
+/**
+ * Download a file and then share the blob.
+ *
+ * If a download object includes AUID then local download
+ * is allowed when on NativeX.
+ */
+async function shareWithHref(
+  objects: {
+    auid: string;
+    href: string;
+  }[],
+) {
+  const signal = abort.renew();
+
+  if (nativex.has()) {
+    try {
+      return await l(async () => nativex.shareBlobs(objects));
+    } catch (e) {
+      if (isAbortError(e)) return;
+      showError(t('memories', 'Failed to download file for sharing'));
+      return;
+    }
+  }
+
+  // Pull blobs in parallel
+  const calls = objects.map((obj) => async () => {
+    return await l(async () => {
+      try {
+        signal.throwIfAborted();
+        return await axios.get(obj.href, { responseType: 'blob', signal });
+      } catch (e) {
+        if (isAbortError(e)) throw e;
+        showError(t('memories', 'Failed to download file {href}', { href: obj.href }));
+        return null;
+      }
+    });
+  });
+
+  // Get all blobs from parallel calls
+  const files: File[] = [];
+  await ignoreAbort(
+    (async () => {
+      for await (const responses of dav.runInParallel(calls, 8, { signal })) {
+        for (const res of responses.filter(Boolean)) {
+          const blob = res!.data;
+          const ext = blob.type.split('/').pop() || 'bin';
+          const cd = res!.headers['content-disposition'] ?? '';
+          const filename = cd.match(/filename="?([^";]+)"?/)?.[1] ?? `download.${ext}`;
+          files.push(new File([blob], filename, { type: blob.type }));
+        }
+      }
+    })(),
+  );
+  if (!files.length || signal.aborted) return;
+
+  // Check if we can share this type of data
+  if (typeof navigator.canShare === 'function' && !navigator.canShare({ files })) {
+    showError(t('memories', 'Cannot share this type of data'));
+    return;
+  }
+
+  try {
+    await navigator.share({ files });
+  } catch (e) {
+    if (isAbortError(e)) return;
+    // Don't show this error because it's silly stuff
+    // like "share canceled"
+    console.error(e);
+  }
+}
+</script>
+
+<style lang="scss" scoped>
+.loading-icon {
+  min-height: 240px;
+}
+
+ul.options {
+  padding-top: 10px;
+  padding-bottom: 5px;
+
+  :deep(.avatar) {
+    padding: 0 0.5em;
+  }
+
+  @media (max-width: 512px) {
+    font-size: 0.9em;
+  }
+}
+</style>

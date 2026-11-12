@@ -1,0 +1,29 @@
+// Increase padding on popper menu to make it clickable
+.v-popper__popper ul[role='menu'] li {
+  padding: 3px !important;
+  &:hover {
+    padding: 3px !important;
+  }
+  .action-button__longtext-wrapper {
+    margin-left: 3px;
+  }
+}
+
+// Make tag dropdown show over modal
+ul.nc-select__dropdown {
+  z-index: 10000;
+}
+
+// Keep small dialogs compact on mobile
+// https://github.com/nextcloud-libraries/nextcloud-vue/pull/8956
+@media only screen and (max-width: 512px) {
+  body .dialog__modal .modal-wrapper--small .modal-container {
+    width: fit-content;
+    max-width: 90%;
+    height: unset;
+    max-height: 90%;
+    position: relative;
+    top: unset;
+    border-radius: var(--border-radius-element);
+  }
+}

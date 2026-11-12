@@ -1,0 +1,37 @@
+// Native app styles
+html.native {
+  // Fill up space
+  > body > #content,
+  > body > #content > #content-vue {
+    margin-top: 0 !important;
+    height: 100vh !important;
+  }
+
+  // Native app has no header
+  > header#header {
+    display: none !important;
+  }
+
+  // Pass through to the element below
+  &,
+  > body,
+  > body > #content {
+    background: transparent !important;
+    background-color: transparent !important;
+    background-image: none !important;
+    backdrop-filter: none !important;
+  }
+
+  > body > .memories-viewer .nativex-hole {
+    .pswp__img--placeholder {
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+    .pswp__img {
+      > img {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+    }
+  }
+}

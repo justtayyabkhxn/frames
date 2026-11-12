@@ -1,0 +1,188 @@
+<template>
+  <router-link
+    draggable="false"
+    class="folder fill-block"
+    :class="{
+      [`folder--${sanitizedName}`]: true,
+      'has-previews': previews.length > 0,
+      'single-preview': previews.length === 1,
+    }"
+    :to="target"
+  >
+    <div class="big-icon top-left fill-block">
+      <FolderIcon class="icon" />
+      <div class="name">{{ data.name }}</div>
+    </div>
+
+    <div class="previews fill-block">
+      <div class="preview-container fill-block">
+        <div class="img-outer" v-for="info of previews" :key="info.fileid">
+          <XImg class="ximg fill-block" :src="previewUrl(info)" />
+        </div>
+      </div>
+    </div>
+  </router-link>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
+
+import * as utils from '@services/utils/common';
+
+import type { IFolder, IPhoto } from '@typings';
+
+import FolderIcon from 'vue-material-design-icons/Folder.vue';
+import XImg from '@components/frame/XImg.vue';
+
+defineOptions({
+  name: 'Folder',
+});
+
+const props = defineProps<{
+  data: IFolder;
+}>();
+
+const route = useRoute();
+
+/** Open folder */
+const target = computed(() => {
+  let path: string[] | string = route.params.path || [];
+  if (typeof path === 'string') {
+    path = path.split('/');
+  }
+
+  path = [...path, props.data.name]; // intentional copy
+  return {
+    name: route.name,
+    params: { ...route.params, path },
+    query: route.query,
+  };
+});
+
+const previews = computed((): IPhoto[] => {
+  const previews = props.data.previews;
+  if (!previews?.length) {
+    return [];
+  }
+
+  if (previews.length > 0 && previews.length < 4) {
+    return [previews[0]];
+  } else {
+    return previews.slice(0, 4);
+  }
+});
+
+const sanitizedName = computed((): string => {
+  return props.data.name.replaceAll(/[^a-zA-Z0-9-_]/g, '');
+});
+
+/** Get preview url */
+function previewUrl(info: IPhoto) {
+  return utils.getPreviewUrl({
+    photo: info,
+    sqsize: 256,
+  });
+}
+</script>
+
+<style lang="scss" scoped>
+.folder {
+  cursor: pointer;
+}
+
+.big-icon {
+  cursor: pointer;
+  z-index: 100;
+  transition: opacity 0.2s ease-in-out;
+
+  :deep(.material-design-icon__svg) {
+    width: 50%;
+    height: 50%;
+  }
+
+  > .name {
+    cursor: pointer;
+    width: 100%;
+    padding: 0 5%;
+    text-align: center;
+    font-size: 1.08em;
+    word-wrap: break-word;
+    text-overflow: ellipsis;
+    max-height: 35%;
+    line-height: 1em;
+    position: absolute;
+    top: 65%;
+
+    @media (max-width: 768px) {
+      font-size: 0.95em;
+    }
+  }
+
+  // Make it white if there is a preview
+  .folder.has-previews > & {
+    .folder-icon {
+      opacity: 1;
+      filter: invert(1) brightness(100);
+    }
+    .name {
+      color: white;
+    }
+  }
+
+  // Show it on hover if not a preview
+  .folder:hover > & > .folder-icon {
+    opacity: 0.8;
+  }
+  .folder.has-previews:hover > & {
+    opacity: 0;
+  }
+
+  > .folder-icon {
+    cursor: pointer;
+    height: 90%;
+    width: 100%;
+    opacity: 0.3;
+  }
+}
+
+.previews {
+  z-index: 3;
+  line-height: 0;
+  position: absolute;
+  box-sizing: border-box;
+
+  .preview-container {
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .img-outer {
+    background-color: var(--color-background-dark);
+    padding: 0;
+    margin: 0;
+    width: 50%;
+    height: 50%;
+    display: inline-block;
+
+    .folder.single-preview > & {
+      width: 100%;
+      height: 100%;
+    }
+
+    > img {
+      object-fit: cover;
+      padding: 0;
+      filter: brightness(50%);
+      transition: filter 0.2s ease-in-out;
+
+      &.error {
+        display: none;
+      }
+      .folder:hover & {
+        filter: brightness(100%);
+      }
+    }
+  }
+}
+</style>

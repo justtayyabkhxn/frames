@@ -1,0 +1,118 @@
+// Video player styles (managed by PsVideo.ts). Scoped to the viewer root;
+// the player itself lives in PhotoSwipe slide holders below it.
+.memories-viewer {
+  .video-container {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: var(--vw, 100%);
+    height: var(--vh, 100%);
+    align-items: center;
+    justify-content: center;
+    display: none;
+
+    .memories-video-stage {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: transparent !important;
+      transform-origin: 0 0; // onZoomPanUpdate
+
+      .memories-video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        touch-action: none;
+        -webkit-touch-callout: none;
+        pointer-events: none;
+        background: transparent !important;
+      }
+
+      viewer-video-native-hole {
+        display: block;
+      }
+    }
+
+    viewer-controls {
+      position: absolute;
+      inset: 0;
+      z-index: 6;
+      pointer-events: none;
+    }
+  }
+
+  // Full-viewport player once fully opened; the opening transition
+  // uses the video-sized box. The mirror transform assumes this layout.
+  &.fully-opened {
+    .video-container {
+      left: 0;
+      top: 0;
+      transform: none;
+      width: 100%;
+      height: 100%;
+      display: flex;
+
+      // Bottom gradient for videos. Lives in the slide above video,
+      // so it never covers the controls like the viewer-level bottom bar would.
+      &::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 180px;
+        max-height: 40%;
+        background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.35));
+        pointer-events: none;
+        z-index: 5;
+        opacity: 0;
+        visibility: hidden;
+        transition:
+          opacity 0.2s ease-in-out,
+          visibility 0.2s allow-discrete;
+
+        @media (max-width: 768px) {
+          height: 250px;
+          max-height: 50%;
+        }
+      }
+    }
+
+    .pswp__item:has(video[data-started]) {
+      .pswp__img--placeholder {
+        display: none;
+      }
+    }
+  }
+
+  &:has(.pswp--ui-visible) .video-container .m-vc-controls {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  &:has(.pswp--ui-visible) .video-container::after {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  &:has(.pswp--ui-visible) .video-container .memories-video {
+    cursor: auto;
+  }
+
+  .video-container .m-vc:has(.m-vc-buffering) .m-vc-center {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  // Native video is paused while hidden for pinch/drag to close.
+  .nativex-fading .video-container {
+    .m-vc-buffering,
+    .m-vc-center {
+      display: none;
+    }
+  }
+}

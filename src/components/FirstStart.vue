@@ -1,0 +1,204 @@
+<template>
+  <div class="native-auth">
+    <div class="card outer" :class="{ show }">
+      <div class="title">
+        <XImg class="img" :src="banner" :svg-tag="true" />
+      </div>
+
+      <div class="text">
+        {{ t('memories', 'A better photos experience awaits you') }} <br />
+        {{ t('memories', 'Choose the root folder of your timeline to begin') }}
+      </div>
+
+      <div class="error" v-if="error">
+        {{ error }}
+      </div>
+
+      <div class="info" v-if="info">
+        {{ info }} <br />
+
+        <NcButton @click="finish" class="button" variant="primary">
+          {{ t('memories', 'Continue to Memories') }}
+        </NcButton>
+      </div>
+
+      <div class="buttons">
+        <NcButton @click="begin" class="button" v-if="info">
+          {{ t('memories', 'Choose again') }}
+        </NcButton>
+        <NcButton @click="begin" class="button" variant="primary" v-else>
+          {{ t('memories', 'Click here to start') }}
+        </NcButton>
+      </div>
+
+      <div class="footer">
+        {{ t('memories', 'You can always change this later in settings') }}
+
+        <span class="admin-text" v-if="isAdmin">
+          <br />
+          {{ t('memories', 'If you just installed Memories, visit the admin panel first.') }}
+        </span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount } from 'vue';
+
+import NcButton from '@nextcloud/vue/components/NcButton';
+import XImg from '@components/frame/XImg.vue';
+import * as nativex from '@native';
+
+import { setConfig } from '@services/user-config';
+
+import axios from '@nextcloud/axios';
+
+import banner from '@assets/banner.svg';
+
+import { isAdmin } from '@services/utils/auth';
+import { chooseNcFolder } from '@services/utils/dialog';
+import { API } from '@services/API';
+import { t, n } from '@services/l10n';
+
+import type { IDay } from '@typings';
+
+const error = ref('');
+const info = ref('');
+const show = ref(false);
+const chosenPath = ref('');
+
+async function begin() {
+  let path: string;
+  try {
+    path = await chooseNcFolder(t('memories', 'Choose the root of your timeline'));
+  } catch (e) {
+    console.warn('chooseNcFolder cancelled', e);
+    return;
+  }
+
+  // Get folder days
+  error.value = '';
+  info.value = '';
+  let data: IDay[];
+  try {
+    const url = API.Q(API.DAYS(), { folder: path, recursive: 1 });
+    const res = await axios.get<IDay[]>(url);
+
+    // Check response
+    if (res.status !== 200) {
+      throw new Error(`Unexpected response code ${res.status}`);
+    }
+
+    data = res.data;
+  } catch (e) {
+    console.error(e);
+    error.value = t('memories', 'The selected folder does not seem to be valid. Try again.');
+    return;
+  }
+
+  // Count total photos
+  const count = data.reduce((acc, day) => acc + day.count, 0);
+  info.value = n('memories', 'Found {n} item in {path}', 'Found {n} items in {path}', count, {
+    n: count,
+    path,
+  });
+  chosenPath.value = path;
+
+  // Check if nothing was found
+  if (count === 0) {
+    error.value =
+      t('memories', 'No photos were found in the selected folder.') +
+      '\n' +
+      t('memories', 'This can happen because your media is still indexing.');
+
+    if (isAdmin) {
+      error.value += '\n\n' + t('memories', 'Visit the admin panel to make sure Memories is configured correctly.');
+    }
+    return;
+  }
+}
+
+async function finish() {
+  show.value = false;
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await setConfig('timeline_path', chosenPath.value);
+}
+
+onMounted(() => {
+  nativex.setTheme('#174a7d', true);
+  document.getElementById('content')?.classList.add('no-margins');
+  window.setTimeout(() => {
+    show.value = true;
+  }, 300);
+});
+
+onBeforeUnmount(() => {
+  nativex.setTheme(); // restore server theme
+  document.getElementById('content')?.classList.remove('no-margins');
+});
+</script>
+
+<style lang="scss" scoped>
+.outer {
+  transition: opacity 1s ease;
+  opacity: 0;
+  &.show {
+    opacity: 1;
+  }
+
+  .title {
+    margin: 0 auto 16px;
+    color: #fff;
+
+    > .img {
+      margin: 0 auto;
+      width: 172px;
+      max-width: 60vw;
+    }
+  }
+
+  .text {
+    font-size: 14.5px;
+    line-height: 1.6;
+  }
+
+  .error {
+    color: #ffb4b4;
+    margin-top: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    font-weight: 600;
+    white-space: pre-line;
+  }
+
+  .info {
+    margin-top: 14px;
+    font-weight: bold;
+
+    .button {
+      margin: 12px auto 0;
+    }
+  }
+
+  .buttons {
+    margin-top: 20px;
+
+    .button {
+      margin: 10px auto;
+    }
+  }
+
+  &:has(> .info) > .buttons {
+    margin-top: 8px;
+  }
+
+  .footer {
+    margin-top: 20px;
+    font-size: 12.5px;
+    opacity: 0.75;
+  }
+}
+</style>
+
+<style scoped src="../styles/native-auth.css"></style>

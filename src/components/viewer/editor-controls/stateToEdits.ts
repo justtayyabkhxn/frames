@@ -1,0 +1,323 @@
+import type { Edit } from '@radialapps/memories-vips-editor';
+
+import { effectiveCrop, orientedDims } from './cropMath';
+import type { EditorState } from './types';
+
+/**
+ * Translate EditorControls state into an ordered vips edit list.
+ *
+ * Each entry carries a render-order priority; the list is always sorted by
+ * it so the pipeline (and the VIPS backend consuming the same JSON) sees a
+ * deterministic order no matter which control changed: exposure-style gain
+ * first, then tonal, then color, then creative preset grades.
+ *
+ * Only parameters with a clean VIPS mapping in
+ * @radialapps/memories-vips-editor are translated. Geometry (rotate,
+ * straighten, flip, crop) is handled separately by stateToSaveEdits, which
+ * appends the vips-side equivalents the CSS stage applies to the canvas.
+ */
+
+const P_EXPOSURE = 10;
+const P_BRIGHTNESS_CONTRAST = 20;
+const P_SHADOWS = 22;
+const P_HIGHLIGHTS = 24;
+const P_HUE_SATURATION = 30;
+const P_WARMTH = 35;
+const P_VIBRANCE = 40;
+const P_BLUR = 42;
+const P_SHARPEN = 44;
+const P_VIGNETTE = 46;
+const P_PRESET = 50;
+
+function nonZero(v: number): boolean {
+  return Math.abs(v) > 1e-9;
+}
+
+/** Creative preset grades, expressed with currently available edits. */
+function presetEdits(preset: string): Edit[] {
+  switch (preset) {
+    case 'vivid':
+      return [
+        { edit: 'brightnessContrast', contrast: 0.1 },
+        { edit: 'hueSaturation', saturation: 0.15 },
+        { edit: 'vibrance', amount: 0.1 },
+      ];
+    case 'bold':
+      return [
+        { edit: 'brightnessContrast', contrast: 0.28 },
+        { edit: 'hueSaturation', saturation: -0.12 },
+        { edit: 'shadows', amount: -0.1 },
+        { edit: 'highlights', amount: -0.08 },
+      ];
+    case 'warm':
+      return [
+        { edit: 'sepia', amount: 0.35 },
+        { edit: 'hueSaturation', saturation: 0.1 },
+      ];
+    case 'vividWarm':
+      return [
+        { edit: 'brightnessContrast', contrast: 0.1 },
+        { edit: 'hueSaturation', saturation: 0.15 },
+        { edit: 'warmth', amount: 0.25 },
+      ];
+    case 'sepia':
+      return [{ edit: 'sepia', amount: 0.9 }];
+    case 'valencia':
+      return [
+        { edit: 'brightnessContrast', brightness: 0.06, contrast: -0.12 },
+        { edit: 'warmth', amount: 0.22 },
+        { edit: 'hueSaturation', saturation: -0.05 },
+      ];
+    case 'boldWarm':
+      return [
+        { edit: 'brightnessContrast', brightness: -0.02, contrast: 0.25 },
+        { edit: 'warmth', amount: 0.2 },
+        { edit: 'shadows', amount: -0.08 },
+      ];
+    case 'xpro2':
+      return [
+        { edit: 'brightnessContrast', contrast: 0.2 },
+        { edit: 'warmth', amount: 0.25 },
+        { edit: 'hueSaturation', saturation: 0.1 },
+        { edit: 'shadows', amount: -0.12 },
+        { edit: 'vignette', size: 0.55, amount: 0.55 },
+      ];
+    case 'cool':
+      return [
+        { edit: 'exposure', stops: 0.15 },
+        { edit: 'hueSaturation', hue: 0.05, saturation: 0.06 },
+      ];
+    case 'vividCool':
+      return [
+        { edit: 'brightnessContrast', contrast: 0.1 },
+        { edit: 'hueSaturation', saturation: 0.15 },
+        { edit: 'warmth', amount: -0.25 },
+      ];
+    case 'clarendon':
+      return [
+        { edit: 'brightnessContrast', contrast: 0.15 },
+        { edit: 'vibrance', amount: 0.15 },
+        { edit: 'warmth', amount: -0.18 },
+        { edit: 'highlights', amount: -0.08 },
+      ];
+    case 'lark':
+      return [
+        { edit: 'brightnessContrast', brightness: 0.06, contrast: -0.08 },
+        { edit: 'hueSaturation', saturation: -0.12 },
+        { edit: 'warmth', amount: -0.15 },
+      ];
+    case 'boldCool':
+      return [
+        { edit: 'brightnessContrast', brightness: -0.02, contrast: 0.25 },
+        { edit: 'warmth', amount: -0.2 },
+        { edit: 'shadows', amount: -0.08 },
+      ];
+    case 'gingham':
+      return [
+        { edit: 'brightnessContrast', brightness: 0.06, contrast: -0.15 },
+        { edit: 'hueSaturation', saturation: -0.2 },
+        { edit: 'warmth', amount: -0.08 },
+        { edit: 'highlights', amount: 0.08 },
+      ];
+    case 'mono':
+      return [{ edit: 'grayscale' }];
+    case 'noir':
+      return [{ edit: 'grayscale' }, { edit: 'brightnessContrast', brightness: -0.03, contrast: 0.3 }];
+    case 'silvertone':
+      return [{ edit: 'grayscale' }, { edit: 'brightnessContrast', brightness: 0.07, contrast: -0.12 }];
+    case 'willow':
+      return [
+        { edit: 'grayscale' },
+        { edit: 'brightnessContrast', brightness: 0.12, contrast: -0.25 },
+        { edit: 'highlights', amount: 0.1 },
+      ];
+    case 'fade':
+      return [
+        { edit: 'brightnessContrast', brightness: 0.08, contrast: -0.22 },
+        { edit: 'hueSaturation', saturation: -0.3 },
+      ];
+    case 'invert':
+      return [{ edit: 'invert' }];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Map an EditorState snapshot to a priority-sorted edit list.
+ * The default (untouched) state maps to an empty list (original image).
+ */
+export function stateToEdits(state: EditorState): Edit[] {
+  const ordered: { priority: number; edit: Edit }[] = [];
+
+  if (nonZero(state.exposure)) {
+    ordered.push({
+      priority: P_EXPOSURE,
+      edit: { edit: 'exposure', stops: state.exposure / 20 },
+    });
+  }
+
+  if (nonZero(state.brightness) || nonZero(state.contrast)) {
+    ordered.push({
+      priority: P_BRIGHTNESS_CONTRAST,
+      edit: {
+        edit: 'brightnessContrast',
+        brightness: state.brightness / 100,
+        contrast: state.contrast / 100,
+      },
+    });
+  }
+
+  if (nonZero(state.shadows)) {
+    ordered.push({
+      priority: P_SHADOWS,
+      edit: { edit: 'shadows', amount: state.shadows / 100 },
+    });
+  }
+
+  if (nonZero(state.highlights)) {
+    ordered.push({
+      priority: P_HIGHLIGHTS,
+      edit: { edit: 'highlights', amount: state.highlights / 100 },
+    });
+  }
+
+  if (nonZero(state.hue) || nonZero(state.saturation)) {
+    ordered.push({
+      priority: P_HUE_SATURATION,
+      edit: {
+        edit: 'hueSaturation',
+        hue: state.hue / 180,
+        saturation: state.saturation / 100,
+      },
+    });
+  }
+
+  if (nonZero(state.temperature)) {
+    ordered.push({
+      priority: P_WARMTH,
+      edit: { edit: 'warmth', amount: state.temperature / 100 },
+    });
+  }
+
+  if (nonZero(state.vibrance)) {
+    ordered.push({
+      priority: P_VIBRANCE,
+      edit: { edit: 'vibrance', amount: state.vibrance / 100 },
+    });
+  }
+
+  if (nonZero(state.blur)) {
+    ordered.push({
+      priority: P_BLUR,
+      edit: { edit: 'blur', radius: state.blur },
+    });
+  }
+
+  if (nonZero(state.sharpen)) {
+    ordered.push({
+      priority: P_SHARPEN,
+      edit: { edit: 'sharpen', radius: 2, amount: state.sharpen / 20 },
+    });
+  }
+
+  if (nonZero(state.vignette)) {
+    ordered.push({
+      priority: P_VIGNETTE,
+      edit: { edit: 'vignette', amount: state.vignette / 100 },
+    });
+  }
+
+  for (const [i, edit] of presetEdits(state.preset).entries()) {
+    ordered.push({ priority: P_PRESET + i, edit });
+  }
+
+  ordered.sort((a, b) => a.priority - b.priority);
+  return ordered.map((o) => o.edit);
+}
+
+/** Normalize an angle to (-180, 180], matching vips rotate. */
+function normAngle(angle: number): number {
+  let a = angle % 360;
+  if (a <= -180) a += 360;
+  else if (a > 180) a -= 360;
+  // Avoid -0.
+  return a === 0 ? 0 : a;
+}
+
+/**
+ * Map an EditorState snapshot to the full vips save payload.
+ *
+ * Pixel edits come from stateToEdits (preview WYSIWYG). Geometry that vips
+ * supports (rotate incl. straighten, flip, crop) is appended after the pixels
+ * so the backend renders `pixels -> rotate -> flip -> crop`, matching the
+ * editor where the WebGL pixels are flipped/rotated/cropped by the CSS stage.
+ *
+ * Comparing mode is ignored: saving always persists the actual edits.
+ */
+export function stateToSaveEdits(state: EditorState, natW: number, natH: number): Edit[] {
+  const edits = stateToEdits(state);
+
+  // Geometry needs real dimensions; without them only pixels can be saved.
+  if (!(natW > 0 && natH > 0)) {
+    return edits;
+  }
+
+  // Straighten folds into the rotate edit (single resample, no double band).
+  // A mirror reverses rotation direction (F·R(θ) = R(−θ)·F), so with exactly
+  // one flip axis the straighten contribution flips sign: the CSS stage
+  // tilts after flipping, the backend fuses before it.
+  const flipH = (state.flipH ?? 1) < 0;
+  const flipV = (state.flipV ?? 1) < 0;
+  const angle = normAngle((state.rotate || 0) + (flipH !== flipV ? -1 : 1) * (state.straighten || 0));
+  if (Math.abs(angle) > 1e-9) {
+    edits.push({ edit: 'rotate', angle });
+  }
+
+  // Flip mirrors the CSS stage (scale after rotate): one edit per mirrored
+  // axis, after rotate and before crop. toggleFlipH/V already mirror the
+  // crop center, so crop fractions stay valid.
+  if (flipH) {
+    edits.push({ edit: 'flip', direction: 'horizontal' });
+  }
+  if (flipV) {
+    edits.push({ edit: 'flip', direction: 'vertical' });
+  }
+
+  // Crop is stored center-based in oriented space, but the vips rotate
+  // expands the canvas to the tilted bounding box and the crop runs after
+  // it: fractions are relative to the rotated size, with the crop center
+  // tilted by the straighten angle into that space.
+  try {
+    const { W, H } = orientedDims(natW, natH, state.rotate || 0);
+    if (W > 0 && H > 0) {
+      const geom = effectiveCrop(state, W, H);
+      if (geom.w > 0 && geom.h > 0) {
+        const rad = ((state.straighten || 0) * Math.PI) / 180;
+        const c = Math.cos(rad);
+        const s = Math.sin(rad);
+        const wRot = W * Math.abs(c) + H * Math.abs(s);
+        const hRot = W * Math.abs(s) + H * Math.abs(c);
+        const uc = geom.px * c - geom.py * s;
+        const vc = geom.px * s + geom.py * c;
+        const x = (wRot / 2 + uc - geom.w / 2) / wRot;
+        const y = (hRot / 2 + vc - geom.h / 2) / hRot;
+        const width = geom.w / wRot;
+        const height = geom.h / hRot;
+        const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+        const cx = clamp01(x);
+        const cy = clamp01(y);
+        const cw = clamp01(Math.min(width, 1 - cx));
+        const ch = clamp01(Math.min(height, 1 - cy));
+        const isFull = cx <= 1e-6 && cy <= 1e-6 && Math.abs(cw - 1) <= 1e-6 && Math.abs(ch - 1) <= 1e-6;
+        if (!isFull && cw > 1e-9 && ch > 1e-9) {
+          edits.push({ edit: 'crop', x: cx, y: cy, width: cw, height: ch });
+        }
+      }
+    }
+  } catch {
+    // Geometry must never block pixel saves; skip crop on math errors.
+  }
+
+  return edits;
+}

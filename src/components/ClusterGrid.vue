@@ -1,0 +1,183 @@
+<template>
+  <RecycleScroller
+    ref="recycler"
+    tabindex="1"
+    type-field="cluster_type"
+    key-field="cluster_id"
+    class="grid-recycler hide-scrollbar-mobile"
+    direction="vertical"
+    :class="classList"
+    :items="clusters"
+    :skipHover="true"
+    :buffer="400"
+    :itemSize="height"
+    :itemSecondarySize="width"
+    :gridItems="gridItems"
+    @resize="resize"
+  >
+    <template #before>
+      <slot name="before"></slot>
+    </template>
+
+    <template v-slot="{ item }">
+      <div class="grid-item fill-block">
+        <Cluster :data="item" :link="link" :counters="counters" @click="click(item)" />
+      </div>
+    </template>
+  </RecycleScroller>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, nextTick, useTemplateRef } from 'vue';
+import { RecycleScroller } from '@radialapps/vue-virtual-scroller';
+
+import { useRouteIs } from '@services/route-is';
+import { windowDims } from '@services/viewport';
+import { getPlaceholderClusters } from '@services/dav';
+import * as utils from '@services/utils/common';
+
+import Cluster from '@components/frame/Cluster.vue';
+
+import type { ICluster } from '@typings';
+
+const props = withDefaults(
+  defineProps<{
+    items: ICluster[];
+    maxSize?: number;
+    minCols?: number;
+    link?: boolean;
+    plus?: boolean;
+    focus?: boolean;
+    loading?: boolean;
+  }>(),
+  {
+    maxSize: 180,
+    minCols: 3,
+    link: true,
+    plus: false,
+    focus: false,
+    loading: false,
+  },
+);
+
+const emit = defineEmits<{
+  click: [item: ICluster];
+  plus: [];
+}>();
+const recycler = useTemplateRef<VueRecyclerType>('recycler');
+const routeIs = useRouteIs();
+const recyclerWidth = ref(300);
+
+/** Placeholders to show while loading */
+const placeholders: ICluster[] = getPlaceholderClusters(30);
+
+/** Number of items horizontally */
+const gridItems = computed(() =>
+  // Restrict the number of columns between minCols and the size cap
+  Math.max(Math.floor(recyclerWidth.value / props.maxSize), props.minCols),
+);
+
+/** Width of the cluster */
+const width = computed(() => utils.round(recyclerWidth.value / gridItems.value, 2));
+
+/** Height of the cluster */
+const height = computed(() => {
+  if (routeIs.Albums) {
+    // album view: add gap for text below album
+    // 4px extra on mobile for mark#2147915
+    return width.value + (windowDims.isMobile ? 46 : 42);
+  }
+
+  return width.value;
+});
+
+/** Classes list on object */
+const classList = computed(() => ({
+  empty: !props.items.length && !props.loading,
+  'cluster--album': routeIs.Albums,
+}));
+
+/** Whether the clusters should show counters */
+const counters = computed(() => !routeIs.Albums);
+
+/** List of clusters to display */
+const clusters = computed(() => {
+  // Show placeholders when loading.
+  if (props.loading && !props.items.length) {
+    return placeholders;
+  }
+
+  // Avoid mutating original props.
+  const items = [...props.items];
+
+  // Add plus button if required
+  if (props.plus) {
+    items.unshift({
+      cluster_type: 'plus',
+      cluster_id: -1,
+      name: '',
+      count: 0,
+    });
+  }
+
+  return items;
+});
+
+function click(item: ICluster) {
+  switch (item.cluster_type) {
+    case 'placeholder':
+      return;
+    case 'plus':
+      emit('plus');
+      return;
+    default:
+      emit('click', item);
+  }
+}
+
+function resize() {
+  recyclerWidth.value = recycler.value?.$el.clientWidth ?? recyclerWidth.value;
+}
+
+onMounted(resize);
+
+watch(
+  () => props.items,
+  async () => {
+    if (props.focus) {
+      await nextTick();
+      recycler.value?.$el.focus();
+    }
+  },
+);
+</script>
+
+<style lang="scss" scoped>
+.grid-recycler {
+  will-change: scroll-position;
+  flex: 1;
+  max-height: 100%;
+  overflow-y: scroll !important;
+
+  &.empty {
+    visibility: hidden;
+    flex: 0 0 auto;
+    height: 0;
+  }
+
+  &:focus {
+    outline: none;
+  }
+
+  margin: 1px;
+  @media (max-width: 768px) {
+    &.cluster--album {
+      margin: 6px; // mark#2147915
+    }
+  }
+
+  .grid-item {
+    position: relative;
+  }
+}
+</style>

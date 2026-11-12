@@ -1,0 +1,98 @@
+import PsImage from './PsImage';
+
+import * as utils from '@services/utils/common';
+import { config } from '@services/user-config';
+
+import type { PsContent, PsEvent, PsPhotoSwipe } from './types';
+
+export function isLiveContent(content: PsContent): boolean {
+  // Do not play Live Photo if the slideshow is
+  // playing in full screen mode.
+  if (document.fullscreenElement) {
+    return false;
+  }
+
+  return Boolean(content?.data?.photo?.liveid);
+}
+
+class LivePhotoContentSetup {
+  constructor(
+    lightbox: PsPhotoSwipe,
+    private psImage: PsImage,
+    private liveState: { playing: boolean; waiting: boolean },
+  ) {
+    lightbox.on('contentLoad', (e) => this.onContentLoad(e as unknown as PsEvent));
+    lightbox.on('contentActivate', (e) => this.onContentActivate(e as unknown as { content: PsContent }));
+    lightbox.on('contentDeactivate', (e) => this.onContentDeactivate(e as unknown as PsEvent));
+    lightbox.on('contentDestroy', (e) => this.onContentDestroy(e as unknown as PsEvent));
+  }
+
+  public async play(content: PsContent) {
+    const video = content.element?.querySelector('video');
+    if (!video) return;
+
+    if (!video.paused) {
+      video.pause();
+      return;
+    }
+
+    try {
+      this.liveState.waiting = true;
+      video.currentTime = 0;
+      await video.play();
+    } catch (e) {
+      // ignore, pause was probably called too soon
+    } finally {
+      this.liveState.waiting = false;
+    }
+  }
+
+  private onContentLoad(e: PsEvent) {
+    const content: PsContent = e.content;
+    if (!isLiveContent(content)) return;
+
+    e.preventDefault();
+    if (content.element) return;
+
+    const photo = content?.data?.photo;
+
+    const video = document.createElement('video');
+    video.preload = 'none';
+    video.playsInline = true;
+    video.disableRemotePlayback = true;
+    video.autoplay = false;
+    video.loop = !!config.livephoto_loop;
+    video.src = utils.getLivePhotoVideoUrl(photo, true);
+
+    const div = document.createElement('div');
+    div.classList.add('pswp__img', 'memories-livephoto');
+    div.appendChild(video);
+    content.element = div;
+
+    utils.setupLivePhotoHooks(video, this.liveState);
+
+    void this.psImage.createPreviewElement(content);
+  }
+
+  private onContentActivate({ content }: { content: PsContent }) {
+    if (!isLiveContent(content)) return;
+
+    if (config.livephoto_autoplay) {
+      this.play(content);
+    }
+  }
+
+  private onContentDeactivate({ content }: PsEvent) {
+    if (isLiveContent(content)) {
+      content.element?.querySelector('video')?.pause();
+    }
+  }
+
+  private onContentDestroy({ content }: PsEvent) {
+    if (isLiveContent(content)) {
+      content.element?.remove();
+    }
+  }
+}
+
+export default LivePhotoContentSetup;

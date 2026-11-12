@@ -1,0 +1,1222 @@
+/**
+ * Shared design tokens + reusable control styles.
+ *
+ * Scoped by construction: everything lives under `.me-root`, which is the
+ * shadow-root entry (container-type: inline-size). No `:root`, no element
+ * selectors, no Nextcloud variables — safe to mount as a custom element
+ * with `shadowRoot: true`.
+ */
+
+// ---------------------------------------------------------------------------
+// Tokens. Only --me-accent is set from outside (Editor `accent` prop);
+// --me-accent-dim and --me-accent-fg derive from it via color-mix, with
+// static fallbacks for browsers without color-mix support.
+// ---------------------------------------------------------------------------
+$me-bg: #000;
+$me-bg-2: #111113;
+$me-bg-3: #17171a;
+$me-bg-4: #1f1f23;
+$me-line: rgba(255, 255, 255, 0.08);
+$me-line-2: rgba(255, 255, 255, 0.14);
+$me-text: #f2f2f3;
+$me-text-2: #a7a7ad;
+$me-text-3: #8e8e96;
+$me-accent: #4a9eff;
+$me-btn-grey: #3e3e46;
+$me-btn-grey-text: #ededf0;
+$me-track: #333338;
+$me-thumb: #ffffff;
+$me-glass-bg: rgba(17, 17, 20, 0.55);
+$me-glass-strong: rgba(20, 20, 23, 0.86);
+$me-glass-border: rgba(255, 255, 255, 0.13);
+$me-glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+$me-changed-bg: rgba(255, 255, 255, 0.13);
+$me-changed-bg-hover: rgba(255, 255, 255, 0.2);
+
+.me-root {
+  --me-bg: #{$me-bg};
+  --me-bg-2: #{$me-bg-2};
+  --me-bg-3: #{$me-bg-3};
+  --me-bg-4: #{$me-bg-4};
+  --me-line: #{$me-line};
+  --me-line-2: #{$me-line-2};
+  --me-text: #{$me-text};
+  --me-text-2: #{$me-text-2};
+  --me-text-3: #{$me-text-3};
+  --me-accent: #{$me-accent};
+  // Static fallback first; overridden by color-mix where supported so any
+  // accent color passed via the Editor prop gets a matching dim variant.
+  --me-accent-dim: rgba(74, 158, 255, 0.18);
+  --me-accent-dim: color-mix(in srgb, var(--me-accent) 18%, transparent);
+  // Theme accents are tuned for light surfaces; lift them for use on dark ones.
+  --me-accent-fg: #{$me-accent};
+  --me-accent-fg: color-mix(in srgb, var(--me-accent) 55%, white);
+  --me-btn-grey: #{$me-btn-grey};
+  --me-btn-grey-text: #{$me-btn-grey-text};
+  --me-track: #{$me-track};
+  --me-thumb: #{$me-thumb};
+  --me-glass-bg: #{$me-glass-bg};
+  --me-glass-strong: #{$me-glass-strong};
+  --me-glass-border: #{$me-glass-border};
+  --me-glass-shadow: #{$me-glass-shadow};
+  --me-changed-bg: #{$me-changed-bg};
+  --me-changed-bg-hover: #{$me-changed-bg-hover};
+  --me-radius: 14px;
+  --me-sidebar: 324px;
+
+  color-scheme: dark;
+  container-type: inline-size;
+  container-name: me-editor;
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--me-bg);
+  color: var(--me-text);
+  font-family: inherit;
+  overflow: hidden;
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  svg {
+    display: block;
+    flex: none;
+  }
+
+  // vue-material-design-icons wraps its svg in an inline span.
+  .material-design-icon {
+    display: inline-flex;
+    line-height: 0;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--me-accent-fg);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  // --- icon button ---------------------------------------------------------
+  .me-icon-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: var(--me-text-2);
+    transition:
+      background 0.15s,
+      color 0.15s;
+    position: relative;
+
+    &:hover {
+      background: var(--me-bg-4);
+      color: var(--me-text);
+    }
+    &:active {
+      background: #26262b;
+    }
+    &.is-disabled {
+      color: var(--me-text-3);
+      opacity: 0.45;
+      pointer-events: none;
+    }
+  }
+
+  // --- glass pill -----------------------------------------------------------
+  .me-glass {
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    backdrop-filter: blur(18px) saturate(1.4);
+    border: 1px solid var(--me-glass-border);
+    box-shadow: var(--me-glass-shadow);
+  }
+
+  // --- clickable controls -----------------------------------------------------
+  // Nextcloud server CSS only grants pointer cursors to children of
+  // non-.button-vue buttons, so pin the cursor on clickable controls
+  // and everything inside them (e.g. MDI icon spans / svgs).
+  .me-clickable,
+  .me-clickable * {
+    cursor: pointer !important;
+  }
+
+  // --- slider row ------------------------------------------------------------
+  .me-slider-row {
+    display: grid;
+    grid-template-columns: 26px 1fr 34px;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-radius: 10px;
+
+    .me-s-icon {
+      color: var(--me-text-2);
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      transition:
+        color 0.15s,
+        background 0.15s,
+        transform 0.12s,
+        box-shadow 0.15s;
+    }
+    &:hover .me-s-icon {
+      color: var(--me-text);
+    }
+    &.is-changed .me-s-icon {
+      background: var(--me-changed-bg);
+      color: var(--me-text);
+      cursor: pointer;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    }
+    &.is-changed .me-s-icon:hover {
+      background: var(--me-changed-bg-hover);
+    }
+    &.is-changed .me-s-icon:active {
+      transform: scale(0.9);
+    }
+    .me-val {
+      font-size: 12px;
+      color: var(--me-text-2);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    &.is-changed .me-val {
+      color: var(--me-text);
+    }
+    &.is-disabled {
+      opacity: 0.45;
+      .me-slider-input {
+        cursor: not-allowed;
+      }
+    }
+  }
+
+  .me-slider-input {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 28px;
+    background: transparent;
+    cursor: pointer;
+    margin: 0;
+    --me-from: 0%;
+    --me-to: 0%;
+    --me-fill: linear-gradient(
+      to right,
+      var(--me-track) var(--me-from),
+      var(--me-accent-fg) var(--me-from) var(--me-to),
+      var(--me-track) var(--me-to)
+    );
+
+    &::-webkit-slider-runnable-track {
+      height: 3px;
+      border-radius: 2px;
+      background: var(--me-fill);
+    }
+    &::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 7px;
+      height: 26px;
+      border-radius: 4px;
+      background: var(--me-thumb);
+      margin-top: -11.5px;
+      border: 0;
+      box-shadow:
+        0 1px 5px rgba(0, 0, 0, 0.75),
+        0 0 0 1px rgba(0, 0, 0, 0.35);
+      cursor: ew-resize;
+      transition:
+        width 0.12s,
+        height 0.12s;
+    }
+    &:hover::-webkit-slider-thumb,
+    &:active::-webkit-slider-thumb {
+      width: 9px;
+      height: 28px;
+      margin-top: -12.5px;
+    }
+    &::-moz-range-track {
+      height: 3px;
+      border-radius: 2px;
+      background: var(--me-fill);
+    }
+    &::-moz-range-thumb {
+      width: 7px;
+      height: 26px;
+      border-radius: 4px;
+      background: var(--me-thumb);
+      border: 0;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.75);
+      cursor: ew-resize;
+      transition:
+        width 0.12s,
+        height 0.12s;
+    }
+    &:hover::-moz-range-thumb,
+    &:active::-moz-range-thumb {
+      width: 9px;
+      height: 28px;
+    }
+
+    &.me-grad-warm::-webkit-slider-runnable-track {
+      background: linear-gradient(to right, #5b8def, #3a3a3f 48%, #ffb03a);
+    }
+    &.me-grad-warm::-moz-range-track {
+      background: linear-gradient(to right, #5b8def, #3a3a3f 48%, #ffb03a);
+    }
+    &.me-grad-tint::-webkit-slider-runnable-track {
+      background: linear-gradient(to right, #69c24a, #3a3a3f 48%, #d95fb0);
+    }
+    &.me-grad-tint::-moz-range-track {
+      background: linear-gradient(to right, #69c24a, #3a3a3f 48%, #d95fb0);
+    }
+    &.me-grad-sat::-webkit-slider-runnable-track {
+      background: linear-gradient(to right, #4c4c52, #8a8a90 35%, #ff7847 75%, #ff3d2e);
+    }
+    &.me-grad-sat::-moz-range-track {
+      background: linear-gradient(to right, #4c4c52, #8a8a90 35%, #ff7847 75%, #ff3d2e);
+    }
+    &.me-grad-hue::-webkit-slider-runnable-track {
+      background: linear-gradient(
+        to right,
+        hsl(0, 100%, 55%),
+        hsl(45, 100%, 52%),
+        hsl(90, 100%, 48%),
+        hsl(135, 100%, 42%),
+        hsl(180, 100%, 42%),
+        hsl(225, 100%, 62%),
+        hsl(270, 100%, 62%),
+        hsl(315, 100%, 55%),
+        hsl(360, 100%, 55%)
+      );
+    }
+    &.me-grad-hue::-moz-range-track {
+      background: linear-gradient(
+        to right,
+        hsl(0, 100%, 55%),
+        hsl(45, 100%, 52%),
+        hsl(90, 100%, 48%),
+        hsl(135, 100%, 42%),
+        hsl(180, 100%, 42%),
+        hsl(225, 100%, 62%),
+        hsl(270, 100%, 62%),
+        hsl(315, 100%, 55%),
+        hsl(360, 100%, 55%)
+      );
+    }
+  }
+
+  // --- group label ------------------------------------------------------------
+  .me-group-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--me-text-2);
+    margin: 20px 0 8px;
+
+    &:first-child {
+      margin-top: 0;
+    }
+    &::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--me-line);
+    }
+  }
+
+  // --- option tiles ------------------------------------------------------------
+  .me-ratio-btn,
+  .me-tool-btn {
+    display: grid;
+    grid-template-rows: 24px auto;
+    place-items: center;
+    gap: 6px;
+    padding: 10px 2px 8px;
+    background: var(--me-bg-3);
+    border: 1px solid var(--me-line);
+    border-radius: 8px;
+    color: var(--me-text-2);
+    font-size: 12px;
+    transition:
+      border-color 0.15s,
+      color 0.15s,
+      background 0.15s;
+  }
+  .me-ratio-btn:hover,
+  .me-tool-btn:hover {
+    color: var(--me-text);
+    border-color: var(--me-line-2);
+  }
+  .me-ratio-btn.is-active,
+  .me-tool-btn.is-active {
+    color: var(--me-accent-fg);
+    border-color: var(--me-accent-fg);
+    background: var(--me-accent-dim);
+  }
+  .me-ratio-btn .me-box {
+    border: 1.5px solid currentColor;
+    border-radius: 2px;
+  }
+  .me-ratio-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .me-tool-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+
+  // --- layout --------------------------------------------------------------------
+  .me-workspace {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    position: relative;
+  }
+  .me-side {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  // --- crop stage, media & handles -------------------------------------------
+  .me-crop-stage {
+    position: absolute;
+    inset: 0;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    --h-out: 20px;
+    --h-in: 16px;
+    --h-gap: 4px;
+    --h-arm: 22px;
+    --h-bar: 26px;
+    --h-thick: 4.5px;
+
+    &.is-crop-mode {
+      padding: 68px 80px;
+      cursor: grab;
+    }
+    &.is-crop-mode.is-interacting {
+      cursor: grabbing;
+    }
+  }
+
+  .me-crop-shift {
+    position: absolute;
+    inset: 0;
+
+    &.is-animated {
+      transition: transform 0.26s cubic-bezier(0.2, 0, 0, 1);
+    }
+  }
+
+  .me-crop-turntable {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform-origin: 50% 50%;
+
+    &.is-animated {
+      transition: transform 0.28s cubic-bezier(0.2, 0, 0, 1);
+    }
+  }
+
+  .me-crop-media {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform-origin: 50% 50%;
+    pointer-events: none;
+    will-change: transform;
+
+    &.is-animated {
+      transition: transform 0.26s cubic-bezier(0.2, 0, 0, 1);
+    }
+
+    img,
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+  }
+
+  .me-crop-box {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 3;
+    pointer-events: none;
+    box-shadow: 0 0 0 9999px var(--me-bg);
+    outline: 1.5px solid transparent;
+    transition:
+      box-shadow 0.2s ease,
+      outline-color 0.15s;
+
+    &.is-animated {
+      transition:
+        width 0.26s cubic-bezier(0.2, 0, 0, 1),
+        height 0.26s cubic-bezier(0.2, 0, 0, 1),
+        transform 0.26s cubic-bezier(0.2, 0, 0, 1),
+        box-shadow 0.2s ease,
+        outline-color 0.15s;
+    }
+
+    &.is-crop-mode {
+      pointer-events: auto;
+      cursor: grab;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65);
+    }
+
+    &.is-crop-mode.is-grid-visible {
+      outline-color: rgba(255, 255, 255, 0.88);
+    }
+
+    &.is-crop-mode.is-active {
+      cursor: grabbing;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+    }
+  }
+
+  .me-crop-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .me-crop-box.is-grid-visible .me-crop-grid {
+    opacity: 1;
+  }
+
+  .me-grid-line {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.32);
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+    transition: background 0.15s;
+
+    &.is-v {
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      transform: translateX(-1px);
+    }
+    &.is-h {
+      left: 0;
+      right: 0;
+      height: 2px;
+      transform: translateY(-1px);
+    }
+    &.is-fine {
+      background: rgba(255, 255, 255, 0.16);
+      box-shadow: none;
+    }
+  }
+
+  .me-crop-box.is-active .me-grid-line:not(.is-fine) {
+    background: rgba(255, 255, 255, 0.56);
+  }
+
+  .me-crop-handle {
+    position: absolute;
+    z-index: 4;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+    --h-inset: calc(var(--h-out) - var(--h-thick) - var(--h-gap));
+
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      background: #fff;
+      border-radius: calc(var(--h-thick) / 2);
+    }
+
+    &.is-nw,
+    &.is-ne,
+    &.is-se,
+    &.is-sw {
+      width: calc(var(--h-out) + var(--h-in));
+      height: calc(var(--h-out) + var(--h-in));
+      z-index: 5;
+      &::before {
+        width: var(--h-arm);
+        height: var(--h-thick);
+      }
+      &::after {
+        width: var(--h-thick);
+        height: var(--h-arm);
+      }
+    }
+    &.is-nw,
+    &.is-ne {
+      top: calc(-1 * var(--h-out));
+      &::before,
+      &::after {
+        top: var(--h-inset);
+      }
+    }
+    &.is-sw,
+    &.is-se {
+      bottom: calc(-1 * var(--h-out));
+      &::before,
+      &::after {
+        bottom: var(--h-inset);
+      }
+    }
+    &.is-nw,
+    &.is-sw {
+      left: calc(-1 * var(--h-out));
+      &::before,
+      &::after {
+        left: var(--h-inset);
+      }
+    }
+    &.is-ne,
+    &.is-se {
+      right: calc(-1 * var(--h-out));
+      &::before,
+      &::after {
+        right: var(--h-inset);
+      }
+    }
+    &.is-nw::before,
+    &.is-nw::after {
+      border-top-left-radius: var(--h-thick);
+    }
+    &.is-ne::before,
+    &.is-ne::after {
+      border-top-right-radius: var(--h-thick);
+    }
+    &.is-se::before,
+    &.is-se::after {
+      border-bottom-right-radius: var(--h-thick);
+    }
+    &.is-sw::before,
+    &.is-sw::after {
+      border-bottom-left-radius: var(--h-thick);
+    }
+    &.is-nw,
+    &.is-se {
+      cursor: nwse-resize;
+    }
+    &.is-ne,
+    &.is-sw {
+      cursor: nesw-resize;
+    }
+
+    &.is-n,
+    &.is-s {
+      left: var(--h-in);
+      right: var(--h-in);
+      height: calc(var(--h-out) + var(--h-in));
+      cursor: ns-resize;
+      &::before {
+        left: 50%;
+        transform: translateX(-50%);
+        width: var(--h-bar);
+        height: var(--h-thick);
+      }
+      &::after {
+        display: none;
+      }
+    }
+    &.is-n {
+      top: calc(-1 * var(--h-out));
+      &::before {
+        top: var(--h-inset);
+      }
+    }
+    &.is-s {
+      bottom: calc(-1 * var(--h-out));
+      &::before {
+        bottom: var(--h-inset);
+      }
+    }
+
+    &.is-w,
+    &.is-e {
+      top: var(--h-in);
+      bottom: var(--h-in);
+      width: calc(var(--h-out) + var(--h-in));
+      cursor: ew-resize;
+      &::before {
+        top: 50%;
+        transform: translateY(-50%);
+        width: var(--h-thick);
+        height: var(--h-bar);
+      }
+      &::after {
+        display: none;
+      }
+    }
+    &.is-w {
+      left: calc(-1 * var(--h-out));
+      &::before {
+        left: var(--h-inset);
+      }
+    }
+    &.is-e {
+      right: calc(-1 * var(--h-out));
+      &::before {
+        right: var(--h-inset);
+      }
+    }
+  }
+
+  // --- floating actions (close + save replace the old top bar) ------------------
+  // Sized and placed to line up with the viewer's top bar.
+  .me-float-close {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 44px;
+    height: 44px;
+    z-index: 6;
+    background: none;
+    border: 0;
+    color: #fff;
+
+    &:hover {
+      color: #fff;
+    }
+  }
+  .me-float-save {
+    position: absolute;
+    top: 11px;
+    right: 14px;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 16px;
+    border-radius: 999px;
+    background: var(--me-glass-bg);
+    color: var(--me-text);
+    font-weight: 500;
+    font-size: 14px;
+    transition: filter 0.15s;
+
+    &:hover {
+      filter: brightness(1.22);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      filter: none;
+    }
+  }
+
+  // --- sidebar ----------------------------------------------------------------------
+  .me-sidebar {
+    width: var(--me-sidebar);
+    flex: none;
+    background: var(--me-bg-2);
+    border-left: 1px solid var(--me-line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    z-index: 20;
+  }
+  .me-tabs {
+    display: flex;
+    position: relative;
+    flex: none;
+    border-bottom: 1px solid var(--me-line);
+    padding: 0 6px;
+  }
+  .me-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 11px 2px 9px;
+    color: var(--me-text-2);
+    font-size: 12px;
+    font-weight: 500;
+    transition: color 0.18s;
+    position: relative;
+    border-radius: 8px 8px 0 0;
+
+    &:hover {
+      color: var(--me-text);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    &.is-active {
+      color: var(--me-text);
+    }
+    &.is-active svg {
+      color: var(--me-accent-fg);
+    }
+  }
+  .me-tab-indicator {
+    position: absolute;
+    bottom: -1px;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: var(--me-accent-fg);
+    transition:
+      left 0.28s cubic-bezier(0.2, 0, 0, 1),
+      width 0.28s cubic-bezier(0.2, 0, 0, 1);
+  }
+  .me-panel-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #333 transparent;
+
+    &::-webkit-scrollbar {
+      width: 5px;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: #2e2e33;
+      border-radius: 4px;
+    }
+  }
+  .me-panel {
+    display: none;
+    padding: 18px 20px 22px;
+    animation: me-fade 0.18s ease;
+  }
+  .me-panel.is-active {
+    display: block;
+  }
+  .me-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  // Divider between filter groups (hot / cold / gray); no text labels.
+  .me-filter-sep {
+    height: 1px;
+    background: var(--me-line);
+    margin: 12px 0;
+  }
+  .me-filter-card {
+    border-radius: 0;
+    overflow: visible;
+    text-align: center;
+    position: relative;
+    padding: 0;
+
+    .me-thumb {
+      display: block;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      max-height: 120px;
+      padding: 0;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 2px solid transparent;
+      transition: border-color 0.15s;
+      line-height: 0;
+      background: var(--me-bg-4);
+
+      img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    }
+    .me-filter-name {
+      display: block;
+      font-size: 12px;
+      color: var(--me-text-2);
+      padding: 6px 0 2px;
+      transition: color 0.15s;
+    }
+    &:hover .me-filter-name {
+      color: var(--me-text);
+    }
+    &.is-active .me-thumb {
+      border-color: var(--me-accent-fg);
+    }
+    &.is-active .me-filter-name {
+      color: var(--me-accent-fg);
+      font-weight: 500;
+    }
+  }
+  // --- mobile --------------------------------------------------------------------------
+  .me-mobile-ui {
+    display: none;
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 18px;
+    z-index: 15;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .me-bar {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: 6px;
+    border-radius: 999px;
+    background: var(--me-glass-bg);
+    scrollbar-width: none;
+    // Hug the controls and center: no trailing blank when chips fit.
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+  // Tall filter cards need a smaller corner radius than the pill bars.
+  .me-bar.is-filters {
+    border-radius: 20px;
+  }
+  // Divider between filter groups in the mobile chip strip.
+  .me-bar-sep {
+    flex: none;
+    width: 1px;
+    align-self: stretch;
+    margin: 8px 2px;
+    background: rgba(255, 255, 255, 0.12);
+  }
+  // Filter preview thumb inside mobile chips (same slot as sidebar cards).
+  .me-chip-thumb {
+    width: 26px;
+    height: 26px;
+    flex: none;
+    border-radius: 8px;
+    overflow: hidden;
+    line-height: 0;
+    background: var(--me-bg-4);
+
+    img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+  // Mobile filter chips are vertical mini-cards with a large preview.
+  .me-chip.me-chip-filter {
+    flex-direction: column;
+    gap: 5px;
+    padding: 7px;
+    border-radius: 12px;
+    font-size: 11px;
+
+    .me-chip-thumb {
+      width: 56px;
+      height: 56px;
+      border-radius: 10px;
+    }
+  }
+  .me-m-tab {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 16px;
+    border-radius: 999px;
+    color: var(--me-text-2);
+    font-size: 12.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition:
+      background 0.18s,
+      color 0.18s;
+
+    svg {
+      width: 18px;
+      height: 18px;
+    }
+    &:active {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    &.is-active {
+      background: var(--me-btn-grey);
+      color: var(--me-btn-grey-text);
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+    }
+  }
+  .me-chip {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 13px;
+    border-radius: 999px;
+    color: var(--me-text-2);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+
+    &:active {
+      background: rgba(255, 255, 255, 0.13);
+    }
+    &.is-active {
+      background: rgba(255, 255, 255, 0.19);
+      color: var(--me-text);
+      border-color: rgba(255, 255, 255, 0.24);
+    }
+    .me-chip-icon {
+      display: grid;
+      place-items: center;
+      color: inherit;
+    }
+    .me-chip-icon svg {
+      width: 17px;
+      height: 17px;
+    }
+    .me-chip-val {
+      font-size: 11px;
+      color: var(--me-text-3);
+      font-variant-numeric: tabular-nums;
+    }
+    &.is-changed .me-chip-val {
+      color: var(--me-text);
+    }
+  }
+  .me-slider-pill {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 0 7px;
+    border-radius: 22px;
+    background: rgba(17, 17, 20, 0.6);
+    touch-action: pan-x;
+    overscroll-behavior: none;
+
+    &.is-on {
+      display: flex;
+    }
+  }
+  .me-s-pill-icon {
+    width: 30px;
+    height: 30px;
+    flex: none;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--me-text-2);
+    transition:
+      background 0.15s,
+      color 0.15s,
+      transform 0.12s;
+
+    svg {
+      width: 17px;
+      height: 17px;
+    }
+    &.is-changed {
+      background: rgba(255, 255, 255, 0.17);
+      color: var(--me-text);
+      cursor: pointer;
+    }
+    &.is-changed:active {
+      transform: scale(0.9);
+    }
+  }
+  .me-slider-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .me-ruler {
+    position: relative;
+    height: 44px;
+    overflow: hidden;
+    border-radius: 8px;
+    outline-offset: -2px;
+    touch-action: pan-x;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 15%, #000 85%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 15%, #000 85%, transparent);
+  }
+  .me-ruler-scroll {
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: none;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+  .me-ruler-track {
+    position: relative;
+    height: 100%;
+    flex: none;
+  }
+  .me-tick {
+    position: absolute;
+    bottom: 11px;
+    width: 1px;
+    margin-left: -0.5px;
+    border-radius: 1px;
+    height: 11px;
+    background: rgba(255, 255, 255, 0.3);
+
+    &.is-major {
+      height: 15px;
+      background: rgba(255, 255, 255, 0.58);
+    }
+    &.is-hl {
+      background: var(--me-accent-fg);
+      opacity: 1;
+    }
+    &.is-major.is-hl {
+      background: var(--me-accent-fg);
+    }
+    &.is-def::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      bottom: -4px;
+      transform: translateX(-50%);
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.55);
+    }
+  }
+  .me-ruler-grad {
+    position: absolute;
+    top: 2px;
+    height: 6px;
+    border-radius: 3px;
+    pointer-events: none;
+    opacity: 0.95;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  }
+  .me-ruler-center {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    transform: translateX(-50%);
+    z-index: 2;
+    pointer-events: none;
+    width: 1.5px;
+    height: 100%;
+    border-radius: 2px;
+    background: #9a9aa3;
+    box-shadow:
+      0 0 6px rgba(255, 255, 255, 0.12),
+      0 1px 5px rgba(0, 0, 0, 0.55);
+    transition: width 0.12s;
+  }
+  .me-ruler.is-scrolling .me-ruler-center {
+    width: 2px;
+  }
+}
+
+@keyframes me-fade {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .me-root .me-panel {
+    animation: none;
+  }
+  .me-root .me-tab-indicator {
+    transition: none;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Container queries (not viewport): `.me-root` is the query container.
+// Two stages only: full sidebar, or mobile UI at 860px and below.
+// ---------------------------------------------------------------------------
+@media (pointer: coarse) {
+  .me-root .me-crop-stage {
+    --h-out: 30px;
+    --h-in: 22px;
+    --h-gap: 5px;
+    --h-arm: 26px;
+    --h-bar: 30px;
+    --h-thick: 4px;
+  }
+}
+
+@container me-editor (max-width: 860px) {
+  .me-root .me-workspace {
+    flex-direction: column;
+    position: relative;
+  }
+  .me-root .me-sidebar {
+    display: none;
+  }
+  .me-root .me-side {
+    flex: 1 1 auto;
+  }
+  .me-root .me-crop-stage {
+    --h-out: 30px;
+    --h-in: 22px;
+    --h-gap: 5px;
+    --h-arm: 26px;
+    --h-bar: 30px;
+    --h-thick: 4px;
+    // Keeps the image centered on the same line as the crop box.
+    --me-bar-overlap: 52px;
+  }
+  .me-root .me-crop-stage.is-crop-mode {
+    --me-bar-overlap: 0;
+    padding: 66px 28px 14px;
+  }
+  .me-root .me-mobile-ui {
+    display: flex;
+  }
+}

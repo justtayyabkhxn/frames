@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "lib": ["DOM", "ES2022", "WebWorker"],
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "incremental": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "types": ["node"],
+    "paths": {
+      "@services/*": ["./src/services/*"],
+      "@assets": ["./src/assets"],
+      "@assets/*": ["./src/assets/*"],
+      "@components/*": ["./src/components/*"],
+      "@directives/*": ["./src/directives/*"],
+      "@native": ["./src/native", "./src/native/*"],
+      "@native/*": ["./src/native/*"]
+    }
+  },
+  "vueCompilerOptions": {
+    "target": 3
+  }
+}

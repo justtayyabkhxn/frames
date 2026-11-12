@@ -1,0 +1,159 @@
+<template>
+  <ul class="albums-list">
+    <NcListItem
+      v-for="album in albums"
+      class="album"
+      :key="album.album_id"
+      :name="album.name"
+      :aria-label="album.name"
+      :to="link ? linkTarget(album) : undefined"
+      :exact="true"
+      @click="click($event, album)"
+    >
+      <template #icon>
+        <XImg v-if="toCoverUrl(album)" class="album__image" :src="toCoverUrl(album)" />
+        <div v-else class="album__image album__image--placeholder">
+          <ImageMultipleIcon :size="32" />
+        </div>
+      </template>
+
+      <template #subname>
+        <div>
+          {{ getSubtitle(album) }}
+        </div>
+      </template>
+
+      <template #extra>
+        <slot name="extra" :album="album"></slot>
+      </template>
+    </NcListItem>
+  </ul>
+</template>
+
+<script setup lang="ts">
+import { defineAsyncComponent } from 'vue';
+
+const NcListItem = defineAsyncComponent(() => import('@nextcloud/vue/components/NcListItem'));
+
+import * as utils from '@services/utils/common';
+import * as dav from '@services/dav';
+import { routes } from '@services/router';
+
+import type { IAlbum, IPhoto } from '@typings';
+
+import ImageMultipleIcon from 'vue-material-design-icons/ImageMultiple.vue';
+import XImg from '@components/frame/XImg.vue';
+
+defineOptions({
+  name: 'AlbumsList',
+});
+
+const props = withDefaults(
+  defineProps<{
+    albums: IAlbum[];
+    link?: boolean;
+  }>(),
+  {
+    link: true,
+  },
+);
+
+const emit = defineEmits<{
+  (e: 'click', item: IAlbum): void;
+}>();
+
+defineSlots<{
+  extra(props: { album: IAlbum }): any;
+}>();
+
+function click($event: Event, album: IAlbum) {
+  if (!props.link) {
+    $event.preventDefault();
+  }
+  emit('click', album);
+}
+
+function linkTarget(album: IAlbum) {
+  return {
+    name: routes.Albums.name,
+    params: {
+      name: album.name,
+      user: album.user,
+    },
+  };
+}
+
+function toCoverUrl(album: IAlbum): string | undefined {
+  // See Cluster.vue for the original implementation
+  const preview = (fileid: number, etag: string | number) =>
+    utils.getPreviewUrl({
+      photo: {
+        fileid: fileid,
+        etag: etag.toString(),
+      } as IPhoto,
+      sqsize: 512,
+    });
+
+  if (album.cover && album.cover_etag) {
+    return preview(album.cover, album.cover_etag);
+  }
+
+  if (album.last_added_photo && album.last_added_photo !== -1) {
+    return preview(album.last_added_photo, album.last_added_photo_etag ?? album.album_id);
+  }
+
+  return undefined;
+}
+
+function getSubtitle(album: IAlbum) {
+  return dav.getAlbumSubtitle(album);
+}
+</script>
+
+<style lang="scss" scoped>
+.albums-list {
+  overflow-x: hidden;
+  padding: 2px;
+
+  .album {
+    :deep(.list-item) {
+      box-sizing: border-box;
+      display: flex;
+
+      &::before {
+        // Hide the ugly blue line when link is active
+        display: none;
+      }
+    }
+
+    :deep(.list-item-content__wrapper) {
+      flex-grow: 1;
+    }
+
+    :deep(.line-one__title) {
+      font-weight: 500;
+    }
+
+    &__image {
+      width: auto;
+      height: 100%;
+      aspect-ratio: 1/1;
+      object-fit: cover;
+      border-radius: 50%;
+      margin-right: 5px;
+
+      &--placeholder {
+        background: var(--color-primary-light);
+
+        :deep(.material-design-icon) {
+          width: 100%;
+          height: 100%;
+          .material-design-icon__svg {
+            fill: var(--color-primary);
+          }
+        }
+      }
+    }
+  }
+}
+</style>

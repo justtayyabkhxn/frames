@@ -1,0 +1,329 @@
+<template>
+  <div class="nxsetup-outer native-auth">
+    <Transition name="setup-step" mode="out-in">
+      <div class="card" :key="step">
+        <XImg class="banner" :src="banner" :svg-tag="true" />
+
+        <div class="setup-section" v-if="step === 1">
+          {{ t('memories', 'You are now logged in to the server!') }}
+          <br /><br />
+          {{
+            t(
+              'memories',
+              'You can set up automatic uploads from this device using the Nextcloud mobile app. Click the button below to download the app, or skip this step and continue.',
+            )
+          }}
+          <br />
+
+          <div class="buttons">
+            <NcButton variant="secondary" class="button button-white" :href="autoUploadAppUrl">
+              {{ t('memories', 'Set up automatic upload') }}
+            </NcButton>
+
+            <NcButton variant="primary" class="button" @click="step++">
+              {{ t('memories', 'Continue') }}
+            </NcButton>
+          </div>
+        </div>
+
+        <div class="setup-section" v-else-if="step === 2">
+          {{
+            t(
+              'memories',
+              'Memories can show local media on your device alongside the media on your server. This requires access to the media on this device.',
+            )
+          }}
+          <br /><br />
+          {{
+            hasMediaPermission
+              ? t('memories', 'Access to media has been granted.')
+              : t(
+                  'memories',
+                  'Access to media is not available yet. If the button below does not work, grant the permission through settings.',
+                )
+          }}
+
+          <template v-if="canManageMedia !== null">
+            <br /><br />
+            {{
+              canManageMedia
+                ? t('memories', 'Memories can manage media on this device.')
+                : t('memories', 'Allow Memories to manage media on this device.')
+            }}
+          </template>
+
+          <div class="buttons">
+            <NcButton
+              variant="secondary"
+              class="button button-white"
+              @click="grantMediaPermission"
+              v-if="!hasMediaPermission"
+            >
+              {{ t('memories', 'Grant permissions') }}
+            </NcButton>
+
+            <NcButton
+              variant="secondary"
+              class="button button-white"
+              @click="grantManageMedia"
+              v-if="canManageMedia === false"
+            >
+              {{ t('memories', 'Grant media management') }}
+            </NcButton>
+
+            <NcButton
+              :variant="hasMediaPermission ? 'secondary' : 'primary'"
+              class="button"
+              :class="{ 'button-white': hasMediaPermission }"
+              @click="step += hasMediaPermission ? 1 : 2"
+            >
+              {{ hasMediaPermission ? t('memories', 'Continue') : t('memories', 'Skip this step') }}
+            </NcButton>
+          </div>
+        </div>
+
+        <div class="setup-section" v-else-if="step === 3">
+          {{ t('memories', 'Choose the folders on this device to show on your timeline.') }}
+          {{
+            t(
+              'memories',
+              'If no folders are visible here, you may need to grant the app storage permissions, or wait for the app to index your files.',
+            )
+          }}
+          <br /><br />
+          {{
+            t('memories', 'You can always change this in settings. Note that this does not affect automatic uploading.')
+          }}
+          <br />
+
+          <div id="folder-list">
+            <div v-if="syncStatus != -1">
+              {{ t('memories', 'Synchronizing local files ({n} done).', { n: syncStatus }) }}
+              <br />
+              {{ t('memories', 'This may take a while. Do not close this window.') }}
+            </div>
+            <template v-else>
+              <NcCheckboxRadioSwitch
+                v-for="folder in localFolders"
+                :key="folder.id"
+                v-model="folder.enabled"
+                @update:model-value="updateDeviceFolders"
+                type="switch"
+              >
+                {{ folder.name }}
+              </NcCheckboxRadioSwitch>
+            </template>
+          </div>
+
+          <div class="buttons">
+            <NcButton variant="secondary" class="button button-white" @click="step++">
+              {{ t('memories', 'Finish') }}
+            </NcButton>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { defineAsyncComponent, nextTick, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+
+import NcButton from '@nextcloud/vue/components/NcButton';
+const NcCheckboxRadioSwitch = defineAsyncComponent(() => import('@nextcloud/vue/components/NcCheckboxRadioSwitch'));
+
+import * as util from '@services/utils/common';
+import * as nativex from '@native';
+import { t } from '@services/l10n';
+import XImg from '@components/frame/XImg.vue';
+
+import banner from '@assets/banner.svg';
+
+defineOptions({
+  name: 'NXSetup',
+});
+
+const router = useRouter();
+
+const hasMediaPermission = ref(false);
+const canManageMedia = ref<boolean | null>(null);
+const step = ref(util.uid ? 1 : 0);
+const localFolders = ref<nativex.LocalFolderConfig[]>([]);
+const syncStatus = ref(-1);
+let syncStatusWatch = 0;
+
+const autoUploadAppUrl =
+  nativex.platform() === 'ios'
+    ? 'https://apps.apple.com/app/nextcloud/id1125420102'
+    : 'https://play.google.com/store/apps/details?id=com.nextcloud.client';
+
+watch(step, () => {
+  switch (step.value) {
+    case 2:
+      hasMediaPermission.value = nativex.configHasMediaPermission();
+      canManageMedia.value = nativex.canManageMedia();
+      break;
+    case 3:
+      localFolders.value = nativex.getLocalFolders();
+      break;
+    case 4:
+      router.replace('/');
+      break;
+  }
+});
+
+onBeforeMount(() => {
+  if (!nativex.has() || !step.value) {
+    router.replace('/');
+  }
+});
+
+onMounted(async () => {
+  await nextTick();
+
+  // Match system bars to the auth pages (same as welcome/waiting)
+  nativex.setTheme('#174a7d', true);
+
+  // Check if we have media management permissions.
+  canManageMedia.value = nativex.canManageMedia();
+
+  // set up sync status watcher
+  syncStatusWatch = window.setInterval(() => {
+    if (canManageMedia.value === false) {
+      canManageMedia.value = nativex.canManageMedia();
+    }
+
+    if (hasMediaPermission.value && step.value === 3) {
+      const newStatus = nativex.nativex.getSyncStatus();
+
+      // Refresh local folders if newly reached state -1
+      if (newStatus === -1 && syncStatus.value !== -1) {
+        localFolders.value = nativex.getLocalFolders();
+      }
+
+      syncStatus.value = newStatus;
+    }
+  }, 500);
+});
+
+onBeforeUnmount(() => {
+  nativex.setTheme(); // reset theme
+  window.clearInterval(syncStatusWatch);
+});
+
+function updateDeviceFolders() {
+  nativex.setLocalFolders(localFolders.value);
+}
+
+async function grantMediaPermission() {
+  await nativex.configAllowMedia();
+  hasMediaPermission.value = nativex.configHasMediaPermission();
+}
+
+async function grantManageMedia() {
+  await nativex.configAllowManageMedia();
+  canManageMedia.value = nativex.canManageMedia();
+}
+</script>
+
+<style lang="scss" scoped>
+.nxsetup-outer {
+  .banner {
+    width: 172px;
+    max-width: 60vw;
+    margin: 0 auto 16px;
+    color: #fff;
+    filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.3));
+    > :deep(svg) {
+      width: 100%;
+      height: auto;
+    }
+  }
+
+  .setup-section {
+    font-size: 14.5px;
+    line-height: 1.6;
+  }
+
+  .buttons {
+    margin-top: 20px;
+    .button {
+      margin: 10px auto;
+    }
+
+    .button-vue--primary {
+      color: #fff;
+
+      &:hover:not(:disabled) {
+        color: #fff;
+      }
+    }
+
+    // Secondary NcButtons use a theme tint that looks near-black in dark
+    // mode, so use the white welcome-series style on the dark card.
+    .button-white {
+      background-color: #fff;
+      border-color: #fff;
+      color: #0f3a5f;
+
+      &:hover:not(:disabled) {
+        background-color: #dcecfb;
+        border-color: #dcecfb;
+        color: #0f3a5f;
+      }
+
+      &:active:not(:disabled) {
+        background-color: #c9e0f7;
+        border-color: #c9e0f7;
+        color: #0f3a5f;
+      }
+    }
+  }
+
+  #folder-list {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 16px;
+    padding: 12px 14px;
+    margin-top: 15px;
+    text-align: left;
+    max-height: min(38vh, 320px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+
+    .checkbox-radio-switch {
+      margin-left: 10px;
+      color: #fff;
+
+      // theme hover wash is light and would hide the white label
+      :deep(.checkbox-radio-switch__content:hover) {
+        background-color: rgba(255, 255, 255, 0.12);
+      }
+
+      :deep(.checkbox-radio-switch__label) {
+        min-height: unset;
+      }
+    }
+  }
+}
+
+.setup-step-enter-active,
+.setup-step-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.setup-step-enter-from,
+.setup-step-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-step-enter-active,
+  .setup-step-leave-active {
+    transition: none;
+  }
+}
+</style>
+
+<style scoped src="../styles/native-auth.css"></style>

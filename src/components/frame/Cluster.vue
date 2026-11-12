@@ -1,0 +1,309 @@
+<template>
+  <component
+    :is="link && !placeholder ? 'router-link' : 'div'"
+    draggable="false"
+    :tabindex="placeholder ? -1 : 1"
+    :aria-label="title"
+    class="cluster fill-block"
+    :class="{ error, placeholder }"
+    :to="target"
+    @click="click"
+  >
+    <div class="count-bubble" v-if="counters && data.count">
+      <NcCounterBubble :count="data.count" />
+    </div>
+    <div class="name">
+      <div class="title" v-if="title">{{ title }}</div>
+      <div class="subtitle" v-if="subtitle">{{ subtitle }}</div>
+    </div>
+
+    <div class="previews fill-block" ref="previews" @click="clickPreview">
+      <div class="img-outer" :class="{ plus, 'ph-shimmer': placeholder }" :style="imgOuterStyle">
+        <XImg
+          v-if="previewUrl"
+          draggable="false"
+          class="fill-block"
+          :key="data.cluster_id"
+          :src="previewUrl"
+          :svg-tag="plus"
+          @error="failed"
+        />
+        <div v-if="title || subtitle" class="overlay top-left fill-block" />
+      </div>
+    </div>
+  </component>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+
+import NcCounterBubble from '@nextcloud/vue/components/NcCounterBubble';
+import XImg from '@components/frame/XImg.vue';
+
+import errorsvg from '@assets/error.svg';
+import plussvg from '@assets/plus.svg';
+
+import * as nativex from '@native';
+import * as dav from '@services/dav';
+
+import type { ICluster } from '@typings';
+
+defineOptions({
+  name: 'Cluster',
+});
+
+const props = withDefaults(
+  defineProps<{
+    data: ICluster;
+    link?: boolean;
+    counters?: boolean;
+  }>(),
+  {
+    link: true,
+    counters: true,
+  },
+);
+
+const emit = defineEmits<{
+  click: [item: ICluster];
+}>();
+
+const previewUrl = computed(() => {
+  if (placeholder.value) return String();
+  if (error.value) return errorsvg;
+  if (plus.value) return plussvg;
+  return dav.getClusterPreview(props.data);
+});
+
+const title = computed(() => {
+  return props.data.display_name || props.data.name;
+});
+
+const subtitle = computed(() => {
+  if (dav.clusterIs.album(props.data)) {
+    return dav.getAlbumSubtitle(props.data);
+  }
+
+  return String();
+});
+
+const plus = computed(() => {
+  return props.data.cluster_type === 'plus';
+});
+
+/** Target URL to navigate to */
+const target = computed(() => {
+  if (!props.link || plus.value) return {};
+  return dav.getClusterLinkTarget(props.data);
+});
+
+const error = computed(() => {
+  return !!props.data.previewError || (dav.clusterIs.album(props.data) && props.data.last_added_photo <= 0);
+});
+
+const placeholder = computed(() => {
+  return props.data.cluster_type === 'placeholder';
+});
+
+const imgOuterStyle = computed(() => {
+  const idx = props.data.cluster_id as number;
+  return placeholder.value ? { animationDelay: `${idx * 0.1}s` } : {};
+});
+
+function failed() {
+  props.data.previewError = true;
+}
+
+function click() {
+  emit('click', props.data);
+}
+
+function clickPreview() {
+  nativex.playTouchSound();
+}
+</script>
+
+<style lang="scss" scoped>
+.cluster,
+.name,
+img {
+  cursor: pointer;
+}
+
+.cluster {
+  // Get rid of color of the bubble
+  .count-bubble :deep(.counter-bubble__counter) {
+    color: unset !important;
+  }
+
+  // Move focus outline inwards
+  &:focus {
+    outline-offset: -1px;
+  }
+}
+
+$namemargin: 10px;
+.name {
+  position: absolute;
+  bottom: 0;
+  z-index: 100;
+  width: calc(100% - 2 * #{$namemargin});
+  margin: $namemargin;
+  pointer-events: none;
+
+  color: white;
+  word-wrap: break-word;
+  white-space: normal;
+  text-align: center;
+  font-size: 1em;
+  line-height: 1.1em;
+
+  // multiline ellipsis
+  > .title {
+    display: -webkit-box;
+    line-clamp: 5;
+    -webkit-line-clamp: 5;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+
+    // 2px padding prevents the bottom of the text from being cut off
+    padding-bottom: 2px;
+  }
+
+  // name is below the image
+  .cluster--circle & {
+    margin: 0 $namemargin;
+    min-height: 26px; // alignment
+    font-weight: 500;
+  }
+
+  .cluster--circle &,
+  .cluster--album &,
+  .cluster.error & {
+    color: unset;
+
+    > .title {
+      line-clamp: 2;
+      -webkit-line-clamp: 2;
+    }
+  }
+
+  .cluster--album & {
+    text-align: start;
+    margin: 0;
+    padding: 0 12px;
+
+    min-height: 50px; // align to top of space
+    @media (max-width: 768px) {
+      min-height: 54px; // mark#2147915
+      padding: 0 6px;
+    }
+
+    > .title {
+      font-weight: 500;
+    }
+
+    > .subtitle {
+      color: var(--color-text-maxcontrast);
+    }
+  }
+
+  @media (max-width: 768px) {
+    font-size: 0.9em;
+  }
+
+  > .subtitle {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.87em;
+  }
+}
+
+.count-bubble {
+  z-index: 100;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  pointer-events: none;
+}
+
+.previews {
+  z-index: 3;
+  line-height: 0;
+  position: absolute;
+  padding: 2px;
+  box-sizing: border-box;
+
+  .cluster--album & {
+    padding: 12px;
+
+    @media (max-width: 768px) {
+      /**
+      * This is incredibly hacky: mark#2147915
+      * We want to reduce the padding on mobile. By reducing the vertical padding
+      * by double the amount, the size compensates and it looks the same.
+      */
+      padding: 0 6px;
+    }
+  }
+
+  > .img-outer {
+    position: relative;
+    background-color: var(--color-background-dark);
+    padding: 0;
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    display: inline-block;
+    cursor: pointer;
+
+    .cluster--rounded &,
+    .cluster--album & {
+      border-radius: 9px; // rounded corners
+    }
+    .cluster--album &,
+    .cluster--circle & {
+      height: unset;
+      aspect-ratio: 1; // force square
+    }
+    .cluster--circle & {
+      border-radius: 50%; // circle image
+    }
+
+    &.plus {
+      background-color: var(--color-primary-element-light);
+      color: var(--color-primary);
+
+      :deep(svg) {
+        cursor: pointer;
+      }
+    }
+
+    &.ph-shimmer {
+      pointer-events: none;
+      cursor: default;
+    }
+
+    > img {
+      object-fit: cover;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    > .overlay {
+      pointer-events: none;
+      overflow: hidden;
+      background: linear-gradient(0deg, rgba(0, 0, 0, 0.5) 10%, transparent 40%);
+
+      .cluster.error &,
+      .cluster--circle &,
+      .cluster--album & {
+        display: none;
+      }
+    }
+  }
+}
+</style>

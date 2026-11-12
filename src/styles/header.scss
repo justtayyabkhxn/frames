@@ -1,0 +1,32 @@
+html {
+  --m-z-index-header: 2000;
+  --m-z-index-viewer: 2010;
+  --m-z-index-top-bar: 2020;
+  --m-z-index-search-overlay: 2030;
+
+  header#header {
+    z-index: var(--m-z-index-header) !important;
+  }
+}
+
+// Allow hiding app name (PublicShareHeader)
+header#header .header-appname {
+  transition: opacity 0.2s ease-in-out;
+  &.hidden {
+    opacity: 0 !important;
+  }
+}
+
+// Our menu buttons
+.memories-menu-item {
+  background-color: transparent !important;
+
+  header#header & {
+    color: var(--color-background-plain-text, var(--color-primary-text)) !important;
+  }
+
+  opacity: 0.85;
+  &:hover {
+    opacity: 1;
+  }
+}

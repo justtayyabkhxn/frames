@@ -1,0 +1,59 @@
+body {
+  overflow: hidden;
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+}
+
+// Nextcloud 25+: get rid of gap and border radius at right
+#content-vue {
+  width: calc(100% - var(--body-container-margin) * 1); // was *2
+  margin-right: 0;
+
+  // Rounded corners only on left.
+  border-radius: 0;
+  &,
+  & > main {
+    border-top-left-radius: var(--body-container-radius);
+    border-bottom-left-radius: var(--body-container-radius);
+  }
+
+  // If no navigation remove both margins
+  &:not(.has-nav) {
+    width: calc(100%);
+    margin-left: 0;
+  }
+
+  // https://bugs.webkit.org/show_bug.cgi?id=160953
+  overflow: visible;
+
+  > div.app-navigation {
+    // Reduce size of navigation bar
+    --app-navigation-max-width: 250px !important;
+
+    .app-navigation-toggle {
+      // Move up to align with back button of top matter
+      top: 2px;
+      transition: opacity 0.1s ease-in-out;
+      background-color: transparent;
+      opacity: 0.2; // It's ugly
+      &:hover {
+        opacity: 1;
+      }
+    }
+  }
+}
+
+// Hide horizontal scrollbar on mobile
+// For the padding removal above
+#app-content-vue {
+  overflow-x: hidden;
+}
+
+// Full-bleed routes (e.g. first start) opt out of content margins
+#content.no-margins {
+  margin: 0;
+  padding: 0;
+}

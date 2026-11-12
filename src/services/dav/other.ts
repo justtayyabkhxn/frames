@@ -1,0 +1,89 @@
+import { generateUrl } from '@nextcloud/router';
+import { showError, showSuccess } from '@services/utils/dialog';
+import axios from '@nextcloud/axios';
+
+import { API } from '@services/API';
+import { translate as t } from '@services/l10n';
+import { routes } from '@services/router';
+import { getFiles } from '@services/dav/base';
+import client from '@services/dav/client';
+import * as xml from '@services/dav/xml';
+import * as utils from '@services/utils/common';
+
+import type { RouteLocationNormalized } from 'vue-router';
+import type { ClusterTypes, IPhoto } from '@typings';
+import type { FileStat, ResponseDataDetailed } from 'webdav';
+import type { AbortOpts } from '@services/utils/abort';
+
+/**
+ * Get the file ID of a path relative to the user's root folder.
+ */
+export async function getFileId(path: string, opts?: AbortOpts): Promise<number> {
+  const res = (await client.stat(`/files/${utils.uid}/${path.replace(/^\/+/, '')}`, {
+    data: xml.propfind(['oc:fileid']),
+    details: true,
+    signal: opts?.signal,
+  })) as ResponseDataDetailed<FileStat>;
+  return Number(res.data.props?.fileid ?? 0);
+}
+
+/**
+ * Open the files app with the given photo
+ * Opens a new window.
+ */
+export async function viewInFolder(photo: IPhoto, opts: { route: RouteLocationNormalized }) {
+  if (!photo) return;
+  const files = await getFiles([photo], { route: opts.route });
+  if (files.length === 0) return;
+
+  const url = viewInFolderUrl(files[0]);
+  window.open(url, '_blank');
+}
+
+/**
+ * Gets the view in folder url for the given file.
+ */
+export function viewInFolderUrl({ filename, fileid }: { filename: string; fileid: number }) {
+  // ensure dirPath starts with a slash
+  let dirPath = filename.slice(0, filename.lastIndexOf('/'));
+  if (!dirPath.startsWith('/')) {
+    dirPath = `/${dirPath}`;
+  }
+
+  return API.Q(generateUrl('/apps/files/'), {
+    dir: dirPath,
+    scrollto: fileid,
+    openfile: fileid,
+  });
+}
+
+/**
+ * Set the cluster cover image
+ *
+ * @param photo The photo to set as the cover
+ */
+export async function setClusterCover(photo: IPhoto, opts: { route: RouteLocationNormalized }): Promise<boolean> {
+  if (!photo) return false;
+
+  // Get cluster type from route name (fragile)
+  const clusterType = opts.route.name as ClusterTypes;
+
+  // Get other parameters
+  const { fileid } = photo;
+  let { user, name } = opts.route.params;
+
+  const routeName = opts.route.name?.toString();
+  if (routeName === routes.Recognize.name || routeName === routes.Albums.name) {
+    name = `${user}/${name}`;
+  }
+
+  try {
+    await axios.post(API.CLUSTER_SET_COVER(clusterType), { name, fileid });
+    showSuccess(t('memories', 'Cover image set successfully'));
+    return true;
+  } catch (err) {
+    showError(t('memories', 'Failed to set cover image'));
+    console.error(err);
+    return false;
+  }
+}

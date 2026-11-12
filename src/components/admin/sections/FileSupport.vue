@@ -1,0 +1,206 @@
+<template>
+  <div v-if="systemConfig" class="admin-section">
+    <h2>{{ $options.title }}</h2>
+
+    {{ t('memories', 'Memories ships a built-in preview generator (VIPS) covering various image formats.') }}
+    {{ t('memories', 'Using VIPS is recommended to support Ultra-HDR and ICC profiles.') }}
+    {{ t('memories', 'You can configure the enabled Nextcloud preview providers below.') }}
+    <a href="https://memories.gallery/file-types/" target="_blank">{{ t('memories', 'Documentation.') }}</a>
+    <br />
+    <NcCheckboxRadioSwitch type="switch" :model-value="vipsEnabled()" @update:model-value="updateVips($event)"
+      >{{ t('memories', 'Built-in image previews (VIPS)') }}
+    </NcCheckboxRadioSwitch>
+
+    <NcCheckboxRadioSwitch
+      type="switch"
+      :model-value="vipsRawEnabled()"
+      :disabled="!vipsEnabled()"
+      @update:model-value="updateVipsRaw($event)"
+      >{{ t('memories', 'Camera RAW previews (VIPS)') }}
+    </NcCheckboxRadioSwitch>
+
+    <NcTextField
+      :label="t('memories', 'Path to packaged vips binary')"
+      :label-visible="true"
+      :model-value="systemConfig['memories.vips.path']"
+      readonly
+    />
+
+    <template v-if="status">
+      <NcNoteCard :type="binaryStatusType(status.vips)">
+        {{ binaryStatus('vips', status.vips) }}
+      </NcNoteCard>
+
+      <NcNoteCard v-if="status.imagick" type="success">
+        {{ t('memories', 'PHP-Imagick is available [{version}].', { version: status.imagick }) }}
+      </NcNoteCard>
+      <NcNoteCard v-else type="error">
+        {{ t('memories', 'PHP-Imagick is not available.') }}
+        {{ t('memories', 'Image editing will not work correctly.') }}
+        {{ t('memories', 'Thumbnail generation may not work for some formats (HEIC, TIFF).') }}
+      </NcNoteCard>
+
+      <NcNoteCard :type="binaryStatusType(status.ffmpeg_preview)">
+        {{ binaryStatus('ffmpeg preview', status.ffmpeg_preview) }}
+        {{
+          binaryStatusOk(status.ffmpeg_preview)
+            ? t('memories', 'Thumbnails for videos will be generated with this binary.')
+            : t('memories', 'Thumbnail generation may not work for videos.')
+        }}
+      </NcNoteCard>
+
+      <NcNoteCard v-if="hasProvider('OC\\Preview\\Imaginary')" type="warning">
+        {{
+          t(
+            'memories',
+            'Imaginary is enabled for preview generation. This will override other preview providers. We currently recommend against using Imaginary due to multiple bugs in handling of HEIC and GIF files.',
+          )
+        }}
+      </NcNoteCard>
+    </template>
+
+    <NcCheckboxRadioSwitch
+      type="switch"
+      v-for="(provider, klass) in knownPreviewProviders"
+      :key="klass"
+      :model-value="hasProvider(klass)"
+      @update:model-value="updateProvider(klass, $event)"
+      >{{ provider.name }}
+    </NcCheckboxRadioSwitch>
+
+    {{ t('memories', 'The following MIME types are configured for preview generation.') }}
+
+    <br />
+    <code v-if="status">
+      <span v-for="mime in status.mimes" :key="mime">{{ mime }}<br /></span>
+    </code>
+
+    <br />
+
+    {{ t('memories', 'Max preview size (trade-off between quality and storage requirements).') }}
+    <a href="https://memories.gallery/config/#preview-storage" target="_blank">
+      {{ t('memories', 'Documentation.') }}
+    </a>
+    <br />
+    <NcCheckboxRadioSwitch
+      class="preview-box"
+      v-for="size in previewSizes"
+      :key="size"
+      :model-value="String(systemConfig['preview_max_x'])"
+      :value="String(size)"
+      name="previewsize_radio"
+      type="radio"
+      @update:model-value="updatePreviewSize(size)"
+      >{{ size }}px
+    </NcCheckboxRadioSwitch>
+
+    <NcTextField
+      type="number"
+      placeholder="1024"
+      :label="t('memories', 'Max memory for preview generation (MB)')"
+      :label-visible="true"
+      :model-value="String(systemConfig['preview_max_memory'])"
+      @change="update('preview_max_memory', Number($event.target.value))"
+    />
+
+    <NcTextField
+      type="number"
+      placeholder="50"
+      :label="t('memories', 'Max size of file to generate previews for (MB)')"
+      :label-visible="true"
+      :model-value="String(systemConfig['preview_max_filesize_image'])"
+      @change="update('preview_max_filesize_image', Number($event.target.value))"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import NcTextField from '@nextcloud/vue/components/NcTextField';
+import NcNoteCard from '@nextcloud/vue/components/NcNoteCard';
+import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch';
+
+import { t } from '@services/l10n';
+
+import { useAdminContext } from '../admin-context';
+import { binaryStatus, binaryStatusOk, binaryStatusType } from '../admin-utils';
+
+defineOptions({
+  name: 'FileSupport',
+  title: t('memories', 'File Support'),
+});
+
+const { status, systemConfig, update } = useAdminContext();
+
+const knownPreviewProviders = {
+  'OC\\Preview\\Image': {
+    name: t('memories', 'Images (JPEG, PNG, GIF, BMP)'),
+  },
+  'OC\\Preview\\HEIC': {
+    name: t('memories', 'HEIC (Imagick)'),
+  },
+  'OC\\Preview\\TIFF': {
+    name: t('memories', 'TIFF (Imagick)'),
+  },
+  'OC\\Preview\\Movie': {
+    name: t('memories', 'Videos (ffmpeg)'),
+  },
+  'OC\\Preview\\Imaginary': {
+    name: t('memories', 'Imaginary (not recommended)'),
+  },
+};
+
+const previewSizes = [512, 1024, 2048, 4096, 8192];
+
+function providers() {
+  return systemConfig.value?.['enabledPreviewProviders'] ?? [];
+}
+
+function hasProvider(klass: string): boolean {
+  return providers().includes(klass);
+}
+
+function updateProvider(klass: string, enabled: boolean) {
+  if (!systemConfig.value || enabled === hasProvider(klass)) return;
+
+  if (enabled) {
+    providers().push(klass);
+  } else {
+    systemConfig.value['enabledPreviewProviders'] = providers().filter((k) => k !== klass);
+  }
+
+  update('enabledPreviewProviders');
+}
+
+function vipsEnabled(): boolean {
+  return systemConfig.value?.['memories.vips.enabled'] ?? true;
+}
+
+function updateVips(enabled: boolean) {
+  if (!systemConfig.value || enabled === vipsEnabled()) return;
+  systemConfig.value['memories.vips.enabled'] = enabled;
+  update('memories.vips.enabled');
+}
+
+function vipsRawEnabled(): boolean {
+  return systemConfig.value?.['memories.vips.raw.enabled'] ?? true;
+}
+
+function updateVipsRaw(enabled: boolean) {
+  if (!systemConfig.value || enabled === vipsRawEnabled()) return;
+  systemConfig.value['memories.vips.raw.enabled'] = enabled;
+  update('memories.vips.raw.enabled');
+}
+
+async function updatePreviewSize(size: number | string) {
+  update('preview_max_x', Number(size));
+  await new Promise((resolve) => setTimeout(resolve, 1000)); // Hack to prevent config race
+  update('preview_max_y', Number(size));
+}
+</script>
+
+<style lang="scss" scoped>
+.preview-box {
+  display: inline-block !important;
+  margin: 0 10px;
+}
+</style>

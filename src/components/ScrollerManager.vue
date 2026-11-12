@@ -1,0 +1,819 @@
+<template>
+  <div
+    class="scroller"
+    ref="scroller"
+    v-bind:class="{
+      'scrolling-recycler-now': scrollingRecyclerNowTimer.pending,
+      'scrolling-recycler': scrollingRecyclerTimer.pending,
+      'scrolling-now': scrollingNowTimer.pending,
+      scrolling: scrollingTimer.pending,
+      interacting: interacting,
+    }"
+    @mousemove.passive="mousemove"
+    @mouseleave.passive="mouseleave"
+    @mousedown.passive="mousedown"
+    @mouseup.passive="interactend"
+    @touchmove.prevent="touchmove"
+    @touchstart.passive="touchstart"
+    @touchend.passive="interactend"
+    @touchcancel.passive="interactend"
+  >
+    <span class="cursor st" ref="cursorSt" :style="{ transform: `translateY(${cursorY}px)` }"> </span>
+
+    <span
+      ref="hoverCursor"
+      class="cursor hv"
+      :style="{ transform: hoverCursorTransform }"
+      @touchmove.prevent="touchmove"
+      @touchstart.passive="touchstart"
+      @touchend.passive="interactend"
+      @touchcancel.passive="interactend"
+    >
+      <div class="text" v-fast-text="hoverCursorText"></div>
+      <div class="icon">
+        <ScrollUpIcon v-once :size="22" />
+        <ScrollDownIcon v-once :size="22" />
+      </div>
+    </span>
+
+    <div class="ticks-container top-left fill-block">
+      <div
+        v-for="tick of visibleTicks"
+        :key="tick.key"
+        class="tick"
+        :style="{ transform: `translateY(calc(${tick.top}px - 50%))` }"
+      >
+        <span v-if="tick.text">{{ tick.text }}</span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, shallowRef, nextTick, useTemplateRef, toRaw, watch } from 'vue';
+import { useThrottleFn } from '@vueuse/core';
+
+import { vFastText } from '@directives/vFastText';
+import { pointerType } from '@services/viewport';
+import { RenewingTimeout } from '@services/utils/renewing-timeout';
+import * as utils from '@services/utils/common';
+import * as lens from '@services/lens';
+import * as nativex from '@native';
+
+import type { IRecyclerState, IRow, ITick } from '@typings';
+
+import ScrollUpIcon from 'vue-material-design-icons/MenuUp.vue';
+import ScrollDownIcon from 'vue-material-design-icons/MenuDown.vue';
+
+const SNAP_OFFSET = -5; // Pixels to snap at
+const SNAP_MIN_ROWS = 1000; // Minimum rows to snap at
+const MOBILE_CURSOR_HH = 22; // Half height of the mobile cursor (CSS)
+
+const VIBRATE_MS = 10; // Duration of tick haptic on mobile
+const VIBRATE_THROTTLE_MS = 40; // Minimum gap between haptic vibrations
+
+const props = defineProps<{
+  /** Rows from Timeline */
+  rows: IRow[];
+  /** Actual recycler component */
+  recycler?: VueRecyclerType | null;
+  /** Shared recycler geometry (mutated in place) */
+  recyclerState: IRecyclerState;
+  /** Recycler before slot component height */
+  beforeHeight: number;
+}>();
+
+const emit = defineEmits<{
+  interactend: [];
+  scroll: [event: utils.BusEvent['memories.recycler.scroll']];
+}>();
+
+const scroller = useTemplateRef<HTMLDivElement>('scroller');
+const cursorSt = useTemplateRef<HTMLSpanElement>('cursorSt');
+const hoverCursor = useTemplateRef<HTMLSpanElement>('hoverCursor');
+
+/** Last known height at adjustment */
+const lastAdjustHeight = ref(0);
+/** Space to leave at the top (for the hover cursor) */
+const topPadding = ref(0);
+/** Rect of scroller */
+let scrollerRect: DOMRect | null = null;
+/** All available ticks */
+let ticks: ITick[] = [];
+/** Visible ticks  */
+const visibleTicks = shallowRef<ITick[]>([]);
+/** Computed cursor top */
+const cursorY = ref(0);
+/** Hover cursor top */
+const hoverCursorY = ref(-5);
+/** Hover cursor text */
+const hoverCursorText = ref('');
+/** Scrolling using the scroller */
+const scrollingTimer = new RenewingTimeout();
+/** Scrolling now using the scroller */
+const scrollingNowTimer = new RenewingTimeout();
+/** Scrolling recycler */
+const scrollingRecyclerTimer = new RenewingTimeout();
+/** Scrolling recycler now */
+const scrollingRecyclerNowTimer = new RenewingTimeout();
+/** Recycler scrolling throttle */
+let scrollingRecyclerUpdateTimer = 0;
+/** Recycler scrolling animation frame */
+let scrollingRecyclerUpdateFrame = 0;
+/** View size reflow requested */
+let reflowRequest = false;
+/** Tick adjust requested */
+let adjustRequest = false;
+/** Scroller is being moved with interaction */
+const interacting = ref(false);
+/** Last known scroll position of the recycler */
+let lastRecyclerLogicalScroll = 0;
+/** Last requested y position when interacting */
+let lastRequestedRecyclerY = NaN;
+
+/** Height of usable area */
+const height = computed(() => props.recyclerState.scrollerHeight - topPadding.value);
+
+/** Position of hover cursor */
+const hoverCursorTransform = computed(() => {
+  const mob = pointerType.isCoarse;
+  const min = topPadding.value + (mob ? 2 : 0); // padding for curvature
+  const max = props.recyclerState.scrollerHeight - (mob ? 6 : 0); // padding for shadow
+  const val = hoverCursorY.value;
+  const clamp = Math.max(min, Math.min(max, val)); // clamp(min, val, max)
+  return `translateY(calc(${clamp}px - 100%))`;
+});
+
+/** Reset state */
+function reset() {
+  ticks = [];
+  visibleTicks.value = [];
+  cursorY.value = 0;
+  hoverCursorY.value = -5;
+  hoverCursorText.value = '';
+  reflowRequest = false;
+  adjustRequest = false;
+  interacting.value = false;
+  lastRecyclerLogicalScroll = 0;
+  lastRequestedRecyclerY = NaN;
+
+  // Clear all timers
+  scrollingTimer.clear();
+  scrollingNowTimer.clear();
+  scrollingRecyclerTimer.clear();
+  scrollingRecyclerNowTimer.clear();
+  clearTimeout(scrollingRecyclerUpdateTimer);
+  scrollingRecyclerUpdateTimer = 0;
+  cancelAnimationFrame(scrollingRecyclerUpdateFrame);
+  scrollingRecyclerUpdateFrame = 0;
+}
+
+/** Recycler scroll event, must be called by timeline */
+function recyclerScrolled(event: Event | null) {
+  // This isn't a renewing timer, it's a scheduled task
+  if (scrollingRecyclerUpdateTimer || scrollingRecyclerUpdateFrame) return;
+  scrollingRecyclerUpdateTimer = window.setTimeout(() => {
+    scrollingRecyclerUpdateTimer = 0;
+    scrollingRecyclerUpdateFrame = window.requestAnimationFrame(() => {
+      scrollingRecyclerUpdateFrame = 0;
+      updateFromRecyclerScroll();
+    });
+  }, 100);
+
+  // Update that we're scrolling with the recycler
+  scrollingRecyclerNowTimer.set(null, 200);
+  scrollingRecyclerTimer.set(null, 1500);
+}
+
+/** Update cursor position from recycler scroll position */
+function updateFromRecyclerScroll() {
+  // Get the scroll position
+  const scroll = props.recyclerState.scrollTop;
+  const logicalScroll = scroll - props.recyclerState.startOffset;
+
+  // Emit scroll event
+  const event = {
+    current: logicalScroll,
+    previous: lastRecyclerLogicalScroll,
+    dynTopMatterVisible: logicalScroll < props.beforeHeight,
+    scrollerInteracting: interacting.value,
+  };
+  lastRecyclerLogicalScroll = logicalScroll;
+  utils.bus.emit('memories.recycler.scroll', event);
+  emit('scroll', event);
+
+  // Ignore if dragging the scroller
+  if (interacting.value) return;
+
+  // Get cursor px position
+  const { top1, top2, y1, y2 } = getCoords(scroll, 'y');
+  const topfrac = y2 === y1 ? 0 : (scroll - y1) / (y2 - y1);
+  const rtop = top1 + (top2 - top1) * (topfrac || 0);
+
+  // Always move static cursor to right position
+  cursorY.value = rtop;
+
+  // Move hover cursor to same position unless hovering
+  // Regardless, we need this call because the internal mapping might have changed
+  if (!pointerType.isCoarse && scroller.value?.matches(':hover')) {
+    moveHoverCursor(hoverCursorY.value);
+  } else {
+    moveHoverCursor(rtop);
+  }
+}
+
+/** Compute space to leave at the top (hover cursor + gaps) */
+function computeTopPadding() {
+  topPadding.value = hoverCursor.value?.offsetHeight ?? 0;
+
+  // Add extra padding for any top elements (top matter, mobile header)
+  scroller.value
+    ?.closest('.memories-timeline.container')
+    ?.querySelectorAll('.timeline-scroller-gap')
+    .forEach((el) => (topPadding.value += el.clientHeight + 1));
+}
+
+/** Recompute top padding when scroller geometry changes. */
+watch(
+  () => [props.recyclerState.scrollerWidth, props.recyclerState.scrollerHeight],
+  () => computeTopPadding(),
+  { flush: 'sync' },
+);
+
+/** Re-create tick data in the next frame */
+async function reflow() {
+  if (reflowRequest) return;
+  reflowRequest = true;
+  await nextTick();
+  reflowNow();
+  reflowRequest = false;
+}
+
+/** Re-create tick data */
+function reflowNow() {
+  // Ignore if not initialized
+  if (!props.recycler?.$el) return;
+
+  // Exclude hover cursor height
+  computeTopPadding();
+
+  // Recreate ticks data
+  recreate();
+
+  // Adjust top
+  adjustNow();
+
+  // Update cursors
+  updateFromRecyclerScroll();
+}
+
+/** Recreate from scratch */
+function recreate() {
+  // Clear and override any adjust timer
+  ticks = [];
+  visibleTicks.value = [];
+  lastAdjustHeight.value = 0;
+
+  // Ticks
+  let prevYear = Number.MAX_SAFE_INTEGER;
+  let prevMonth = Number.MAX_SAFE_INTEGER;
+  let prevDayId = Number.MAX_SAFE_INTEGER;
+
+  // Iterate over rows
+  for (const row of toRaw(props.rows)) {
+    if (row.type === 0) {
+      // Create tick
+      const tick: ITick = {
+        dayId: row.dayId,
+        isMonth: false,
+        text: undefined,
+        y: 0,
+        count: 0,
+        topF: 0,
+        top: 0,
+        s: false,
+      };
+
+      // Check if this should be shown.
+      const dateTaken = utils.dayIdToDate(row.dayId);
+      const dtYear = dateTaken.getUTCFullYear();
+      const dtMonth = dateTaken.getUTCMonth();
+      const dtDayId = row.dayId;
+
+      // Mark a tick visible whenever the month or year changes.
+      if (dtMonth !== prevMonth || dtYear !== prevYear) {
+        tick.isMonth = true;
+      }
+
+      // Show the year when it changes. In DESC sort, we assign the year
+      // from the previous tick here, so it shows at the lower boundary of
+      // the previous year. This means that the tick text is deliberately
+      // mismatched with the year / row that it actually matches.
+      if (dtYear !== prevYear) {
+        const textDayId = dtDayId > prevDayId ? dtDayId : prevDayId;
+        const textYear = dtDayId > prevDayId ? dtYear : prevYear;
+
+        // Never set the year for special fake days with meaningless dayIds.
+        if (textDayId !== Number.MAX_SAFE_INTEGER && textDayId !== lens.TOP_RESULTS_DAYID) {
+          tick.text = textYear;
+        }
+      }
+
+      ticks.push(tick);
+      prevYear = dtYear;
+      prevMonth = dtMonth;
+      prevDayId = dtDayId;
+    }
+  }
+}
+
+/**
+ * Update tick positions without truncating the list
+ * This is much cheaper than reflowing the whole thing
+ */
+async function adjust() {
+  if (adjustRequest) return;
+  adjustRequest = true;
+  await nextTick();
+  adjustNow();
+  adjustRequest = false;
+}
+
+/** Do adjustment synchronously */
+function adjustNow() {
+  // Start with the first tick. Walk over all rows counting the
+  // y position. When you hit a row with the tick, update y and
+  // top values and move to the next tick.
+  let tickId = 0;
+  let y = props.beforeHeight + props.recyclerState.startOffset;
+  let count = 0;
+
+  // We only need to recompute top and visible ticks if count
+  // of some tick has changed.
+  let needRecomputeTop = false;
+
+  // Check if height changed
+  if (lastAdjustHeight.value !== height.value) {
+    needRecomputeTop = true;
+    lastAdjustHeight.value = height.value;
+  }
+
+  for (const row of toRaw(props.rows)) {
+    // Check if tick is valid
+    if (tickId >= ticks.length) break;
+
+    // Check if we hit the next tick
+    const tick = ticks[tickId];
+    if (tick.dayId === row.dayId) {
+      tick.y = y;
+
+      // Check if count has changed
+      needRecomputeTop ||= tick.count !== count;
+      tick.count = count;
+
+      // Move to next tick
+      count += row.day.count;
+      tickId++;
+    }
+
+    y += row.size;
+  }
+
+  // Compute visible ticks
+  if (needRecomputeTop) {
+    setTicksTop(count);
+    computeVisibleTicks();
+    updateVisibleTicks();
+  }
+}
+
+/** Mark ticks as visible or invisible */
+function computeVisibleTicks() {
+  // Do another pass to figure out which points are visible
+  // This is not as bad as it looks, it's actually 12*O(n)
+  // because there are only 12 months in a year
+  const fontSizePx = parseFloat(getComputedStyle(cursorSt.value!).fontSize);
+  const minGap = fontSizePx + (pointerType.isCoarse ? 5 : 2);
+  let prevShow = -9999;
+  for (const [idx, tick] of ticks.entries()) {
+    // Conservative
+    tick.s = false;
+
+    // These aren't for showing
+    if (!tick.isMonth) continue;
+
+    // You can't see these anyway, why bother?
+    const minTop = topPadding.value + minGap;
+    const maxTop = props.recyclerState.scrollerHeight - minGap;
+    if (tick.top < minTop || tick.top > maxTop) continue;
+
+    // Will overlap with the previous tick. Skip anyway.
+    if (tick.top - prevShow < minGap) continue;
+
+    // This is a labelled tick then show it anyway for the sake of best effort
+    if (tick.text) {
+      prevShow = tick.top;
+      tick.s = true;
+      continue;
+    }
+
+    // Lookahead for next labelled tick
+    // If showing this tick would overlap the next one, don't show this one
+    let i = idx + 1;
+    while (i < ticks.length) {
+      if (ticks[i].text) {
+        break;
+      }
+      i++;
+    }
+    if (i < ticks.length) {
+      // A labelled tick was found
+      const nextLabelledTick = ticks[i];
+      if (tick.top + minGap > nextLabelledTick.top && nextLabelledTick.top < height.value - minGap) {
+        // make sure this will be shown
+        continue;
+      }
+    }
+
+    // Show this tick
+    tick.s = true;
+    prevShow = tick.top;
+  }
+}
+
+/** Refresh visible ticks from ticks */
+function updateVisibleTicks() {
+  let key = 9999999900;
+  const visible: ITick[] = [];
+  for (const tick of ticks) {
+    if (!tick.s) continue;
+    if (tick.text) {
+      tick.key = key = tick.dayId * 100;
+    } else {
+      tick.key = ++key; // days are sorted descending
+    }
+    visible.push(tick);
+  }
+  visibleTicks.value = visible;
+}
+
+function setTicksTop(total: number) {
+  // On mobile, move the ticks up by half the height of the cursor
+  // so that the cursor is centered on the tick instead (on desktop, it's at the bottom)
+  const displayPadding = pointerType.isCoarse ? -MOBILE_CURSOR_HH : 0;
+
+  // Set topF (float) and top (rounded) values
+  for (const tick of ticks) {
+    tick.topF = topPadding.value + height.value * (tick.count / total);
+    tick.top = utils.roundHalf(tick.topF) + displayPadding;
+  }
+}
+
+/** Change actual position of the hover cursor */
+function moveHoverCursor(y: number) {
+  hoverCursorY.value = y;
+
+  // Get index of previous tick
+  let idx = utils.binarySearch(ticks, y, 'topF');
+  if (idx === 0) {
+    // use this tick
+  } else if (idx >= 1 && idx <= ticks.length) {
+    idx = idx - 1;
+  } else {
+    return;
+  }
+
+  // DayId of current hover
+  const dayId = ticks[idx]?.dayId;
+
+  // Special days
+  if (dayId === undefined) {
+    hoverCursorText.value = '';
+    return;
+  } else if (dayId === lens.TOP_RESULTS_DAYID) {
+    hoverCursorText.value = lens.TOP_RESULTS_TEXT;
+    return;
+  }
+
+  const date = utils.dayIdToDate(dayId);
+  hoverCursorText.value = utils.getShortDateStr(date) ?? '';
+}
+
+/** Handle mouse hover */
+function mousemove(event: MouseEvent) {
+  if (event.buttons) {
+    mousedown(event);
+  }
+  moveHoverCursor(event.offsetY);
+}
+
+/** Handle mouse leave */
+function mouseleave(event: MouseEvent) {
+  interactend();
+  moveHoverCursor(cursorY.value);
+}
+
+/** Binary search and get coords surrounding position */
+function getCoords(y: number, field: 'topF' | 'y') {
+  // If no ticks are available, return a linear interpolation
+  if (!ticks.length) {
+    // Include the dynamic top matter height here because
+    // this will likely be used when there are zero rows
+    return {
+      top1: topPadding.value,
+      top2: props.recyclerState.scrollerHeight,
+      y1: 0,
+      y2: props.recyclerState.wrapperHeight + props.beforeHeight,
+    };
+  }
+
+  // Get index of previous tick
+  const idx = utils.binarySearch(ticks, y, field);
+
+  // Position is before the first tick; choose first
+  if (idx <= 0) {
+    const tick = ticks[0];
+    return {
+      top1: topPadding.value,
+      top2: tick.topF,
+      y1: 0,
+      y2: tick.y,
+    };
+  }
+
+  // Position is after the last tick; choose last
+  if (idx >= ticks.length) {
+    const tick = ticks.at(-1)!;
+    return {
+      top1: tick.topF,
+      top2: props.recyclerState.scrollerHeight,
+      y1: tick.y,
+      y2: props.recyclerState.wrapperHeight + props.beforeHeight,
+    };
+  }
+
+  // Somewhere in the middle
+  const tick1 = ticks[idx - 1];
+  const tick2 = ticks[idx];
+  return {
+    top1: tick1.topF,
+    top2: tick2.topF,
+    y1: tick1.y,
+    y2: tick2.y,
+  };
+}
+
+/** Move to given scroller Y */
+function moveto(y: number, snap: boolean) {
+  // Move cursor immediately to prevent jank
+  cursorY.value = y;
+  moveHoverCursor(y);
+
+  const { top1, top2, y1, y2 } = getCoords(y, 'topF');
+  const yfrac = top2 === top1 ? 0 : (y - top1) / (top2 - top1);
+  const ry = y1 + (y2 - y1) * (yfrac || 0);
+  const targetY = snap ? y1 + SNAP_OFFSET : ry;
+
+  if (lastRequestedRecyclerY !== targetY) {
+    lastRequestedRecyclerY = targetY;
+    props.recycler?.scrollToPosition(targetY);
+    if (snap) vibrateTick();
+  }
+
+  handleScroll();
+}
+
+/** Handle mouse click */
+function mousedown(event: MouseEvent) {
+  interactstart(); // end called on mouseup
+  moveto(event.offsetY, false);
+}
+/** Handle touch start */
+function touchstart(event: TouchEvent) {
+  scrollerRect = scroller.value?.getBoundingClientRect() ?? null;
+  interactstart();
+}
+
+/** Handle touch move */
+function touchmove(event: TouchEvent) {
+  if (!scrollerRect) return;
+  let y = event.targetTouches[0].clientY - scrollerRect.top;
+  y = Math.max(topPadding.value, y + MOBILE_CURSOR_HH); // middle of touch finger
+
+  // Snap to nearest tick if there are a lot of rows
+  const snap = props.rows.length > SNAP_MIN_ROWS;
+  moveto(y, snap);
+}
+
+function interactstart() {
+  interacting.value = true;
+}
+
+function interactend() {
+  interacting.value = false;
+  scrollingTimer.clear();
+  scrollingNowTimer.clear();
+  recyclerScrolled(null); // make sure final position is correct
+  emit('interactend'); // tell recycler to load stuff
+  props.recycler?.$el.focus(); // give focus back to recycler
+}
+
+/** Update scroller is being used to scroll recycler */
+function handleScroll() {
+  scrollingNowTimer.set(null, 200);
+  scrollingTimer.set(null, 1500);
+}
+
+/** Tiny haptic tick while dragging the handle on mobile */
+const vibrateTick = useThrottleFn(() => {
+  if (pointerType.isCoarse) nativex.vibrate(VIBRATE_MS);
+}, VIBRATE_THROTTLE_MS);
+
+defineExpose({
+  reset,
+  reflow,
+  adjust,
+  recyclerScrolled,
+  interacting,
+  scrollingRecyclerNowTimer,
+});
+</script>
+
+<style lang="scss" scoped>
+.scroller {
+  contain: layout style;
+  overflow-y: clip;
+  position: absolute;
+  height: 100%;
+  width: 36px;
+  top: 0;
+  right: 0;
+  z-index: 100; // below top-matter and top-bar
+  cursor: ns-resize;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease-in-out,
+    visibility 0.2s ease-in-out;
+
+  // Show on hover or scroll of main window
+  &:hover,
+  &.scrolling-recycler,
+  &.interacting {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  // On phone, there is no point of hover, so just hide it when not scrolling
+  @media (pointer: coarse) {
+    visibility: hidden;
+  }
+
+  > .ticks-container {
+    pointer-events: none;
+  }
+
+  > .ticks-container > .tick {
+    pointer-events: none;
+    position: absolute;
+    font-size: 0.75em;
+    line-height: 0.75em;
+    font-weight: 600;
+    opacity: 0.95;
+    right: 9px;
+    top: 0;
+    transition: transform 0.2s linear;
+    z-index: 1;
+
+    &:not(:has(span)) {
+      height: 4px;
+      width: 4px;
+      border-radius: 50%;
+      background-color: var(--color-main-text);
+      opacity: 0.15;
+      display: block;
+      @media (pointer: coarse) {
+        display: none;
+      }
+    }
+
+    @media (pointer: coarse) {
+      background-color: var(--color-main-background);
+      padding: 5px;
+      border-radius: 4px;
+      font-size: 0.85em;
+    }
+  }
+
+  > .cursor {
+    position: absolute;
+    pointer-events: none;
+    right: 0;
+    background-color: var(--color-primary);
+    min-width: 100%;
+    min-height: 1.5px;
+    will-change: transform;
+    contain: layout style;
+
+    &.st {
+      font-size: 0.75em;
+      opacity: 0;
+    }
+
+    &.hv {
+      background-color: var(--color-main-background);
+      padding: 1px 5px;
+      border-bottom: 2px solid var(--color-primary);
+      border-radius: 2px;
+      width: auto;
+      white-space: nowrap;
+      z-index: 100;
+      font-size: 0.95em;
+      font-weight: 600;
+      height: calc(1.2em + 10px);
+
+      > .icon {
+        display: none;
+        color: var(--color-main-text);
+        opacity: 0.75;
+
+        > :deep(.menu-up-icon) {
+          transform: translate(-3px, 4px);
+        }
+        > :deep(.menu-down-icon) {
+          transform: translate(-3px, -6px);
+        }
+      }
+    }
+  }
+  &.scrolling-recycler-now:not(.scrolling-now) > .cursor {
+    transition: transform 0.1s linear;
+  }
+  &:hover > .cursor {
+    transition: none !important;
+    &.st {
+      opacity: 1;
+    }
+  }
+
+  // Hide ticks on mobile unless hovering
+  @media (pointer: coarse) {
+    // Shift pointer events to hover cursor
+    pointer-events: none;
+    .cursor.hv {
+      pointer-events: all;
+    }
+
+    $ticks-right: 58px;
+    > .ticks-container > .tick {
+      right: $ticks-right;
+    }
+
+    .cursor.hv {
+      left: 6px;
+      border: none;
+      box-shadow: -1px 2px 11px -5px #000;
+      height: 44px;
+      width: 44px;
+      border-radius: 22px;
+
+      > .text {
+        position: absolute;
+        right: $ticks-right + 14px;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 101;
+        pointer-events: none;
+        background-color: var(--color-main-background);
+        box-shadow: -1px 2px 8px -5px #000;
+        border-radius: 6px;
+        padding: 2px 6px;
+        font-size: 1.1em;
+        white-space: nowrap;
+      }
+      > .icon {
+        display: block;
+      }
+    }
+
+    > .ticks-container,
+    .cursor.hv > .text {
+      opacity: 0;
+      visibility: hidden;
+      transition:
+        opacity 0.1s ease-out,
+        visibility 0s 0.1s;
+    }
+
+    &:is(.scrolling, .interacting) > .ticks-container,
+    &:is(.scrolling, .interacting) .cursor.hv > .text {
+      opacity: 1;
+      visibility: visible;
+      transition: none;
+    }
+
+    .cursor.st {
+      display: none;
+    }
+  }
+}
+</style>

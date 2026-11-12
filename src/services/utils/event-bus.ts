@@ -1,0 +1,108 @@
+import { emit, subscribe, unsubscribe } from '@nextcloud/event-bus';
+import { onBeforeUnmount, onMounted } from 'vue';
+import type { FragmentName, Fragment } from '@services/route-fragment';
+import type { IPhoto, NativeXVideoState } from '@typings';
+
+export type BusEvent = {
+  /** Open/close the navigation drawer */
+  'toggle-navigation': { open: boolean };
+  /** File was created */
+  'files:file:created': { fileid: number; dayid?: number };
+  /** File was updated */
+  'files:file:updated': { fileid: number };
+
+  /** Native sidebar was opened */
+  'files:sidebar:opened': null;
+  /** Native sidebar was closed */
+  'files:sidebar:closed': null;
+  /** Final event after sidebar is opened */
+  'memories:sidebar:opened': null;
+  /** Final event after sidebar is closed */
+  'memories:sidebar:closed': null;
+
+  /**
+   * Remove these photos from the timeline.
+   * Each photo object is required to have the `d` (day) property.
+   */
+  'memories:timeline:deleted': IPhoto[];
+  /** Viewer has requested fetching day */
+  'memories:timeline:fetch-day': number;
+  /** Soft-refresh the timeline */
+  'memories:timeline:soft-refresh': null;
+  /** Hard-refresh the timeline */
+  'memories:timeline:hard-refresh': null;
+  /** Timeline finished loading the day of a newly created file */
+  'memories:timeline:file-loaded': { fileid: number; dayid: number };
+  /** Timeline recycler scrolling */
+  'memories.recycler.scroll': {
+    current: number;
+    previous: number;
+    dynTopMatterVisible: boolean;
+    scrollerInteracting: boolean;
+  };
+
+  /** Albums were updated for these photos */
+  'memories:albums:update': IPhoto[];
+
+  /** NativeX database was updated */
+  'nativex:db:updated': null;
+
+  /** Native app resumed from background */
+  'nativex:resume': null;
+
+  /** Height of the native keyboard over the page in CSS px */
+  'nativex:keyboard:height': number;
+
+  /** Native hole video player snapshot */
+  'nativex:video:state': NativeXVideoState;
+} & {
+  /** A fragment was removed from the route */
+  [key in `memories:fragment:pop:${FragmentName}`]: Fragment;
+};
+
+/**
+ * Wrapper around Nextcloud's event bus.
+ */
+export const bus = {
+  /**
+   * Emit an event on the Nextcloud event bus.
+   * @param name Name of event
+   * @param data arguments
+   */
+  emit<T extends keyof BusEvent>(name: T, data: BusEvent[T]): void {
+    // @ts-expect-error - legacy
+    emit(name, data);
+  },
+
+  /**
+   * Subscribe to an event on the Nextcloud event bus.
+   * @param name Name of event
+   * @param callback Callback to be called when the event is emitted
+   */
+  on<T extends keyof BusEvent>(name: T, callback: (data: BusEvent[T]) => void): void {
+    // @ts-expect-error - legacy
+    subscribe(name, callback);
+  },
+
+  /**
+   * Unsubscribe from an event on the Nextcloud event bus.
+   * @param name Name of event
+   * @param callback Same callback that was passed to `on`
+   */
+  off<T extends keyof BusEvent>(name: T, callback: (data: BusEvent[T]) => void): void {
+    // @ts-expect-error - legacy
+    unsubscribe(name, callback);
+  },
+};
+
+/**
+ * Subscribe to an event for the lifetime of the calling component.
+ * Listens on mount and unsubscribes automatically on unmount.
+ *
+ * @param name Name of event
+ * @param callback Callback to be called when the event is emitted
+ */
+export function useBus<T extends keyof BusEvent>(name: T, callback: (data: BusEvent[T]) => void): void {
+  onMounted(() => bus.on(name, callback));
+  onBeforeUnmount(() => bus.off(name, callback));
+}
