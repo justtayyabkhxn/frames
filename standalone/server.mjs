@@ -145,7 +145,9 @@ server.on('error', (e) => {
   process.exit(0);
 });
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Frames: ${ctx.root}\nOpen ${appUrl} (Ctrl+C to stop)`);
+  console.log(`Photo folder: ${ctx.root}`);
+  console.log('  To use a different folder: frames.cmd --dir "D:\\Photos"');
+  console.log(`Open ${appUrl} (Ctrl+C to stop)`);
   if (!process.argv.includes('--no-open')) openBrowser();
   void ctx.indexer.scan();
 });
