@@ -225,7 +225,7 @@ export function registerApi(router, ctx) {
       facerecognition_enabled: false,
       lens_enabled: !!ctx.lens,
       preview_generator_enabled: true,
-      vips_enabled: false,
+      vips_enabled: !!ctx.ff,
       high_res_cond_default: 'zoom',
     };
     for (const [key, name, , t] of SETTINGS)
