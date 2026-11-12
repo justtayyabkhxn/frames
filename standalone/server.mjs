@@ -19,9 +19,7 @@ import { Previews } from './lib/previews.mjs';
 import { renderShell } from './lib/shell.mjs';
 import { APP_ROOT, findExiftool, findFfmpeg } from './lib/tools.mjs';
 
-const DATA = process.env.FRAMES_DATA
-  ? path.resolve(process.env.FRAMES_DATA)
-  : path.join(APP_ROOT, 'standalone', 'data');
+const DATA = process.env.FRAMES_DATA ? path.resolve(process.env.FRAMES_DATA) : path.join(APP_ROOT, 'data');
 const CONFIG = path.join(DATA, 'config.json');
 const JS = process.env.FRAMES_JS ? path.resolve(process.env.FRAMES_JS) : path.join(APP_ROOT, 'js');
 const PORT = Number(process.env.PORT) || 7310;

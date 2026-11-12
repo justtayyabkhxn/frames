@@ -104,7 +104,9 @@ export const fromBlob = (u8) => new Float32Array(u8.buffer.slice(u8.byteOffset, 
 
 /* ---------------- download / import ---------------- */
 
-async function download() {
+/** Fetch the place boundary data once into tools/places (checksum-verified). */
+export async function downloadPlanet() {
+  if (fs.existsSync(PLANET_ZIP)) return;
   fs.mkdirSync(path.dirname(PLANET_ZIP), { recursive: true });
   const part = `${PLANET_ZIP}.part`;
   console.log('Places: downloading planet boundaries (~108 MB, one time)...');
@@ -314,7 +316,7 @@ export function createPlaces(ctx) {
     if (!db.q('SELECT 1 FROM media WHERE lat IS NOT NULL LIMIT 1').get()) return;
     setupRunning = true;
     try {
-      if (!fs.existsSync(PLANET_ZIP)) await download();
+      await downloadPlanet();
       await importPlanet(db);
       cache.clear();
       cached = 0;

@@ -63,7 +63,7 @@ export class LensDaemon {
   }
 
   static available() {
-    return fs.existsSync(READY_MARKER) && fs.existsSync(PYTHON);
+    return fs.existsSync(READY_MARKER) && fs.existsSync(PYTHON) && fs.existsSync(MODELS_DIR);
   }
 
   async start() {

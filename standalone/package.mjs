@@ -22,7 +22,7 @@ const copy = (rel, filter = () => true) =>
   });
 
 // App code and assets (no PHP backend, sources, data or caches)
-copy('standalone', (p) => !/^standalone\/data(\/|$)/.test(p));
+copy('standalone');
 copy('js', (p) => !p.endsWith('.map'));
 copy('img');
 for (const f of ['package.json', 'frames.cmd', 'COPYING', 'README.md']) copy(f);
@@ -54,7 +54,7 @@ fs.writeFileSync(
     '2. Type the folder that holds your photos (asked only once; change later with: frames.cmd --dir "D:\\Photos")',
     '3. Your browser opens http://localhost:7310 - the first indexing can take a while; progress shows at the top.',
     '',
-    'Everything runs on this computer. The index, thumbnails and settings are stored in standalone\\data.',
+    'Everything runs on this computer. The index, thumbnails, AI index and settings are stored in the data folder.',
     'Your photos are only changed when you edit, move, archive or delete them in Frames (deleted items go to Frames trash).',
     '',
   ].join('\r\n'),

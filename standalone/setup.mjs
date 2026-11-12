@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { downloadPlanet, PLANET_ZIP } from './lib/places-data.mjs';
 import { findExiftool, TOOLS } from './lib/tools.mjs';
 
 if (process.platform !== 'win32') {
@@ -63,5 +64,9 @@ console.log(`exiftool: ${await findExiftool()}`);
 const ffBase = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
 const ffSha = (await download(`${ffBase}.sha256`)).toString().trim().split(/\s+/)[0];
 await install('ffmpeg', ffBase, ffSha);
+
+// Place names for photos with GPS (OpenStreetMap boundaries, ODbL)
+await downloadPlanet();
+console.log(`places: ${PLANET_ZIP}`);
 
 console.log('Tools ready in', TOOLS);
