@@ -95,8 +95,9 @@ input::placeholder {
   max-width: 720px;
   margin-right: auto;
 }
+/* Photos are added by copying into the library folder and rescanning; upload stays on the Folders page */
 #header .header-end > div:has(.cloud-upload-icon) {
-  order: 4;
+  display: none;
 }
 
 /* Search field: a wide pill that lifts on focus */
