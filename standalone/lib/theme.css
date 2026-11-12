@@ -1,6 +1,9 @@
 /* Frames theme: overrides on top of the Memories / @nextcloud/vue components. */
 
 /* ---------- Browser surfaces ---------- */
+* {
+  scrollbar-width: thin;
+}
 :root {
   accent-color: var(--color-primary-element);
   scrollbar-color: var(--color-border-dark) transparent;
@@ -57,15 +60,15 @@ input::placeholder {
 #header .header-start {
   display: flex;
   align-items: center;
-  padding-left: 20px;
+  gap: 4px;
+  padding-left: 8px;
   min-width: 0;
 }
 #header .frames-logo {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 6px 10px 6px 6px;
-  margin-left: -6px;
   border-radius: var(--border-radius-pill);
   font-size: 20px;
   font-weight: 600;
@@ -132,10 +135,15 @@ input::placeholder {
 }
 #header .memories-searchbar .input-field__icon--leading {
   top: 0 !important;
-  inset-inline-start: 6px;
+  inset-inline-start: 8px;
   height: 48px;
   width: 44px;
   color: var(--color-text-maxcontrast);
+}
+#header .memories-searchbar .magnify-icon,
+#header .memories-searchbar .magnify-icon svg {
+  width: 22px !important;
+  height: 22px !important;
 }
 
 /* Header icon buttons (upload, rescan) */
@@ -150,6 +158,9 @@ input::placeholder {
 #header .button-vue:hover,
 .frames-icon-btn:hover:not(:disabled) {
   background: var(--color-background-hover);
+}
+#frames-menu {
+  flex: none;
 }
 .frames-icon-btn {
   order: 3;
@@ -279,13 +290,30 @@ input::placeholder {
   font-weight: 600;
 }
 
+/* ---------- Content column: one left edge shared with the search pill ---------- */
+@media (min-width: 1025px) {
+  .app-navigation-toggle-wrapper {
+    display: none !important;
+  }
+  .route-view.has-nav {
+    padding-left: 12px !important;
+  }
+}
+
 /* ---------- Timeline ---------- */
+.head-row {
+  display: flex;
+  align-items: flex-end;
+  padding-top: 0 !important;
+  padding-bottom: 6px;
+}
 .head-row .name {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.005em;
   color: var(--color-main-text);
 }
+.top-matter-container > div > .name,
 .top-matter .name,
 .top-matter h2 {
   font-size: 22px;
@@ -296,15 +324,25 @@ input::placeholder {
 /* Folder and collection tiles: soft corners like photo app album covers */
 .dtm-container .item > .folder,
 .dtm-container .item .previews,
-.dtm-container .item .big-icon {
+.dtm-container .item .big-icon,
+.grid-item > .cluster,
+.grid-item > .cluster .img-outer {
   border-radius: 14px;
   overflow: hidden;
+}
+
+/* Share links need a public server; the offline app has none */
+.top-matter-container .action-item:has(.share-variant-icon) {
+  display: none !important;
 }
 
 /* ---------- Narrow screens ---------- */
 @media (max-width: 1024px) {
   #header {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+  #frames-menu {
+    display: none;
   }
   #header .header-start {
     padding-left: 12px;

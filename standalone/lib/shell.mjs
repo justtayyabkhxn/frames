@@ -42,9 +42,9 @@ const DARK = `
   --color-favorite: #fdd663; --color-loading-light: #5f6368; --color-loading-dark: #c4c7cb;
   --color-box-shadow-rgb: 0, 0, 0; --color-border: #2b2d30; --color-border-dark: #3a3c40; --color-border-maxcontrast: #7d8187;
   --color-primary: #a8c1ff; --color-primary-text: #0a1a3d; --color-primary-hover: #bccffd;
-  --color-primary-light: #1f2c48; --color-primary-light-text: #d5e1ff; --color-primary-light-hover: #283858;
+  --color-primary-light: #233a63; --color-primary-light-text: #d5e1ff; --color-primary-light-hover: #2c4675;
   --color-primary-element: #a8c1ff; --color-primary-element-hover: #bccffd; --color-primary-element-text: #0a1a3d;
-  --color-primary-element-light: #1f2c48; --color-primary-element-light-text: #d5e1ff; --color-primary-element-light-hover: #283858;
+  --color-primary-element-light: #233a63; --color-primary-element-light-text: #d5e1ff; --color-primary-element-light-hover: #2c4675;
   --color-primary-element-text-dark: #0a1a3d; --color-primary-element-extra-light: #182238; --color-primary-element-extra-light-hover: #1d2943;
   --background-invert-if-dark: invert(100%); --background-invert-if-bright: no;
   --primary-invert-if-bright: invert(100%); --primary-invert-if-dark: no;
@@ -139,6 +139,9 @@ ${THEME}</style>
 <div id="skip-actions"></div>
 <header id="header">
   <div class="header-start">
+    <button id="frames-menu" class="frames-icon-btn" type="button" title="Show or hide the menu" aria-label="Show or hide the menu">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </button>
     <a class="frames-logo" href="/apps/memories/" aria-label="Frames home">
       <img src="/apps/memories/img/app.svg" alt="" style="display: var(--frames-logo-dark)">
       <img src="/apps/memories/img/app-dark.svg" alt="" style="display: var(--frames-logo-light)">
@@ -199,6 +202,10 @@ ${THEME}</style>
         timer = setTimeout(poll, render(s) ? 1500 : 10000);
       }).catch(function () { timer = setTimeout(poll, 10000); });
     }
+    document.getElementById('frames-menu').addEventListener('click', function () {
+      var t = document.querySelector('.app-navigation-toggle');
+      if (t) t.click();
+    });
     rescan.addEventListener('click', function () {
       rescan.disabled = true;
       rescan.classList.add('busy');
