@@ -40,13 +40,6 @@ Frames is a _batteries-included_ photo management solution for Nextcloud with ad
 1. Run `php occ memories:index` to generate metadata indices for existing photos.
 1. Open the 📷 Frames app in Nextcloud and set the directory containing your photos.
 
-## 📱 Mobile Apps
-
-- An Android client for Memories is available on [Google Play](https://play.google.com/store/apps/details?id=gallery.memories), [F-Droid](https://f-droid.org/packages/gallery.memories/) or [GitHub Releases](https://github.com/pulsejet/memories/releases?q=android).
-- For automatic uploads, you can use the official Nextcloud mobile apps. 
-   - Android: [Google Play](https://play.google.com/store/apps/details?id=com.nextcloud.client), [F-Droid](https://f-droid.org/en/packages/com.nextcloud.client/)
-   - iOS: [App Store](https://apps.apple.com/us/app/nextcloud/id1125420102).
-
 ## 🏗 Development Setup
 
 You can use the dev container to quickly fire up an instance of Nextcloud with Frames pre-installed.
@@ -73,13 +66,11 @@ This monorepo is organized into the following packages:
 - [lib](lib): Backend and database migrations (PHP).
 - [src](src): Frontend for all platforms (Vue)
 - [go-vod](go-vod): On-demand video transcoder (Go)
-- [android](android): Android implementation of NativeX (Kotlin)
 - [l10n](l10n): Translations (Transifex)
 
 Releases are organized with these tags:
 - `v*`: overall releases (e.g. `v1.0.0` or `v1.0.0-beta.1`)
 - `go-vod/*`: transcoder releases (e.g. `go-vod/1.0.0`)
-- `android/*`: Android releases (e.g. `android/1.0.0`)
 
 ## 🤝 Support the project
 
