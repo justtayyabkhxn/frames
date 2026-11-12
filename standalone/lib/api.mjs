@@ -409,12 +409,16 @@ export function registerApi(router, ctx) {
   });
 
   const downloads = new Map();
-  router.add('POST', `${API}/download`, async (req, res) => {
-    const { files = [] } = await readJson(req);
+  /** Register file ids for download; returns a handle for GET /api/download/:handle. */
+  ctx.downloadHandle = (files) => {
     const handle = randomUUID();
     downloads.set(handle, files.map(Number));
     setTimeout(() => downloads.delete(handle), 3600_000).unref();
-    json(res, { handle });
+    return handle;
+  };
+  router.add('POST', `${API}/download`, async (req, res) => {
+    const { files = [] } = await readJson(req);
+    json(res, { handle: ctx.downloadHandle(files) });
   });
   router.add('GET', `${API}/download/:handle`, (req, res, { handle }) => {
     const ids = downloads.get(handle);
@@ -442,6 +446,15 @@ export function registerApi(router, ctx) {
     lib.setArchived(id, !!archive);
     json(res, {});
   });
+
+  /* ---------------- sharing: links need a public server, not available offline ---------------- */
+  router.add('GET', `${API}/share/links`, (req, res) => json(res, []));
+  router.add('POST', `${API}/share/node`, () => {
+    throw badRequest(
+      'Share links are not available in Frames (offline). Use download or the share button in the viewer.',
+    );
+  });
+  router.add('POST', `${API}/share/delete`, (req, res) => json(res, {}));
 
   /* ---------------- admin / status (minimal) ---------------- */
   router.add('GET', `${API}/system-status`, (req, res) =>
