@@ -8,6 +8,9 @@ import readline from 'node:readline/promises';
 import { registerApi } from './lib/api.mjs';
 import { registerClusters } from './lib/clusters.mjs';
 import { registerDav } from './lib/dav.mjs';
+import { registerAi } from './lib/ai.mjs';
+import { registerMap } from './lib/map.mjs';
+import { registerMedia } from './lib/media.mjs';
 import { openDb } from './lib/db.mjs';
 import { HttpError, json, Router, sendFile } from './lib/http.mjs';
 import { Indexer } from './lib/indexer.mjs';
@@ -16,7 +19,7 @@ import { Previews } from './lib/previews.mjs';
 import { renderShell } from './lib/shell.mjs';
 import { APP_ROOT, findExiftool, findFfmpeg } from './lib/tools.mjs';
 
-const DATA = path.join(APP_ROOT, 'standalone', 'data');
+const DATA = process.env.FRAMES_DATA ? path.resolve(process.env.FRAMES_DATA) : path.join(APP_ROOT, 'standalone', 'data');
 const CONFIG = path.join(DATA, 'config.json');
 const JS = path.join(APP_ROOT, 'js');
 const PORT = Number(process.env.PORT) || 7310;
@@ -74,6 +77,9 @@ if (ctx.db.getKv('root') !== ctx.root) {
 const router = new Router();
 registerApi(router, ctx);
 registerClusters(router, ctx);
+registerMap(router, ctx);
+registerMedia(router, ctx);
+registerAi(router, ctx);
 registerDav(router, ctx);
 
 const shell = () => renderShell(ctx);
