@@ -219,11 +219,12 @@ class FaceModel:
         return [_align_crop(image, face, width, height) for face in faces]
 
     def embed_crops(self, crops: list[np.ndarray]) -> list[list[float]]:
-        """Embed 112x112 BGR crops in one session run; L2-normed 128-d vectors."""
+        """Embed 112x112 BGR crops one run each (the SFace graph has a fixed batch of 1); L2-normed 128-d."""
 
         batch = np.stack([cv2.cvtColor(crop, cv2.COLOR_BGR2RGB).astype(np.float32) for crop in crops])
         batch = batch.transpose(0, 3, 1, 2)
-        vectors = self._rec.run(None, {self._rec_input: batch})[0].astype(np.float64)
+        vectors = np.concatenate([self._rec.run(None, {self._rec_input: row[None]})[0] for row in batch])
+        vectors = vectors.astype(np.float64)
         vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
 
         return vectors.tolist()

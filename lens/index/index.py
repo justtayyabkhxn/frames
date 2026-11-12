@@ -5,6 +5,7 @@ import logging
 import time
 from dataclasses import replace
 
+from index.faces import index_faces
 from nextcloud import NotFoundError, fetch_file
 from store import FAILURE_KIND, FileMeta, PlacePoint, UpsertPoint
 
@@ -14,11 +15,12 @@ log = logging.getLogger("lens.queue")
 class Indexer:
     """Index one batch at a time; completion is reported via the done callback."""
 
-    def __init__(self, embedding_model, sentence_model, store, done):
+    def __init__(self, embedding_model, sentence_model, store, done, face_model=None):
         self.embedding_model = embedding_model
         self.sentence_model = sentence_model
         self.store = store
         self.done = done
+        self.face_model = face_model
 
     async def handle_batch(self, batch):
         """Check current metadata first, then download and embed only files needing work."""
@@ -120,6 +122,14 @@ class Indexer:
                 res.metadata.dayid,
                 len(res.metadata.places),
             )
+
+        if self.face_model:
+            for fileid, res, image in good:
+                try:
+                    count = await index_faces(self.face_model, self.store, fileid, parents[fileid], res.metadata, image)
+                    log.info("indexed %d faces for %d", count, fileid)
+                except Exception:
+                    log.exception("face indexing failed for %d", fileid)
 
         await self._finish_places(
             files=[(fileid, res) for fileid, res, _ in good],

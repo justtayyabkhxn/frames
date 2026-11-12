@@ -11,7 +11,6 @@ REQUIRED = (
     "NEXTCLOUD_URL",
     "NC_USER",
     "NC_TOKEN",
-    "QDRANT_URL",
     "EMBEDDING_MODEL_REVISION",
     "SENTENCE_MODEL_REVISION",
     "SCHEMA_MODEL_REVISION",
@@ -105,6 +104,8 @@ class Config:
     nc_user: str
     nc_token: str
     qdrant_url: str
+    qdrant_path: str
+    local: bool
     embedding: EmbeddingConfig
     sentence_model: SentenceConfig
     schema_model: SchemaModelConfig
@@ -177,6 +178,8 @@ def load_config() -> Config:
     """Build Config from env; raise on missing required or locked values."""
 
     missing = [v for v in REQUIRED if not os.environ.get(v)]
+    if not os.environ.get("QDRANT_URL") and not os.environ.get("QDRANT_PATH"):
+        missing.append("QDRANT_URL")
     if missing:
         raise RuntimeError(f"missing required env vars: {', '.join(missing)}")
 
@@ -237,7 +240,9 @@ def load_config() -> Config:
         nextcloud_url=os.environ["NEXTCLOUD_URL"],
         nc_user=os.environ["NC_USER"],
         nc_token=os.environ["NC_TOKEN"],
-        qdrant_url=os.environ["QDRANT_URL"],
+        qdrant_url=os.environ.get("QDRANT_URL", ""),
+        qdrant_path=os.environ.get("QDRANT_PATH", ""),
+        local=os.environ.get("LENS_LOCAL") == "1",
         embedding=embedding,
         sentence_model=sentence_model,
         schema_model=schema_model,

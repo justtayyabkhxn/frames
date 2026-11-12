@@ -15,6 +15,8 @@ log = logging.getLogger("lens.nextcloud")
 
 TIMEOUT = 30.0
 cookie_jar = CookieJar()
+# Frames (local mode) only accepts writes carrying its request token.
+HEADERS = {"requesttoken": config.nc_token} if config.local else {}
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ def fetch_file(fileid: int, *, metadata_only: bool = False) -> FetchResult:
         timeout=TIMEOUT,
         auth=(config.nc_user, config.nc_token),
         cookies=cookie_jar,
+        headers=HEADERS,
     ) as client:
         with client.stream(method, url) as res:
             if res.status_code == 401:

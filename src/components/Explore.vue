@@ -8,7 +8,7 @@
       <ClusterHList
         v-if="recognize?.length"
         state-key="recognize"
-        :title="t('memories', 'Recognize')"
+        :title="t('memories', 'People')"
         link="/recognize"
         :clusters="recognize"
         :circle="true"

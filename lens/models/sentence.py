@@ -69,6 +69,8 @@ class SentenceModel:
                     repo_id=config.sentence_model.model_id,
                     revision=config.sentence_model.model_revision,
                     local_dir=path,
+                    # The repo also ships ONNX/OpenVINO exports and a .bin copy (~1.7 GB unused).
+                    ignore_patterns=["onnx/*", "openvino/*", "pytorch_model.bin"],
                 )
                 log.info("snapshot ready at %s", path)
 

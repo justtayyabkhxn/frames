@@ -67,4 +67,5 @@ def stats():
         "failed_total": queue.failed_total,
         "deferred_total": queue.deferred_total,
         "scan": state.scanner.stats if state.scanner else None,
+        "faces_version": state.store.faces.version if state.store else 0,
     }

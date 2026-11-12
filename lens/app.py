@@ -2,6 +2,9 @@
 
 import asyncio
 import logging
+import os
+import sys
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -12,6 +15,13 @@ from index import Indexer, IndexQueue, Scanner
 from routes import routers
 from routes.context import embedding_model, face_model, schema_model, sentence_model, state
 from store import Store
+
+
+def exit_with_parent():
+    """Local mode: the parent app holds our stdin; exit once it closes (parent quit or crashed)."""
+
+    sys.stdin.read()
+    os._exit(0)
 
 
 @asynccontextmanager
@@ -32,7 +42,13 @@ async def lifespan(_app: FastAPI):
     await asyncio.to_thread(face_model.ensure_snapshot)
     await asyncio.to_thread(face_model.load)
 
-    client = AsyncQdrantClient(url=config.qdrant_url)
+    if config.local:
+        threading.Thread(target=exit_with_parent, daemon=True).start()
+
+    if config.qdrant_path:
+        client = AsyncQdrantClient(path=config.qdrant_path)
+    else:
+        client = AsyncQdrantClient(url=config.qdrant_url)
     store = Store(
         client=client,
         embedding_dim=embedding_model.dim(),
@@ -48,6 +64,7 @@ async def lifespan(_app: FastAPI):
         sentence_model=sentence_model,
         store=store,
         done=index_queue.done,
+        face_model=face_model if config.local else None,
     )
     scanner = Scanner(store, index_queue)
     state.scanner = scanner

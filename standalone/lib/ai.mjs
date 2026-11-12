@@ -1,2 +1,404 @@
-/** Stub: implemented separately. */
-export function registerAi() {}
+import { randomInt } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { LensDaemon } from './ai-lens.mjs';
+import { DAV, destination, sendMultistatus } from './dav.mjs';
+import { badRequest, HttpError, json, notFound, readBody, readJson, sendFile } from './http.mjs';
+import { ARCHIVE } from './indexer.mjs';
+import { run } from './tools.mjs';
+
+const API = '/apps/memories/api';
+const LENS = '/index.php/apps/memories/lens';
+/** Faces the user removed from a person; lens never auto-clusters them again. */
+const REJECTED = -1;
+
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS faces (
+    id INTEGER PRIMARY KEY,             -- stable faceid for the web UI
+    point TEXT UNIQUE NOT NULL,         -- lens point id
+    fileid INTEGER NOT NULL,
+    cluster INTEGER,                    -- person id; NULL/-1 = unassigned
+    x REAL, y REAL, w REAL, h REAL,     -- fractions of the image
+    score REAL,
+    gen INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS faces_fileid ON faces (fileid);
+  CREATE INDEX IF NOT EXISTS faces_cluster ON faces (cluster);
+  CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, name TEXT UNIQUE, cover INTEGER);
+`;
+
+/** New person id; same range as lens cluster ids (positive, exact in JS). */
+const newPersonId = () => randomInt(1, 2 ** 48);
+
+/** ffmpeg filter for a square face crop with 50% margin, clamped to the image. */
+export function faceCropFilter({ x, y, w, h }, size = 256) {
+  const f = (v) => Math.min(Math.max(v, 0), 1).toFixed(5);
+  return [
+    `crop=w=min(min(iw\\,ih)\\,1.5*max(${f(w)}*iw\\,${f(h)}*ih))`,
+    'h=ow',
+    `x=max(0\\,min(iw-ow\\,${f(x + w / 2)}*iw-ow/2))`,
+    `y=max(0\\,min(ih-oh\\,${f(y + h / 2)}*ih-oh/2))`,
+  ]
+    .join(':')
+    .concat(`,scale=${size}:${size}`);
+}
+
+const fail = (e) => {
+  throw e;
+};
+
+/** "123-IMG_1.jpg" -> 123 */
+export const faceIdOf = (item) => Number(/^(\d+)-/.exec(item ?? '')?.[1]) || 0;
+
+export function registerAi(router, ctx) {
+  const { db, lib, uid } = ctx;
+  db.exec(SCHEMA);
+  const status = (ctx.indexer.status.ai = { state: 'unavailable' });
+
+  /* ---------------- people ---------------- */
+  const clusterOf = (name) =>
+    /^\d+$/.test(name ?? '') ? Number(name) : db.q('SELECT id FROM people WHERE name = ?').get(name)?.id;
+  const mustCluster = (name) => clusterOf(name) ?? fail(notFound(`No such person: ${name}`));
+  const facesOf = (cluster) =>
+    cluster === null
+      ? db.q('SELECT * FROM faces WHERE cluster IS NULL OR cluster < 0').all()
+      : db.q('SELECT * FROM faces WHERE cluster = ?').all(cluster);
+  const bestFace = (cluster) =>
+    db.q('SELECT * FROM faces WHERE cluster = ? ORDER BY score * w * h DESC LIMIT 1').get(cluster);
+
+  function listPeople(fileid) {
+    const rows = db
+      .q(
+        `SELECT f.cluster AS id, p.name, p.cover, count(DISTINCT f.fileid) AS count
+         FROM faces f JOIN media m ON m.id = f.fileid AND m.livevideo = 0 LEFT JOIN people p ON p.id = f.cluster
+         WHERE f.cluster > 0 AND (:fileid = 0 OR f.cluster IN (SELECT cluster FROM faces WHERE fileid = :fileid))
+         GROUP BY f.cluster ORDER BY p.name IS NULL, count DESC, f.cluster`,
+      )
+      .all({ fileid });
+    return rows.map((r) => {
+      const cover =
+        (r.cover && db.q('SELECT * FROM faces WHERE id = ? AND cluster = ?').get(r.cover, r.id)) || bestFace(r.id);
+      return {
+        id: r.id,
+        user_id: uid,
+        name: r.name ?? '',
+        count: r.count,
+        cover: cover?.id ?? null,
+        cover_etag: cover ? (lib.node(cover.fileid)?.etag ?? '') : '',
+        cluster_id: r.id,
+        cluster_type: 'recognize',
+      };
+    });
+  }
+  ctx.clustersOf.recognize = (fileid) => listPeople(fileid);
+
+  /** Assign faces to a person (REJECTED = unassign) in lens and locally. */
+  async function assign(faces, cluster) {
+    if (!faces.length) return;
+    await mustLens().post('/v1/faces/assign', { ids: faces.map((f) => f.point), cluster_id: cluster });
+    db.tx(() => faces.forEach((f) => db.q('UPDATE faces SET cluster = ? WHERE id = ?').run(cluster, f.id)));
+  }
+
+  /** Person id for a name, creating the person when needed. */
+  function ensurePerson(name) {
+    const id = clusterOf(name);
+    if (id) return id;
+    return db.q('INSERT INTO people (id, name) VALUES (?, ?) RETURNING id').get(newPersonId(), name).id;
+  }
+
+  async function rename(from, to) {
+    const src = mustCluster(from);
+    const dst = clusterOf(to);
+    if (dst && dst !== src) {
+      await assign(facesOf(src), dst);
+      db.q('DELETE FROM people WHERE id = ?').run(src);
+    } else if (!dst) {
+      db.q('INSERT INTO people (id, name) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name').run(
+        src,
+        to,
+      );
+    }
+  }
+
+  /* ---------------- timeline filter ?recognize=<user>/<name> ---------------- */
+  ctx.dayFilters.push((p, f) => {
+    if (!p.has('recognize')) return;
+    const name = p.get('recognize').split('/').slice(1).join('/');
+    f.cluster = true;
+    f.joins.push('JOIN faces fc ON fc.fileid = n.id');
+    if (name === 'NULL') f.where.push('(fc.cluster IS NULL OR fc.cluster < 0)');
+    else {
+      f.where.push('fc.cluster = :rcl');
+      f.args.rcl = clusterOf(name) ?? 0;
+    }
+    f.select = `${f.select ?? ''}, fc.id AS faceid`;
+    if (!p.has('facerect')) return;
+    f.select += ', fc.x AS face_x, fc.y AS face_y, fc.w AS face_w, fc.h AS face_h';
+    f.post.push((o) => {
+      o.facerect = { x: o.face_x, y: o.face_y, w: o.face_w, h: o.face_h };
+      for (const k of ['face_x', 'face_y', 'face_w', 'face_h']) delete o[k];
+    });
+  });
+
+  /* ---------------- clusters API ---------------- */
+  router.add('GET', `${API}/clusters/recognize`, (req, res) => json(res, listPeople(0)));
+
+  router.add('GET', `${API}/clusters/recognize/preview`, async (req, res, _, url) => {
+    const cluster = mustCluster(url.searchParams.get('name'));
+    const cover = Number(url.searchParams.get('cover')) | 0;
+    const face = db.q('SELECT * FROM faces WHERE id = ? AND cluster = ?').get(cover, cluster) ?? bestFace(cluster);
+    const file = face && (await faceCrop(face));
+    if (!file) throw notFound('No photos found in this cluster');
+    sendFile(req, res, file, { type: 'image/jpeg' });
+  });
+
+  router.add('POST', `${API}/clusters/recognize/set-cover`, async (req, res) => {
+    const { name, fileid } = await readJson(req);
+    const cluster = mustCluster(String(name));
+    const face = db.q('SELECT id FROM faces WHERE cluster = ? AND fileid = ?').get(cluster, Number(fileid) | 0);
+    if (!face) throw notFound('Photo not in this cluster');
+    db.q('INSERT INTO people (id, cover) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET cover = excluded.cover').run(
+      cluster,
+      face.id,
+    );
+    json(res, {});
+  });
+
+  router.add('GET', `${API}/recognize/api-key`, (req, res) => json(res, { apiKey: '' }));
+
+  async function basePreview(n) {
+    const file = ctx.previews.file(n.id, 'base');
+    if (!fs.existsSync(file)) await ctx.previews.generate(n.id, lib.abs(n.path), false);
+    return fs.existsSync(file) ? file : null;
+  }
+
+  async function faceCrop(face) {
+    const n = lib.node(face.fileid);
+    if (!n || !ctx.ff) return null;
+    const out = path.join(ctx.dataDir, 'previews', 'faces', `${face.id}-${n.etag}.jpg`);
+    if (fs.existsSync(out)) return out;
+    const base = await basePreview(n);
+    if (!base) return null;
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    const vf = faceCropFilter(face);
+    await run(ctx.ff.ffmpeg, ['-v', 'error', '-y', '-i', base, '-vf', vf, '-frames:v', '1', '-q:v', '3', out]);
+    return fs.existsSync(out) ? out : null;
+  }
+
+  /* ---------------- DAV: /recognize/<uid>/faces/<name>/<faceid>-<basename> ---------------- */
+  const facesHref = (...parts) => `${DAV}/recognize/${uid}/${parts.map(encodeURIComponent).join('/')}`;
+  const faceEntry = (area, name, face) => {
+    const n = lib.node(face.fileid);
+    if (!n) return null;
+    return {
+      href: facesHref(area, ...(name ? [name] : []), `${face.id}-${n.name}`),
+      props: {
+        'd:getcontenttype': n.mime,
+        'd:getcontentlength': n.size,
+        'd:getetag': `"${n.etag}"`,
+        'd:getlastmodified': new Date(n.mtime * 1000).toUTCString(),
+        'd:displayname': n.name,
+        'oc:fileid': n.id,
+      },
+    };
+  };
+
+  async function recognizeDav(req, res, segs) {
+    if (segs[1] !== uid) throw notFound();
+    const [, , area] = segs;
+    const unassigned = area === 'unassigned-faces';
+    if (!unassigned && area !== 'faces') throw notFound();
+    const name = unassigned ? 'NULL' : segs[3];
+    const item = unassigned ? segs[3] : segs[4];
+    const faceOf = () => db.q('SELECT * FROM faces WHERE id = ?').get(faceIdOf(item)) ?? fail(notFound());
+
+    switch (req.method) {
+      case 'PROPFIND': {
+        await readBody(req);
+        const list = [
+          { href: facesHref(area, ...(name && !unassigned ? [name] : [])) + '/', props: {}, collection: true },
+        ];
+        if (!name)
+          for (const p of listPeople(0))
+            list.push({ href: facesHref(area, p.name || String(p.id)) + '/', props: {}, collection: true });
+        else if (req.headers.depth !== '0')
+          for (const face of facesOf(unassigned ? null : mustCluster(name)))
+            list.push(faceEntry(area, unassigned ? null : name, face));
+        return sendMultistatus(res, list.filter(Boolean));
+      }
+      case 'MKCOL':
+        if (!name || unassigned || item) throw badRequest();
+        if (clusterOf(name)) throw new HttpError(405, 'Already exists');
+        ensurePerson(name);
+        return res.writeHead(201).end();
+      case 'MOVE': {
+        const [dRoot, dUid, dArea, dName] = destination(req);
+        if (dRoot !== 'recognize' || dUid !== uid || dArea !== 'faces' || !dName) throw badRequest('Bad Destination');
+        if (item) await assign([faceOf()], ensurePerson(dName));
+        else if (!unassigned) await rename(name, dName);
+        else throw badRequest();
+        return res.writeHead(201).end();
+      }
+      case 'DELETE':
+        if (item) await assign([faceOf()], REJECTED);
+        else if (name && !unassigned) {
+          const cluster = mustCluster(name);
+          await assign(facesOf(cluster), REJECTED);
+          db.q('DELETE FROM people WHERE id = ?').run(cluster);
+        } else throw badRequest();
+        return res.writeHead(204).end();
+    }
+    throw new HttpError(405, 'Method not allowed');
+  }
+  ctx.davCollections ??= {};
+  ctx.davCollections.recognize = recognizeDav;
+
+  /* ---------------- smart search ---------------- */
+  router.add('GET', `${API}/lens/search`, async (req, res, _, url) => {
+    const text = url.searchParams.get('text')?.trim();
+    if (!text) throw badRequest('Search text must not be empty');
+    const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    const folders = db
+      .q('SELECT id FROM nodes WHERE dir = 1 AND path <> ? AND path NOT LIKE ?')
+      .all(ARCHIVE, `${ARCHIVE}/%`)
+      .map((r) => r.id);
+    const { hits } = await mustLens().post('/v1/search', { text, folders, limit });
+    const byId = db.q(
+      `SELECT n.id AS fileid, n.etag, n.mime AS mimetype, m.w, m.h, m.epoch, m.dayid
+       FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ? AND m.livevideo = 0`,
+    );
+    json(res, hits.map((h) => byId.get(h.fileid) && { ...byId.get(h.fileid), score: h.score }).filter(Boolean));
+  });
+
+  /* ---------------- endpoints the lens daemon pulls from ---------------- */
+  const lensAuth = () => `Basic ${Buffer.from(`frames:${ctx.token}`).toString('base64')}`;
+  const guard = (req) => {
+    if (req.headers.authorization !== lensAuth()) throw new HttpError(401, 'Unauthorized');
+  };
+
+  /** Leaf-first OSM places of a file (from the places module), for "photos in Paris". */
+  function placesOf(fileid) {
+    try {
+      return db
+        .q(
+          `SELECT p.osm_id, pl.admin_level, pl.name FROM places p JOIN planet pl ON pl.osm_id = p.osm_id
+           WHERE p.fileid = ? ORDER BY pl.admin_level DESC`,
+        )
+        .all(fileid);
+    } catch {
+      return [];
+    }
+  }
+
+  const lensFile = async (req, res, { id }) => {
+    guard(req);
+    const n = db
+      .q('SELECT n.*, m.dayid, m.epoch, m.isvideo FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ?')
+      .get(Number(id) | 0);
+    if (!n) throw notFound();
+    const meta = {
+      etag: n.etag,
+      mtime: n.mtime,
+      parent_id: n.parent,
+      mimetype: n.isvideo ? n.mime : 'image/jpeg',
+      epoch: n.epoch,
+      dayid: n.dayid,
+      places: placesOf(n.id),
+    };
+    const headers = { 'X-Memories-Metadata': Buffer.from(JSON.stringify(meta)).toString('base64') };
+    if (req.method === 'HEAD' || n.isvideo) return res.writeHead(200, headers).end();
+    // Lens reads Frames' 1024px preview: fast to decode and works for RAW/HEIC alike
+    const file = await basePreview(n);
+    if (!file) throw new HttpError(500, 'Preview not available');
+    sendFile(req, res, file, { type: 'image/jpeg', headers });
+  };
+  router.add('GET', `${LENS}/file/:id`, lensFile);
+  router.add('HEAD', `${LENS}/file/:id`, lensFile);
+
+  router.add('POST', `${LENS}/scan`, (req, res) => {
+    guard(req);
+    const files = db
+      .q(
+        `SELECT n.id AS fileid, n.parent AS parentid, n.mtime, n.etag, m.isvideo
+         FROM nodes n JOIN media m ON m.id = n.id WHERE m.livevideo = 0 ORDER BY n.id`,
+      )
+      .all()
+      .map((f) => ({ ...f, isvideo: !!f.isvideo }));
+    json(res, { start: 1, end: null, done: true, files });
+  });
+
+  /* ---------------- daemon ---------------- */
+  const mustLens = () => {
+    if (ctx.lens?.state !== 'ready') throw new HttpError(503, 'AI engine is still starting');
+    return ctx.lens;
+  };
+  if (ctx.lens || !LensDaemon.available()) return; // ctx.lens preset = injected (tests)
+
+  const lens = (ctx.lens = new LensDaemon({
+    appUrl: `http://127.0.0.1:${ctx.port}`,
+    token: ctx.token,
+    dataDir: ctx.dataDir,
+  }));
+  Object.assign(status, { state: 'starting', queued: 0, indexed: 0, failed: 0, faces: 0, people: 0 });
+
+  // Send freshly indexed photos to lens right away (the periodic lens scan catches the rest)
+  const indexIds = ctx.indexer.indexIds.bind(ctx.indexer);
+  ctx.indexer.indexIds = async (ids, onDone) => {
+    await indexIds(ids, onDone);
+    if (lens.state !== 'ready') return;
+    for (const id of ids) {
+      const n = db
+        .q('SELECT n.parent FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ? AND m.isvideo = 0')
+        .get(id);
+      if (n) await lens.post('/v1/index', { fileid: id, parent_id: n.parent }).catch(() => {});
+    }
+  };
+
+  let facesVersion = -1;
+  let busy = false;
+  async function syncFaces() {
+    const { version, faces } = await lens.get('/v1/faces');
+    const gen = Number(db.getKv('ai.facegen', 0)) + 1;
+    const up = db.q(
+      `INSERT INTO faces (point, fileid, cluster, x, y, w, h, score, gen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (point) DO UPDATE SET fileid = excluded.fileid, cluster = excluded.cluster, x = excluded.x,
+         y = excluded.y, w = excluded.w, h = excluded.h, score = excluded.score, gen = excluded.gen`,
+    );
+    db.tx(() => {
+      for (const f of faces) up.run(f.id, f.fileid, f.cluster_id ?? null, f.x, f.y, f.w, f.h, f.det_score, gen);
+      db.q('DELETE FROM faces WHERE gen <> ?').run(gen);
+      db.setKv('ai.facegen', gen);
+    });
+    facesVersion = version;
+  }
+
+  async function poll() {
+    if (busy || lens.state !== 'ready') return;
+    busy = true;
+    try {
+      const s = await lens.get('/v1/stats');
+      const queued = s.queue_depth + s.in_flight.length;
+      if (s.faces_version !== facesVersion) await syncFaces();
+      if (status.queued && !queued) console.log('AI index up to date.');
+      Object.assign(status, {
+        state: queued || s.scan?.status === 'scanning' ? 'indexing' : 'ready',
+        queued,
+        indexed: s.indexed_total,
+        failed: s.failed_total,
+        faces: db.q('SELECT count(*) AS n FROM faces').get().n,
+        people: db.q('SELECT count(DISTINCT cluster) AS n FROM faces WHERE cluster > 0').get().n,
+      });
+    } catch (e) {
+      status.error = String(e?.message ?? e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  void lens.start().then((ok) => {
+    if (!ok) return Object.assign(status, { state: 'error', error: lens.error });
+    console.log('AI engine ready (People, smart search).');
+    setInterval(poll, 5000).unref();
+    return poll();
+  });
+}

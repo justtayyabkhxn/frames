@@ -54,6 +54,9 @@ class FacesStore(FileStore):
 
         super().__init__(client, config.face.qdrant_collection, dim)
 
+        # Bumped on every write so clients can cheaply tell when to re-read all faces.
+        self.version = 0
+
     async def ensure_collection(self):
         """Create the per-face collection, indexes, and sentinel; reruns are safe."""
 
@@ -113,6 +116,35 @@ class FacesStore(FileStore):
 
         await self.upsert_many(points)
         await self._delete_stale(fileids, [face_point_id(p.fileid, p.face_idx) for p in points])
+        self.version += 1
+
+    async def delete_fileid(self, fileid: int):
+        """Remove a file's faces and mark the collection changed."""
+
+        await super().delete_fileid(fileid)
+        self.version += 1
+
+    async def scroll_all(self):
+        """Yield every face payload (no vectors) with its point id."""
+
+        filtr = models.Filter(must=[models.FieldCondition(key="fileid", range=models.Range(gte=1))])
+        offset = None
+
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self.collection,
+                scroll_filter=filtr,
+                offset=offset,
+                limit=1000,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            for point in points:
+                yield {"id": point.id, **point.payload}
+
+            if offset is None:
+                break
 
     async def search(self, vector, folders, limit):
         """Nearest face vectors scoped to folders, low scores dropped, score desc."""
@@ -183,6 +215,8 @@ class FacesStore(FileStore):
                 payload={"cluster_id": cluster_id},
                 points=selector,
             )
+
+        self.version += 1
 
     def _expected_meta(self):
         """Sentinel payload describing the face embedding space."""

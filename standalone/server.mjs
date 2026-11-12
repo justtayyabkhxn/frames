@@ -49,6 +49,7 @@ async function askRoot() {
 const locale = Intl.DateTimeFormat().resolvedOptions().locale;
 const ctx = {
   version: JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')).version,
+  port: PORT,
   uid: 'me',
   displayName: os.userInfo().username,
   token: randomBytes(24).toString('hex'),

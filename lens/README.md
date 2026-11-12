@@ -77,6 +77,14 @@ Start it:
 docker compose up -d lens qdrant
 ```
 
+## Local mode (Frames)
+
+Frames runs the daemon itself (`standalone/lib/ai-lens.mjs`, set up once by
+`standalone/setup-ai.mjs`). It sets `LENS_LOCAL=1` and `QDRANT_PATH` instead of
+`QDRANT_URL`: Qdrant runs embedded, the daemon fetches Frames' previews through the
+same `/lens/file` and `/lens/scan` endpoints, also detects and clusters faces, and
+exits when its parent closes stdin.
+
 ## Development
 
 ```bash
