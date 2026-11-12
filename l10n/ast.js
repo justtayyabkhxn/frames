@@ -2,7 +2,7 @@ OC.L10N.register(
     "memories",
     {
     "Download" : "Baxar",
-    "Memories" : "Recuerdos",
+    "Frames" : "Recuerdos",
     "People" : "Persones",
     "Timeline" : "Llinia de tiempu",
     "Explore" : "Esplorar",

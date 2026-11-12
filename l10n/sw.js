@@ -2,7 +2,7 @@ OC.L10N.register(
     "memories",
     {
     "Download" : "Pakua",
-    "Memories" : "Memories",
+    "Frames" : "Frames",
     "People" : "Watu",
     "Timeline" : "Timeline",
     "Explore" : "Gundua",

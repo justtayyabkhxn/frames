@@ -16,7 +16,7 @@ export async function maybeAskManageMedia(): Promise<void> {
     if (localStorage.getItem(ASKED_KEY)) return;
     if ((nativex?.canManageMedia?.() ?? null) !== false) return;
     const yes = await confirmDestructive({
-      title: t('memories', 'Allow Memories to manage media'),
+      title: t('memories', 'Allow Frames to manage media'),
       message: t('memories', 'You can change this later in the device setup.'),
       confirm: t('memories', 'Continue'),
       confirmClasses: 'primary',

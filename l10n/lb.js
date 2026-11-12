@@ -2,7 +2,7 @@ OC.L10N.register(
     "memories",
     {
     "Download" : "Eroflueden",
-    "Memories" : "Memories",
+    "Frames" : "Frames",
     "Explore" : "Erfuerschen",
     "Favorites" : "Favoriten",
     "Archive" : "Archiv",

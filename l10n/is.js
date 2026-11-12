@@ -2,7 +2,7 @@ OC.L10N.register(
     "memories",
     {
     "Download" : "Sækja",
-    "Memories" : "Minningar",
+    "Frames" : "Minningar",
     "People" : "Fólk",
     "Timeline" : "Tímalína",
     "Explore" : "Skoða",

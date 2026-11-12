@@ -12,7 +12,7 @@ declare global {
   var OCP: Nextcloud.Common.OCP;
 
   /**
-   * Global Memories object. Initialized in main.ts
+   * Global Frames object. Initialized in main.ts
    * Most of this is not available for admin.ts.
    */
   var _m: {

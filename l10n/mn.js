@@ -2,7 +2,7 @@ OC.L10N.register(
     "memories",
     {
     "Download" : "–¢–∞—Ç–∞—Ö",
-    "Memories" : "Санамжууд",
+    "Frames" : "Санамжууд",
     "People" : "Хүмүүс",
     "Explore" : "–•–∞–π—Ö",
     "Folders" : "–•–∞–≤—Ç—Å—É—É–¥",

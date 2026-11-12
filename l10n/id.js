@@ -2,7 +2,7 @@ OC.L10N.register(
     "memories",
     {
     "Download" : "Unduh",
-    "Memories" : "Memori",
+    "Frames" : "Memori",
     "People" : "Orang",
     "Timeline" : "Linimasa",
     "Explore" : "Jelajah",

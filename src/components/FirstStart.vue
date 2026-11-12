@@ -18,7 +18,7 @@
         {{ info }} <br />
 
         <NcButton @click="finish" class="button" variant="primary">
-          {{ t('memories', 'Continue to Memories') }}
+          {{ t('memories', 'Continue to Frames') }}
         </NcButton>
       </div>
 
@@ -36,7 +36,7 @@
 
         <span class="admin-text" v-if="isAdmin">
           <br />
-          {{ t('memories', 'If you just installed Memories, visit the admin panel first.') }}
+          {{ t('memories', 'If you just installed Frames, visit the admin panel first.') }}
         </span>
       </div>
     </div>
@@ -113,7 +113,7 @@ async function begin() {
       t('memories', 'This can happen because your media is still indexing.');
 
     if (isAdmin) {
-      error.value += '\n\n' + t('memories', 'Visit the admin panel to make sure Memories is configured correctly.');
+      error.value += '\n\n' + t('memories', 'Visit the admin panel to make sure Frames is configured correctly.');
     }
     return;
   }

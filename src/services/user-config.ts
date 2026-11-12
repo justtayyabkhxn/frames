@@ -256,7 +256,7 @@ export async function hasVersionChanged(): Promise<boolean> {
  * @param version the new version reported by the server.
  */
 function notifyVersionChanged(version: string) {
-  showInfo(t('memories', 'Memories has been updated to {version}. Reload to get the new version.', { version }));
+  showInfo(t('memories', 'Frames has been updated to {version}. Reload to get the new version.', { version }));
 }
 
 /**

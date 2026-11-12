@@ -3,13 +3,13 @@
     <h2>{{ $options.title }}</h2>
 
     <span class="thanks">
-      {{ t('memories', 'Thank you for choosing Nextcloud and Memories to store your precious data!') }}
+      {{ t('memories', 'Thank you for choosing Nextcloud and Frames to store your precious data!') }}
     </span>
     <br /><br />
 
-    {{ t('memories', 'Memories is very feature rich and setting it up properly can take some time.') }}
+    {{ t('memories', 'Frames is very feature rich and setting it up properly can take some time.') }}
     <br />
-    {{ t('memories', 'If you just installed Memories, make sure you read the getting started guide:') }}
+    {{ t('memories', 'If you just installed Frames, make sure you read the getting started guide:') }}
     <a target="_blank" href="https://memories.gallery/install/">
       {{ t('memories', 'External Link') }}
     </a>
@@ -28,7 +28,7 @@
       </li>
     </ul>
 
-    {{ t('memories', 'Memories is a completely free and open source app under active development.') }}
+    {{ t('memories', 'Frames is a completely free and open source app under active development.') }}
     <br />
     {{ t('memories', 'You can contribute in several ways. See the project page for more details:') }}
     <a target="_blank" href="https://github.com/pulsejet/memories#-support-the-project">

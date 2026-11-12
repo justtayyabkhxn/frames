@@ -2,7 +2,7 @@
   <div v-if="systemConfig" class="admin-section">
     <h2>{{ $options.title }}</h2>
 
-    {{ t('memories', 'Memories ships a built-in preview generator (VIPS) covering various image formats.') }}
+    {{ t('memories', 'Frames ships a built-in preview generator (VIPS) covering various image formats.') }}
     {{ t('memories', 'Using VIPS is recommended to support Ultra-HDR and ICC profiles.') }}
     {{ t('memories', 'You can configure the enabled Nextcloud preview providers below.') }}
     <a href="https://memories.gallery/file-types/" target="_blank">{{ t('memories', 'Documentation.') }}</a>

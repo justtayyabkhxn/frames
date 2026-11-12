@@ -2,7 +2,7 @@ OC.L10N.register(
     "memories",
     {
     "Download" : "Descargar",
-    "Memories" : "Recuerdos",
+    "Frames" : "Recuerdos",
     "People" : "Personas",
     "Explore" : "Explorar",
     "Folders" : "Carpetas",

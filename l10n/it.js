@@ -3,7 +3,7 @@ OC.L10N.register(
     {
     "Shared Link" : "Collegamento condiviso",
     "Download" : "Scarica",
-    "Memories" : "Ricordi",
+    "Frames" : "Ricordi",
     "Fast, modern and advanced photo management suite" : "Soluzione efficiente, moderna e avanzata per la gestione delle foto",
     "People" : "Persone",
     "Timeline" : "Linea temporale",

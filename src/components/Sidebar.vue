@@ -1,22 +1,22 @@
 <!--
-  Memories sidebar.
+  Frames sidebar.
   ================
 
   Two sidebars live here and are mutually exclusive:
 
-  1. REDUCED sidebar (#app-sidebar-vue): Memories' own UI, renders the
+  1. REDUCED sidebar (#app-sidebar-vue): Frames' own UI, renders the
      Metadata component directly for the current photo. Used for everything
      except explicit native-tab requests (see openNative).
 
   2. NATIVE shell (#app-sidebar-native): an NcAppSidebar hosting Files
      sidebar *tab web components* from the global tab registry
      (registerSidebarTab / getSidebarTabs from @nextcloud/files), e.g. the
-     sharing tab. This is how Memories shows native tabs such as sharing.
+     sharing tab. This is how Frames shows native tabs such as sharing.
 
   Background: Nextcloud 34 removed the globally mounted sidebar
   (OCA.Files.Sidebar). Its UI now only exists inside the Files app, and its
   store (getSidebar().open()) requires an active Files view and the Files
-  router — neither exists on Memories routes. So the store is never driven
+  router — neither exists on Frames routes. So the store is never driven
   from here; instead the tab components themselves are hosted directly.
 
   How a native open works (openNative):
@@ -25,7 +25,7 @@
   - The file is resolved via WebDAV stat into a full Node (permissions,
     mime, share attributes, ...) because tabs read all of that through
     their `node` prop. The tab scripts themselves (sharing, comments, ...)
-    load on Memories pages because PageController dispatches the shared
+    load on Frames pages because PageController dispatches the shared
     LoadSidebar event.
   - Tabs are filtered with their `enabled({ node, folder, view })` check
     and sorted by `order`, then the wanted (or first) tab is activated.
@@ -38,7 +38,7 @@
 
   Custom-element setup: our own 'memories-metadata' tab wraps Metadata.vue
   via defineCustomElement. Its app installs globals, route checkers and the
-  Memories router (same as the old native mount) so router-link based
+  Frames router (same as the old native mount) so router-link based
   components such as album links resolve instead of crashing.
 
   Focus: NcAppSidebar traps focus while open. The viewer exempts both
@@ -284,7 +284,7 @@ async function openNative(photo: IPhoto | number, filename: string): Promise<boo
   });
   const view: IView = {
     id: 'memories',
-    name: 'Memories',
+    name: 'Frames',
     icon: '',
     getContents: async () => ({ contents: [], folder }),
   };

@@ -27,7 +27,7 @@
       {{
         userConfig.preview_generator_enabled
           ? t('memories', 'Preview generator is installed and enabled. Additional configuration may still be required.')
-          : t('memories', 'Preview generator is not installed and configured. This may make Memories very slow.')
+          : t('memories', 'Preview generator is not installed and configured. This may make Frames very slow.')
       }}
     </NcNoteCard>
   </div>

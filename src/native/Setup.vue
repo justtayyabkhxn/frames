@@ -30,7 +30,7 @@
           {{
             t(
               'memories',
-              'Memories can show local media on your device alongside the media on your server. This requires access to the media on this device.',
+              'Frames can show local media on your device alongside the media on your server. This requires access to the media on this device.',
             )
           }}
           <br /><br />
@@ -47,8 +47,8 @@
             <br /><br />
             {{
               canManageMedia
-                ? t('memories', 'Memories can manage media on this device.')
-                : t('memories', 'Allow Memories to manage media on this device.')
+                ? t('memories', 'Frames can manage media on this device.')
+                : t('memories', 'Allow Frames to manage media on this device.')
             }}
           </template>
 
