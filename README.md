@@ -7,13 +7,22 @@
 
 ## 💻 Run offline on your computer (no Nextcloud, no Docker, no cloud)
 
-Requires [Node.js](https://nodejs.org) 22.5+. [ffmpeg](https://ffmpeg.org) on `PATH` is recommended for fast, sharp thumbnails.
+Frames runs the full interface against a local backend (`standalone/`) instead of Nextcloud: timeline, folders, favorites, albums, tags, archive, trash, on this day, map, places, people, smart search, video transcoding, live photos and the photo editor.
 
-1. Double-click `frames.cmd` (Windows) or run `node standalone/server.mjs`.
-1. On first run, type the folder that holds your photos. It is remembered (change it with `--dir <folder>`).
-1. Your browser opens `http://localhost:7310`. Frames reads the metadata of every photo and video and makes thumbnails; items appear as they are indexed.
+**Use a packaged build:** copy the `Frames` folder to your PC, double-click `frames.cmd`, and type the folder that holds your photos (asked once; change later with `frames.cmd --dir "D:Photos"`). Your browser opens `http://localhost:7310`. The first run indexes metadata, makes thumbnails, imports place data and runs the AI models; this can take a long time on large libraries, with progress shown at the top.
 
-Everything stays on your device: the index and thumbnails live in `standalone/data/`, the server only listens on `127.0.0.1`, and your photos are never modified. The only network access is a one-time, checksum-verified download of [exiftool](https://exiftool.org) on Windows if it is not already installed.
+**Build a package (Windows):**
+
+1. `npm ci && npm run build` (frontend, needs Node 24+)
+1. `node standalone/setup.mjs` (portable Node, exiftool, ffmpeg into `tools/`)
+1. `tools
+ode
+ode.exe standalone/setup-ai.mjs` (optional: Python, PyTorch CPU and models for people/search, a few GB)
+1. `tools
+ode
+ode.exe standalone/package.mjs [--zip]` (writes `dist/Frames`)
+
+Everything stays on your device: the index, previews and settings live in `standalone/data/`, the server only listens on `127.0.0.1`, and your photos are only changed when you edit, move, archive or delete them (deleted items go to the Frames trash). Map tiles come from OpenStreetMap when online, with a built-in offline basemap otherwise. Share links are not available offline; use download or the viewer share button.
 
 Frames is a _batteries-included_ photo management solution for Nextcloud with advanced features
 

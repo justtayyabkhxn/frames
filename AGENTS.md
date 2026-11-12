@@ -89,10 +89,12 @@ Very important.
 - VA-API and NVENC hardware acceleration supported.
 
 ### Standalone offline app (`standalone/`)
-- Frames runs without Nextcloud: `frames.cmd` or `node standalone/server.mjs [--dir X]`.
-- Zero npm deps: `node:sqlite`, exiftool (auto-fetched on Windows), ffmpeg optional.
-- Data in `standalone/data/` (db, thumbs, config); UI is `standalone/index.html`.
-- Checks: `node standalone/test.mjs`.
+- Frames runs the Vue UI without Nextcloud: `frames.cmd` or `tools/node/node.exe standalone/server.mjs [--dir X]`.
+- Zero npm deps; `node:sqlite`; tools in `tools/` (node, exiftool, ffmpeg, python, models, places).
+- `lib/shell.mjs` fakes the NC page; `api.mjs`, `dav.mjs` (WebDAV subset), `clusters.mjs`, `map.mjs`, `media.mjs`, `ai.mjs` (lens daemon).
+- Data in `standalone/data/` (`FRAMES_DATA` to override, `PORT`, `FRAMES_JS`).
+- Setup/package: `setup.mjs`, `setup-ai.mjs`, `package.mjs`.
+- Checks: `standalone/test.mjs`, `map-test.mjs`, `media-test.mjs`, `ai-test.mjs`.
 
 ### Frontend (`src/`)
 - Vue 3 + Webpack, built to `js/`.
