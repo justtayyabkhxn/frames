@@ -420,10 +420,10 @@ export function registerApi(router, ctx) {
     sendFile(req, res, file, { type: 'image/jpeg', headers: { ETag: `"${n.etag}"` } });
   });
 
-  router.add('PATCH', `${API}/image/set-exif/:id`, async (req, res, { id }) => {
+  /** Write EXIF tags (EXIF_WRITABLE only) into the file and re-index it. */
+  async function setExif(id, raw) {
     const n = lib.mustNode(id);
     if (!EDITABLE.test(n.mime ?? '')) throw badRequest(`Cannot edit ${n.name}`);
-    const { raw = {} } = await readJson(req);
     const args = [];
     for (const [k, v] of Object.entries(raw)) {
       if (!EXIF_WRITABLE.includes(k)) throw badRequest('Invalid EXIF tag');
@@ -440,7 +440,12 @@ export function registerApi(router, ctx) {
     ]);
     if (r.code !== 0) throw badRequest(`exiftool: ${r.err.trim()}`);
     await ctx.indexer.indexPath(n.path);
-    json(res, info(n.id, new URLSearchParams('basic=1')));
+    return n.id;
+  }
+  ctx.setExif = setExif;
+  router.add('PATCH', `${API}/image/set-exif/:id`, async (req, res, { id }) => {
+    const { raw = {} } = await readJson(req);
+    json(res, info(await setExif(id, raw), new URLSearchParams('basic=1')));
   });
 
   router.add('POST', `${API}/image/reindex/:id`, async (req, res, { id }) => {

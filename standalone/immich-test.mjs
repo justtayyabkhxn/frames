@@ -137,4 +137,45 @@ assert.equal(r.status, 206);
 r = await call('GET', '/api/assets/not-a-uuid/thumbnail');
 assert.equal(r.status, 400);
 
+// Asset info and actions: favorite, archive, rating/description via EXIF, delete to trash
+db.exec(
+  `UPDATE media SET exif = json_object('Make', 'Canon', 'Model', 'EOS R6', 'FNumber', 2.8, 'ExposureTime', 0.01, 'ISO', 400, 'Rating', 3) WHERE id = 2`,
+);
+const calls = [];
+Object.assign(ctx.lib, {
+  setArchived: (id, on) => calls.push(['archive', id, on]),
+  trash: (id) => calls.push(['trash', id]),
+  mustNode: ctx.lib.node,
+});
+ctx.setExif = async (id, raw) => calls.push(['exif', id, raw]);
+ctx.addressOf = () => ['Pune', 'Maharashtra', 'India'];
+const a2 = toUuid('asset', 2);
+const info = await api('GET', `/api/assets/${a2}`);
+assert.equal(info.id, a2);
+assert.equal(info.type, 'IMAGE');
+assert.equal(info.originalFileName, 'a.jpg');
+assert.deepEqual(
+  [
+    info.exifInfo.make,
+    info.exifInfo.model,
+    info.exifInfo.fNumber,
+    info.exifInfo.exposureTime,
+    info.exifInfo.iso,
+    info.exifInfo.rating,
+  ],
+  ['Canon', 'EOS R6', 2.8, '1/100', 400, 3],
+);
+assert.deepEqual([info.exifInfo.city, info.exifInfo.state, info.exifInfo.country], ['Pune', 'Maharashtra', 'India']);
+assert.equal(info.isArchived, false);
+await api('PUT', '/api/assets', { ids: [a2], isFavorite: true });
+assert.equal(db.q('SELECT favorite FROM nodes WHERE id = 2').get().favorite, 1);
+await api('PUT', '/api/assets', { ids: [a2], visibility: 'archive' });
+await api('PUT', `/api/assets/${a2}`, { rating: 4, description: 'hi' });
+await call('DELETE', '/api/assets', { ids: [a2] });
+assert.deepEqual(calls, [
+  ['archive', 2, true],
+  ['exif', 2, { Rating: 4, Description: 'hi' }],
+  ['trash', 2],
+]);
+
 console.log('ok');

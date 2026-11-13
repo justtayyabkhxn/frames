@@ -1,5 +1,85 @@
-import { notFound, sendFile } from '../http.mjs';
-import { fromUuid } from './ids.mjs';
+import { badRequest, notFound, readJson, sendFile } from '../http.mjs';
+import { fromUuid, toUuid } from './ids.mjs';
+import { ASSET_SELECT, projectionOf, visibilityOf } from './timeline.mjs';
+
+const iso = (sec) => (sec == null ? null : new Date(sec * 1000).toISOString());
+const pad = (n) => String(n).padStart(2, '0');
+/** Immich durations look like "0:00:06.000000". */
+const duration = (sec) =>
+  `${Math.floor(sec / 3600)}:${pad(Math.floor((sec % 3600) / 60))}:${pad(Math.floor(sec % 60))}.${String(Math.round((sec % 1) * 1e6)).padStart(6, '0')}`;
+const exposure = (t) => (t == null ? null : t >= 1 ? `${t}` : `1/${Math.round(1 / t)}`);
+
+/** Frames row (ASSET_SELECT) -> Gallery's AssetResponseDto. */
+export function assetDto(ctx, r) {
+  const x = JSON.parse(r.exif || '{}');
+  const place = ctx.addressOf?.(r.id) ?? [];
+  const owner = ctx.immichUser();
+  return {
+    id: toUuid('asset', r.id),
+    type: r.isvideo ? 'VIDEO' : 'IMAGE',
+    checksum: Buffer.from(String(r.etag ?? '')).toString('base64'),
+    deviceAssetId: String(r.id),
+    deviceId: 'frames',
+    ownerId: owner.id,
+    owner: {
+      id: owner.id,
+      name: owner.name,
+      email: owner.email,
+      avatarColor: owner.avatarColor,
+      profileImagePath: '',
+      profileChangedAt: owner.profileChangedAt,
+    },
+    libraryId: null,
+    originalFileName: r.name,
+    originalPath: r.path,
+    originalMimeType: r.mime,
+    createdAt: iso(r.indexed_at || r.mtime),
+    updatedAt: iso(r.mtime),
+    fileCreatedAt: iso(r.epoch),
+    fileModifiedAt: iso(r.mtime),
+    localDateTime: iso(r.datetaken),
+    duration: duration(r.isvideo ? r.video_duration || 0 : 0),
+    hasMetadata: true,
+    width: r.w,
+    height: r.h,
+    isArchived: !!r.archived,
+    isEdited: false,
+    isFavorite: !!r.favorite,
+    isOffline: false,
+    isTrashed: false,
+    visibility: visibilityOf(r),
+    thumbhash: null,
+    livePhotoVideoId: r.livevideo_id ? toUuid('asset', r.livevideo_id) : null,
+    duplicateId: null,
+    stack: null,
+    people: [],
+    tags: [],
+    exifInfo: {
+      make: x.Make ?? null,
+      model: x.Model ?? null,
+      lensModel: x.LensModel ?? null,
+      fNumber: x.FNumber ?? null,
+      focalLength: x.FocalLength ?? null,
+      iso: x.ISO ?? null,
+      exposureTime: exposure(x.ExposureTime),
+      exifImageWidth: r.w,
+      exifImageHeight: r.h,
+      fileSizeInByte: r.size ?? null,
+      orientation: x.Orientation != null ? String(x.Orientation) : null,
+      dateTimeOriginal: iso(r.epoch),
+      modifyDate: iso(r.mtime),
+      timeZone: x.OffsetTimeOriginal ? `UTC${x.OffsetTimeOriginal}` : null,
+      latitude: r.lat,
+      longitude: r.lon,
+      city: place[0] ?? null,
+      state: place.length > 2 ? place[1] : null,
+      country: place.length > 1 ? place.at(-1) : null,
+      description: x.Description ?? x.ImageDescription ?? '',
+      rating: x.Rating ?? null,
+      projectionType: projectionOf(r),
+    },
+  };
+}
 
 /** Formats every browser shows natively; others (HEIC, RAW, TIFF) are served as Frames' JPEG preview. */
 const WEB_IMAGES = ['image/png', 'image/webp', 'image/avif', 'image/jpeg', 'image/gif'];
@@ -7,6 +87,60 @@ const SIZES = { thumbnail: 250, preview: 1440, fullsize: 4096 };
 
 export function registerAssets(router, ctx, A) {
   const { db } = ctx;
+  const row = (id) => db.q(`SELECT ${ASSET_SELECT} FROM media m JOIN nodes n ON n.id = m.id WHERE n.id = ?`).get(id);
+  ctx.assetDto = (id) => {
+    const r = row(id);
+    if (!r) throw notFound('Asset not found');
+    return assetDto(ctx, r);
+  };
+
+  /** Apply Gallery's asset update fields to one Frames file. */
+  async function update(id, b) {
+    if (b.isFavorite !== undefined) db.q('UPDATE nodes SET favorite = ? WHERE id = ?').run(b.isFavorite ? 1 : 0, id);
+    if (b.visibility === 'archive' || b.visibility === 'timeline') ctx.lib.setArchived(id, b.visibility === 'archive');
+    else if (b.visibility) throw badRequest(`Visibility ${b.visibility} is not supported`);
+    const raw = {};
+    if (b.rating !== undefined) raw.Rating = b.rating ?? 0;
+    if (b.description !== undefined) raw.Description = b.description;
+    if (b.dateTimeOriginal)
+      raw.AllDates = String(b.dateTimeOriginal).replace('T', ' ').replace(/[-]/g, ':').slice(0, 19);
+    if (b.latitude != null && b.longitude != null)
+      Object.assign(raw, {
+        GPSLatitude: b.latitude,
+        GPSLongitude: b.longitude,
+        GPSLatitudeRef: b.latitude,
+        GPSLongitudeRef: b.longitude,
+      });
+    if (Object.keys(raw).length) await ctx.setExif(id, raw);
+  }
+  const ids = (list) => (Array.isArray(list) ? list : []).map((i) => fromUuid(i, 'asset'));
+
+  A.get('/assets/:id', (req, { id }) => ctx.assetDto(fromUuid(id, 'asset')));
+  A.put('/assets/:id', async (req, { id }) => {
+    const n = fromUuid(id, 'asset');
+    await update(n, await readJson(req));
+    return ctx.assetDto(n);
+  });
+  A.put('/assets', async (req) => {
+    const b = await readJson(req);
+    for (const id of ids(b.ids)) await update(id, b);
+    return null;
+  });
+  A.put('/assets/favorites', async (req) => {
+    const b = await readJson(req);
+    for (const id of ids(b.ids)) await update(id, { isFavorite: !!b.isFavorite });
+    return null;
+  });
+  A.del('/assets', async (req) => {
+    for (const id of ids((await readJson(req)).ids)) ctx.lib.trash(id);
+    return null;
+  });
+
+  // Gallery features Frames does not have (yet): OCR, stacks, spaces, per-asset album list until albums land
+  A.get('/assets/:id/ocr', () => []);
+  A.get('/faces', () => []);
+  A.post('/assets/spaces', () => []);
+  A.get('/albums', () => []);
   const node = (id) =>
     db.q('SELECT n.*, m.isvideo FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ?').get(fromUuid(id, 'asset'));
   const mustNode = (id) => {
