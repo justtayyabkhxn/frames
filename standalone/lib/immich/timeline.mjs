@@ -81,6 +81,7 @@ export function registerTimeline(router, ctx, A) {
   const order = (q) => (q.get('order') === 'asc' ? 'ASC' : 'DESC');
 
   A.get('/timeline/buckets', (req, _, q) => {
+    if (q.get('isTrashed') === 'true') return ctx.trash?.buckets(q) ?? [];
     const { f, from } = assetFilter(ctx, q);
     return db
       .prepare(
@@ -90,6 +91,7 @@ export function registerTimeline(router, ctx, A) {
   });
 
   A.get('/timeline/bucket', (req, _, q) => {
+    if (q.get('isTrashed') === 'true') return ctx.trash.bucket(q);
     const { f, from } = assetFilter(ctx, q);
     const rows = db
       .prepare(

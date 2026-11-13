@@ -13,6 +13,8 @@ import { registerAdmin } from './admin.mjs';
 import { registerAlbums } from './albums.mjs';
 import { registerUtilities } from './utilities.mjs';
 import { registerSearch } from './search.mjs';
+import { registerTrash } from './trash.mjs';
+import { registerTags } from './tags.mjs';
 
 const require = (f) => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), 'utf8'));
 const DEFAULTS = require('./config-defaults.json');
@@ -35,7 +37,7 @@ const MEMORY_TYPES = [
   'themed',
   'person_throwback',
 ];
-/** Gallery's getDefaultPreferences(), except Frames shows People and Folders in the sidebar and has ratings on, like its old UI. */
+/** Gallery's getDefaultPreferences(), except Frames shows People, Folders and Tags in the sidebar and has ratings on, like its old UI. */
 const PREFERENCES = {
   albums: { defaultAssetOrder: 'desc' },
   folders: { enabled: true, sidebarWeb: true },
@@ -48,7 +50,7 @@ const PREFERENCES = {
   people: { enabled: true, sidebarWeb: true, minimumFaces: 3, updateStrategy: 'everyone' },
   sharedLinks: { enabled: false, sidebarWeb: false },
   ratings: { enabled: true },
-  tags: { enabled: false, sidebarWeb: false },
+  tags: { enabled: true, sidebarWeb: true },
   emailNotifications: { enabled: false, albumInvite: false, albumUpdate: false },
   download: { archiveSize: 4 * 1024 ** 3, includeEmbeddedVideos: false },
   purchase: { showSupportBadge: false, hideBuyButtonUntil: '2100-01-01T00:00:00.000Z' },
@@ -305,5 +307,7 @@ export function registerImmich(router, ctx) {
   registerAlbums(router, ctx, A);
   registerUtilities(router, ctx, A);
   registerSearch(router, ctx, A);
+  registerTrash(router, ctx, A);
+  registerTags(router, ctx, A);
   return A;
 }

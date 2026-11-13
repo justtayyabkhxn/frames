@@ -133,7 +133,9 @@ export class Library {
   trash(id) {
     const n = this.mustNode(id);
     if (!n.path) throw badRequest('Cannot delete the library root');
-    const meta = JSON.stringify({ favorite: n.favorite, dir: n.dir });
+    // Date, size and kind too, so the Bin can show it by date taken
+    const m = this.db.q('SELECT datetaken, epoch, w, h, isvideo, video_duration FROM media WHERE id = ?').get(n.id);
+    const meta = JSON.stringify({ favorite: n.favorite, dir: n.dir, ...m });
     const tid = this.db.nextId('trash');
     const file = `${tid}-${n.name}`;
     // Move first: a failed move must leave no trash row behind

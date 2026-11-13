@@ -53,7 +53,7 @@ export function assetDto(ctx, r) {
         (ctx.db.q('SELECT cluster FROM faces WHERE fileid = ? AND cluster > 0').all(r.id) ?? []).map((f) => f.cluster),
       ),
     ].map((c) => ({ ...ctx.personDto(c), faces: [] })),
-    tags: [],
+    tags: ctx.tagsOfAsset?.(r.id) ?? [],
     exifInfo: {
       make: x.Make ?? null,
       model: x.Model ?? null,
@@ -127,7 +127,8 @@ export function registerAssets(router, ctx, A) {
     for (const id of ids(b.ids)) await update(id, { isFavorite: !!b.isFavorite });
     return null;
   });
-  A.get('/assets/:id', (req, { id }) => ctx.assetDto(fromUuid(id, 'asset')));
+  const trashed = (id) => ctx.trash?.isTrashId(id);
+  A.get('/assets/:id', (req, { id }) => (trashed(id) ? ctx.trash.dto(id) : ctx.assetDto(fromUuid(id, 'asset'))));
   A.put('/assets/:id', async (req, { id }) => {
     const n = fromUuid(id, 'asset');
     await update(n, await readJson(req));
@@ -138,8 +139,16 @@ export function registerAssets(router, ctx, A) {
     for (const id of ids(b.ids)) await update(id, b);
     return null;
   });
+  /** Bin items are deleted for good; live files go to the Bin, or straight out with force. */
   A.del('/assets', async (req) => {
-    for (const id of ids((await readJson(req)).ids)) ctx.lib.trash(id);
+    const b = await readJson(req);
+    for (const id of Array.isArray(b.ids) ? b.ids : []) {
+      if (trashed(id)) ctx.trash.purge(id);
+      else {
+        const tid = ctx.lib.trash(fromUuid(id, 'asset'));
+        if (b.force) ctx.lib.purge(tid);
+      }
+    }
     return null;
   });
 
@@ -156,6 +165,7 @@ export function registerAssets(router, ctx, A) {
   const etag = (n) => ({ ETag: `"${n.etag}"` });
 
   A.get('/assets/:id/thumbnail', async (req, { id }, q, res) => {
+    if (trashed(id)) return ctx.trash.thumbnail(req, id, q.get('size'), res);
     const n = mustNode(id);
     const px = SIZES[q.get('size')] ?? SIZES.thumbnail;
     const { file } = await ctx.previewFile(n.id, px, px, false);
@@ -163,6 +173,7 @@ export function registerAssets(router, ctx, A) {
   });
 
   A.get('/assets/:id/original', async (req, { id }, q, res) => {
+    if (trashed(id)) return ctx.trash.original(req, id, res);
     const n = mustNode(id);
     const download = q.get('download') === 'true' ? { 'Content-Disposition': contentDisposition(n.name, true) } : {};
     if (n.isvideo || WEB_IMAGES.includes(n.mime) || download['Content-Disposition'])
@@ -172,6 +183,7 @@ export function registerAssets(router, ctx, A) {
   });
 
   A.get('/assets/:id/video/playback', (req, { id }, q, res) => {
+    if (trashed(id)) return ctx.trash.original(req, id, res);
     const n = mustNode(id);
     sendFile(req, res, ctx.lib.abs(n.path), { type: n.mime, headers: etag(n) });
   });

@@ -1,7 +1,17 @@
 import { badRequest } from '../http.mjs';
 
 /** Gallery's API speaks UUIDs; Frames ids are integers. Encode them reversibly, one type nibble per kind. */
-const KINDS = { asset: 'a', person: 'b', album: 'c', tag: 'd', memory: 'e', face: 'f', user: '1', stack: '2' };
+const KINDS = {
+  asset: 'a',
+  person: 'b',
+  album: 'c',
+  tag: 'd',
+  memory: 'e',
+  face: 'f',
+  user: '1',
+  stack: '2',
+  trash: '3',
+};
 const RE = /^([0-9a-f])0000000-([0-9a-f]{4})-4([0-9a-f]{3})-8([0-9a-f]{3})-000000([0-9a-f]{6})$/;
 
 export function toUuid(kind, id) {
