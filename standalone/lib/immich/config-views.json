@@ -1,0 +1,101 @@
+{
+  "user": {
+    "ffmpeg": {
+      "realtime": {
+        "enabled": true,
+        "resolutions": true,
+        "videoCodecs": true
+      }
+    },
+    "image": {
+      "fullsize": {
+        "enabled": true
+      },
+      "preview": {
+        "size": true
+      },
+      "thumbnail": {
+        "size": true
+      }
+    },
+    "machineLearning": {
+      "clip": {
+        "enabled": true
+      },
+      "duplicateDetection": {
+        "enabled": true
+      },
+      "enabled": true,
+      "facialRecognition": {
+        "enabled": true,
+        "minFaces": true
+      },
+      "ocr": {
+        "enabled": true
+      }
+    },
+    "map": {
+      "darkStyle": true,
+      "enabled": true,
+      "lightStyle": true
+    },
+    "notifications": {
+      "smtp": {
+        "enabled": true
+      }
+    },
+    "oauth": {
+      "accountManagementUrl": true,
+      "autoLaunch": true,
+      "buttonText": true,
+      "enabled": true
+    },
+    "passkey": {
+      "enabled": true
+    },
+    "passwordLogin": {
+      "enabled": true
+    },
+    "reverseGeocoding": {
+      "enabled": true
+    },
+    "server": {
+      "externalDomain": true,
+      "loginPageMessage": true,
+      "publicUsers": true
+    },
+    "trash": {
+      "days": true,
+      "enabled": true
+    },
+    "user": {
+      "deleteDelay": true
+    }
+  },
+  "public": {
+    "ffmpeg": {
+      "realtime": {
+        "enabled": true
+      }
+    },
+    "map": {
+      "darkStyle": true,
+      "enabled": true,
+      "lightStyle": true
+    },
+    "oauth": {
+      "autoLaunch": true,
+      "buttonText": true,
+      "enabled": true
+    },
+    "passkey": {
+      "enabled": true
+    },
+    "passwordLogin": {
+      "enabled": true
+    },
+    "server": {
+      "loginPageMessage": true
+    }
+  }
+}

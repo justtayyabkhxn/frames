@@ -18,7 +18,8 @@ import { Indexer } from './lib/indexer.mjs';
 import { Library } from './lib/library.mjs';
 import { Previews } from './lib/previews.mjs';
 import { renderShell } from './lib/shell.mjs';
-import { APP_ROOT, findExiftool, findFfmpeg } from './lib/tools.mjs';
+import { registerImmich } from './lib/immich/server.mjs';
+import { APP_ROOT, findExiftool, findFfmpeg, GALLERY_BUILD } from './lib/tools.mjs';
 
 const DATA = process.env.FRAMES_DATA ? path.resolve(process.env.FRAMES_DATA) : path.join(APP_ROOT, 'data');
 const CONFIG = path.join(DATA, 'config.json');
@@ -84,6 +85,39 @@ registerMedia(router, ctx);
 registerAi(router, ctx);
 registerDuplicates(router, ctx);
 registerDav(router, ctx);
+registerImmich(router, ctx);
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
+  '.wasm': 'application/wasm',
+  '.webmanifest': 'application/manifest+json',
+  '.txt': 'text/plain',
+};
+const hasGallery = fs.existsSync(path.join(GALLERY_BUILD, 'index.html'));
+/** Gallery's static web app with SPA fallback; index.html marks the browser signed in (single local user). */
+function serveGallery(req, res, p) {
+  const rel = path.normalize(decodeURIComponent(p)).replace(/^[\/]+/, '');
+  let file = path.join(GALLERY_BUILD, rel);
+  if (!file.startsWith(GALLERY_BUILD) || !fs.statSync(file, { throwIfNoEntry: false })?.isFile())
+    file = path.join(GALLERY_BUILD, 'index.html');
+  const html = file.endsWith('.html');
+  res.writeHead(200, {
+    'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream',
+    'Cache-Control': rel.startsWith('_app/immutable/') ? 'public, max-age=31536000, immutable' : 'no-cache',
+    ...(html && { 'Set-Cookie': 'immich_is_authenticated=true; Path=/; SameSite=Lax' }),
+  });
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(file).pipe(res);
+}
 
 const shell = () => renderShell(ctx);
 const ALLOWED_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
@@ -108,7 +142,10 @@ const server = http.createServer(async (req, res) => {
       return res.end('// Frames: no service worker cache');
     }
 
-    if (p === '/' || p === '/apps/memories') return res.writeHead(302, { Location: '/apps/memories/' }).end();
+    if (p === '/apps/memories' || (p === '/' && !hasGallery))
+      return res.writeHead(302, { Location: '/apps/memories/' }).end();
+    if (p === '/custom.css') return res.writeHead(200, { 'Content-Type': 'text/css' }).end();
+    if (p === '/.well-known/immich') return json(res, { api: { endpoint: '/api' } });
     if (p.startsWith('/apps/memories/js/'))
       return sendFile(req, res, path.join(JS, path.basename(p)), {
         type: p.endsWith('.js') ? 'text/javascript' : undefined,
@@ -122,6 +159,8 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end(shell());
     }
+    if (hasGallery && SAFE.has(req.method) && !p.startsWith('/api/') && !p.startsWith('/remote.php/'))
+      return serveGallery(req, res, p);
     throw new HttpError(404, 'Not found');
   } catch (e) {
     if (!(e instanceof HttpError)) console.error(req.method, p, e);
@@ -130,7 +169,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const appUrl = `http://localhost:${PORT}/apps/memories/`;
+const appUrl = `http://localhost:${PORT}/${hasGallery ? '' : 'apps/memories/'}`;
 const openBrowser = () => {
   const [cmd, args] = { win32: ['cmd', ['/c', 'start', '', appUrl]], darwin: ['open', [appUrl]] }[process.platform] ?? [
     'xdg-open',

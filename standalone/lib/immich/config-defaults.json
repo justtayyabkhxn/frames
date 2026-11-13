@@ -1,0 +1,361 @@
+{
+  "backup": {
+    "beta": false,
+    "database": {
+      "enabled": true,
+      "cronExpression": "0 02 * * *",
+      "keepLastAmount": 14,
+      "s3": {
+        "enabled": false
+      }
+    }
+  },
+  "ffmpeg": {
+    "crf": 23,
+    "threads": 0,
+    "preset": "ultrafast",
+    "targetVideoCodec": "h264",
+    "acceptedVideoCodecs": [
+      "h264"
+    ],
+    "targetAudioCodec": "aac",
+    "acceptedAudioCodecs": [
+      "aac",
+      "mp3",
+      "opus"
+    ],
+    "acceptedContainers": [
+      "mov",
+      "ogg",
+      "webm"
+    ],
+    "targetResolution": "720",
+    "maxBitrate": "0",
+    "bframes": -1,
+    "refs": 0,
+    "gopSize": 0,
+    "temporalAQ": false,
+    "cqMode": "auto",
+    "twoPass": false,
+    "preferredHwDevice": "auto",
+    "transcode": "required",
+    "tonemap": "hable",
+    "accel": "disabled",
+    "accelDecode": true,
+    "realtime": {
+      "enabled": false,
+      "videoCodecs": [
+        "h264",
+        "hevc"
+      ],
+      "resolutions": [
+        480,
+        720,
+        1080
+      ]
+    },
+    "dataSaver": {
+      "enabled": false,
+      "targetVideoCodec": "hevc",
+      "targetResolution": "720",
+      "maxBitrate": "1500k"
+    }
+  },
+  "integrityChecks": {
+    "missingFiles": {
+      "enabled": true,
+      "cronExpression": "0 03 * * *"
+    },
+    "untrackedFiles": {
+      "enabled": true,
+      "cronExpression": "0 03 * * *"
+    },
+    "checksumFiles": {
+      "enabled": true,
+      "cronExpression": "0 03 * * *",
+      "timeLimit": 3600000,
+      "percentageLimit": 1
+    }
+  },
+  "job": {
+    "thumbnailGeneration": {
+      "concurrency": 3
+    },
+    "metadataExtraction": {
+      "concurrency": 5
+    },
+    "videoConversion": {
+      "concurrency": 1
+    },
+    "faceDetection": {
+      "concurrency": 2
+    },
+    "smartSearch": {
+      "concurrency": 2
+    },
+    "backgroundTask": {
+      "concurrency": 5
+    },
+    "migration": {
+      "concurrency": 5
+    },
+    "search": {
+      "concurrency": 5
+    },
+    "sidecar": {
+      "concurrency": 5
+    },
+    "library": {
+      "concurrency": 5
+    },
+    "notifications": {
+      "concurrency": 5
+    },
+    "ocr": {
+      "concurrency": 1
+    },
+    "workflow": {
+      "concurrency": 5
+    },
+    "editor": {
+      "concurrency": 2
+    },
+    "integrityCheck": {
+      "concurrency": 1
+    },
+    "peopleBackfill": {
+      "concurrency": 1
+    },
+    "petDetection": {
+      "concurrency": 1
+    },
+    "classification": {
+      "concurrency": 1
+    },
+    "qualityAnalysis": {
+      "concurrency": 2
+    },
+    "spatialScene": {
+      "concurrency": 1
+    }
+  },
+  "logging": {
+    "enabled": true,
+    "level": "log"
+  },
+  "machineLearning": {
+    "enabled": true,
+    "urls": [
+      "http://immich-machine-learning:3003"
+    ],
+    "availabilityChecks": {
+      "enabled": true,
+      "timeout": 2000,
+      "interval": 30000
+    },
+    "clip": {
+      "enabled": true,
+      "modelName": "ViT-B-32__openai",
+      "maxDistance": 0
+    },
+    "petDetection": {
+      "enabled": false,
+      "modelName": "rfdetr-nano",
+      "minScore": 0.3
+    },
+    "petRecognition": {
+      "enabled": false,
+      "modelName": "pet-recognition-base",
+      "maxDistance": 0.55,
+      "minFaces": 1
+    },
+    "spatialScene": {
+      "enabled": false,
+      "modelName": "depth-anything-v2-small",
+      "offer": "suitable",
+      "minBoundarySharpness": 0.03,
+      "minEdgeDensity": 0.02,
+      "minForegroundRatio": 0.01,
+      "maxForegroundRatio": 0.75,
+      "minFaceHeight": 0.03
+    },
+    "duplicateDetection": {
+      "enabled": true,
+      "maxDistance": 0.01
+    },
+    "facialRecognition": {
+      "enabled": true,
+      "modelName": "buffalo_l",
+      "minScore": 0.7,
+      "maxDistance": 0.5,
+      "minFaces": 3,
+      "suggestions": {
+        "enabled": true,
+        "maxDistance": 0.7
+      },
+      "video": {
+        "enabled": false,
+        "sampleInterval": 2,
+        "sceneDetection": true,
+        "maxFrames": 1800,
+        "tiledDetection": false
+      }
+    },
+    "ocr": {
+      "enabled": true,
+      "modelName": "PP-OCRv5_mobile",
+      "minDetectionScore": 0.5,
+      "minRecognitionScore": 0.8,
+      "maxResolution": 736
+    }
+  },
+  "map": {
+    "enabled": true,
+    "lightStyle": "https://tiles.openfreemap.org/styles/positron",
+    "darkStyle": "https://tiles.openfreemap.org/styles/dark"
+  },
+  "reverseGeocoding": {
+    "enabled": true
+  },
+  "metadata": {
+    "faces": {
+      "import": false
+    }
+  },
+  "oauth": {
+    "autoLaunch": false,
+    "autoRegister": true,
+    "buttonText": "Login with OAuth",
+    "clientId": "",
+    "clientSecret": "",
+    "defaultStorageQuota": null,
+    "enabled": false,
+    "issuerUrl": "",
+    "accountManagementUrl": "",
+    "endSessionEndpoint": "",
+    "mobileOverrideEnabled": false,
+    "mobileRedirectUri": "",
+    "prompt": "",
+    "scope": "openid email profile",
+    "signingAlgorithm": "RS256",
+    "profileSigningAlgorithm": "none",
+    "storageLabelClaim": "preferred_username",
+    "storageQuotaClaim": "immich_quota",
+    "roleClaim": "immich_role",
+    "tokenEndpointAuthMethod": "client_secret_post",
+    "timeout": 30000,
+    "allowInsecureRequests": false
+  },
+  "passkey": {
+    "enabled": false,
+    "domain": null,
+    "additionalDomains": []
+  },
+  "passwordLogin": {
+    "enabled": true
+  },
+  "storageTemplate": {
+    "enabled": false,
+    "hashVerificationEnabled": true,
+    "template": "{{y}}/{{y}}-{{MM}}-{{dd}}/{{filename}}"
+  },
+  "image": {
+    "thumbnail": {
+      "format": "webp",
+      "size": 250,
+      "quality": 80,
+      "progressive": false
+    },
+    "preview": {
+      "format": "jpeg",
+      "size": 1440,
+      "quality": 80,
+      "progressive": false
+    },
+    "colorspace": "p3",
+    "extractEmbedded": false,
+    "fullsize": {
+      "enabled": false,
+      "format": "jpeg",
+      "quality": 80,
+      "progressive": false
+    }
+  },
+  "newVersionCheck": {
+    "enabled": true,
+    "channel": "stable"
+  },
+  "nightlyTasks": {
+    "startTime": "00:00",
+    "databaseCleanup": true,
+    "generateMemories": true,
+    "syncQuotaUsage": true,
+    "missingThumbnails": true,
+    "clusterNewFaces": true,
+    "clusterNewPets": true
+  },
+  "trash": {
+    "enabled": true,
+    "days": 30
+  },
+  "theme": {
+    "customCss": ""
+  },
+  "library": {
+    "scan": {
+      "enabled": true,
+      "cronExpression": "0 0 * * *"
+    },
+    "watch": {
+      "enabled": false
+    }
+  },
+  "server": {
+    "externalDomain": "",
+    "loginPageMessage": "",
+    "publicUsers": true,
+    "mergePeopleAcrossOwners": false,
+    "spaceEditorsCanAddMembers": false,
+    "spaceEditorsCanChangeRoles": false
+  },
+  "notifications": {
+    "smtp": {
+      "enabled": false,
+      "from": "",
+      "replyTo": "",
+      "transport": {
+        "ignoreCert": false,
+        "host": "",
+        "port": 587,
+        "secure": false,
+        "username": "",
+        "password": ""
+      }
+    }
+  },
+  "templates": {
+    "email": {
+      "welcomeTemplate": "",
+      "albumInviteTemplate": "",
+      "albumUpdateTemplate": ""
+    }
+  },
+  "user": {
+    "deleteDelay": 7
+  },
+  "memories": {
+    "retentionDays": 365,
+    "birthday": true,
+    "recentTrips": true,
+    "types": {},
+    "themeMaxDistance": 0.75,
+    "personThrowbackDormancyMonths": 6
+  },
+  "classification": {
+    "enabled": true,
+    "categories": []
+  },
+  "storageUsage": {
+    "includeDerivatives": false
+  }
+}
