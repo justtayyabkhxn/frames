@@ -11,7 +11,6 @@
     </div>
 
     <div class="actions">
-      <UploadMenuItem />
       <SearchbarMenuItem />
     </div>
   </div>
@@ -21,7 +20,6 @@
 import { ref } from 'vue';
 import { generateUrl } from '@nextcloud/router';
 
-import UploadMenuItem from '@components/header/UploadMenuItem.vue';
 import SearchbarMenuItem from '@components/header/SearchbarMenuItem.vue';
 import XImg from '@components/frame/XImg.vue';
 

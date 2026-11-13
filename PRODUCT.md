@@ -27,7 +27,8 @@ Fully offline and local. Everything (index, thumbnails, place names, face groupi
 ## Capabilities and Constraints
 
 - Views: Timeline, Explore, Folders, Favorites, Albums, People, Archive, On this day, Places, Map, Tags, Trash, Videos, search.
-- Actions: view (photos, videos, live/motion photos, panoramas), edit (photo editor, dates, location, tags), favorite, archive, delete/restore, move, upload, download/zip, albums, people naming/merging.
+- Actions: view (photos, videos, live/motion photos, panoramas), edit (photo editor, dates, location, tags), favorite, archive, delete/restore, move, download/zip, albums, people naming/merging, ratings, filters, duplicates.
+- No uploads: photos are added by copying them into the library folder (then rescan); Frames only keeps its own metadata alongside.
 - Not available: share links and multi-user features (no public server).
 - Frontend is the Memories Vue 3 app (`src/`) using `@nextcloud/vue` components; the page shell and theme tokens are served by `standalone/lib/shell.mjs`. Product name is "Frames"; internal ids remain `memories`.
 - Translations exist for many languages (`l10n/`); UI strings go through `t('memories', …)`.

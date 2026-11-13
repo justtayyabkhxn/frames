@@ -1,6 +1,6 @@
 import type { ComponentPublicInstance } from 'vue';
 
-import type { IPhoto, IUploadNativeX, TimelineState } from '@typings';
+import type { IPhoto, TimelineState } from '@typings';
 
 // Global exposed variables
 declare global {
@@ -28,7 +28,6 @@ declare global {
       reindex: (photos: IPhoto[]) => void;
       albumShare: (user: string, name: string, link?: boolean) => Promise<void>;
       showSettings: () => void;
-      upload: (locals?: IUploadNativeX[]) => void;
       search: () => void;
     };
 

@@ -11,9 +11,6 @@
     </NcBreadcrumbs>
 
     <div class="right-actions">
-      <!-- Progress bar for upload -->
-      <PublicUploadHandler ref="uploadHandler" v-if="allowPublicUpload" />
-
       <NcActions :inline="3">
         <NcActionButton
           v-if="!routeIs.Public"
@@ -23,27 +20,6 @@
         >
           {{ t('memories', 'Share folder') }}
           <template #icon> <ShareIcon :size="20" /> </template>
-        </NcActionButton>
-
-        <NcActionButton
-          v-if="!routeIs.Public"
-          :aria-label="t('memories', 'Upload files')"
-          @click="upload()"
-          close-after-click
-        >
-          {{ t('memories', 'Upload files') }}
-          <template #icon> <UploadIcon :size="20" /> </template>
-        </NcActionButton>
-
-        <!-- Public upload button -->
-        <NcActionButton
-          v-if="allowPublicUpload"
-          :aria-label="t('memories', 'Upload files')"
-          :disabled="uploadHandler?.processing"
-          @click="uploadHandler?.startUpload()"
-        >
-          {{ t('memories', 'Upload files') }}
-          <template #icon> <UploadIcon :size="20" /> </template>
         </NcActionButton>
 
         <NcActionButton @click="toggleRecursive" close-after-click>
@@ -59,14 +35,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue';
+import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import NcBreadcrumbs from '@nextcloud/vue/components/NcBreadcrumbs';
 import NcBreadcrumb from '@nextcloud/vue/components/NcBreadcrumb';
 import NcActions from '@nextcloud/vue/components/NcActions';
 import NcActionButton from '@nextcloud/vue/components/NcActionButton';
-import PublicUploadHandler from '@components/upload/PublicUploadHandler.vue';
 
 import { t } from '@services/l10n';
 import { useRouteIs } from '@services/route-is';
@@ -78,7 +53,6 @@ import HomeIcon from 'vue-material-design-icons/Home.vue';
 import ShareIcon from 'vue-material-design-icons/ShareVariant.vue';
 import TimelineIcon from 'vue-material-design-icons/ImageMultiple.vue';
 import FoldersIcon from 'vue-material-design-icons/FolderMultiple.vue';
-import UploadIcon from 'vue-material-design-icons/Upload.vue';
 
 defineOptions({
   name: 'FolderTopMatter',
@@ -87,7 +61,6 @@ defineOptions({
 const route = useRoute();
 const router = useRouter();
 const routeIs = useRouteIs();
-const uploadHandler = useTemplateRef<InstanceType<typeof PublicUploadHandler>>('uploadHandler');
 
 const list = computed(
   (): {
@@ -117,16 +90,8 @@ const rootFolderName = computed((): string => {
   return routeIs.Public ? initstate.shareTitle : t('memories', 'Home');
 });
 
-const allowPublicUpload = computed((): boolean => {
-  return routeIs.Public && initstate.allow_upload === true;
-});
-
 function share(): void {
   _m.modals.shareNodeLink(utils.getFolderRoutePath(config.folders_path, { route }));
-}
-
-function upload(): void {
-  _m.modals.upload();
 }
 
 function toggleRecursive(): void {

@@ -107,7 +107,6 @@
     <MoveToFolderModal />
     <FaceMoveModal />
     <AlbumShareModal />
-    <UploadModal />
     <SearchModal />
     <ReindexModal />
   </NcContent>
@@ -144,7 +143,6 @@ import MoveToFolderModal from '@components/modal/MoveToFolderModal.vue';
 import ReindexModal from '@components/modal/ReindexModal.vue';
 import FaceMoveModal from '@components/modal/FaceMoveModal.vue';
 import AlbumShareModal from '@components/modal/AlbumShareModal.vue';
-import UploadModal from '@components/modal/UploadModal.vue';
 import SearchModal from '@components/modal/SearchModal.vue';
 
 import * as utils from '@services/utils/common';

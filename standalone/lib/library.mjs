@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import { badRequest, HttpError, notFound } from './http.mjs';
 import { ARCHIVE } from './indexer.mjs';
 
@@ -128,23 +127,6 @@ export class Library {
     fs.mkdirSync(path.dirname(this.abs(newRel)), { recursive: true });
     fs.copyFileSync(this.abs(n.path), this.abs(newRel));
     return this.ctx.indexer.indexPath(newRel);
-  }
-
-  /** Write uploaded bytes (stream) to rel and index it. */
-  async put(rel, stream) {
-    rel = cleanRel(rel);
-    if (!rel) throw badRequest('Missing file name');
-    fs.mkdirSync(path.dirname(this.abs(rel)), { recursive: true });
-    const tmp = `${this.abs(rel)}.frames-upload`;
-    try {
-      await pipeline(stream, fs.createWriteStream(tmp));
-      fs.renameSync(tmp, this.abs(rel));
-    } catch (e) {
-      fs.rmSync(tmp, { force: true });
-      throw e;
-    }
-    this.mkdir(parentRel(rel));
-    return (await this.ctx.indexer.indexPath(rel)) ?? this.ctx.indexer.ensureNode(rel, { dir: false });
   }
 
   /** Move a node into the trash. */

@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import { badRequest, HttpError, notFound, readBody, sendFile } from './http.mjs';
 import { cleanRel, parentRel } from './library.mjs';
 
@@ -69,56 +68,6 @@ export function registerDav(router, ctx) {
     return cleanRel(segs.slice(2).join('/'));
   };
 
-  /* ---------------- chunked uploads (Nextcloud chunking v2) ---------------- */
-  const uploadsDir = path.join(ctx.dataDir, 'uploads');
-  const uploadDir = (id) => path.join(uploadsDir, cleanRel(id).replace(/\//g, '_'));
-
-  async function uploads(req, res, segs) {
-    if (segs[1] !== uid || !segs[2]) throw notFound();
-    const dir = uploadDir(segs[2]);
-    const chunk = segs[3];
-    switch (req.method) {
-      case 'MKCOL':
-        fs.mkdirSync(dir, { recursive: true });
-        return res.writeHead(201).end();
-      case 'PUT': {
-        if (!chunk || !/^\d+$/.test(chunk)) throw badRequest('Bad chunk');
-        fs.mkdirSync(dir, { recursive: true });
-        const part = path.join(dir, chunk);
-        try {
-          await pipeline(req, fs.createWriteStream(part));
-        } catch (e) {
-          fs.rmSync(part, { force: true });
-          throw e;
-        }
-        return res.writeHead(201).end();
-      }
-      case 'MOVE': {
-        if (chunk !== '.file') throw badRequest('Expected .file');
-        const rel = filesRel(destination(req));
-        const parts = fs
-          .readdirSync(dir)
-          .filter((f) => /^\d+$/.test(f))
-          .sort((a, b) => a - b);
-        const tmp = path.join(dir, 'assembled');
-        const fh = await fs.promises.open(tmp, 'w');
-        try {
-          for (const p of parts) for await (const c of fs.createReadStream(path.join(dir, p))) await fh.write(c);
-        } finally {
-          await fh.close();
-        }
-        const existed = fs.existsSync(lib.abs(rel));
-        await lib.put(rel, fs.createReadStream(tmp));
-        fs.rmSync(dir, { recursive: true, force: true });
-        return res.writeHead(existed ? 204 : 201).end();
-      }
-      case 'DELETE':
-        fs.rmSync(dir, { recursive: true, force: true });
-        return res.writeHead(204).end();
-    }
-    throw new HttpError(405, 'Method not allowed');
-  }
-
   /* ---------------- files ---------------- */
   async function files(req, res, segs, url) {
     const rel = filesRel(segs);
@@ -157,14 +106,6 @@ export function registerDav(router, ctx) {
         if (n) throw new HttpError(405, 'Already exists');
         lib.mkdir(rel);
         return res.writeHead(201).end();
-      case 'PUT': {
-        const existed = !!n;
-        await lib.put(rel, req);
-        const now = lib.nodeByPath(rel);
-        return res
-          .writeHead(existed ? 204 : 201, { ETag: `"${now?.etag ?? ''}"`, 'OC-FileId': String(now?.id ?? '') })
-          .end();
-      }
       case 'DELETE':
         if (!n) throw notFound();
         lib.trash(n.id);
@@ -250,7 +191,7 @@ export function registerDav(router, ctx) {
   }
 
   /** Other modules register DAV collections here: ctx.davCollections.photos = fn(req, res, segs, url). */
-  ctx.davCollections = { files, uploads, trashbin, ...ctx.davCollections };
+  ctx.davCollections = { files, trashbin, ...ctx.davCollections };
 
   router.add('*', `${DAV}/*rest`, async (req, res, { rest }, url) => {
     const segs = rest.split('/').filter(Boolean);

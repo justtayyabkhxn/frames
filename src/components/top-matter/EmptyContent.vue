@@ -36,7 +36,7 @@ const route = useRoute();
 const routeIs = useRouteIs();
 const emptyViewDescription = computed((): string => {
   if (routeIs.Base) {
-    return t('memories', 'Upload some photos and make sure the timeline path is configured');
+    return t('memories', 'Add photos to your library folder and make sure the timeline path is configured');
   }
   if (routeIs.Favorites) {
     return t('memories', 'Mark photos as favorite to find them easily');
