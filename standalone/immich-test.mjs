@@ -1,6 +1,7 @@
 // Self-check for the Immich API that serves Gallery's web UI: node standalone/immich-test.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { validateHeaderValue } from 'node:http';
 import { Writable } from 'node:stream';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,7 +45,8 @@ export const call = async (method, p, body, headers = {}) => {
     },
   });
   Object.assign(res, { status: 200, headers: {} });
-  res.writeHead = (st, h) => (
+  res.writeHead = (st, h = {}) => (
+    Object.entries(h).forEach(([k, v]) => validateHeaderValue(k, v)),
     Object.assign(res, { status: st, headersSent: true }),
     Object.assign(res.headers, h),
     res
@@ -119,6 +121,19 @@ for (const k of [
   assert.equal(b[k].length, 2, k);
 assert.deepEqual(await api('GET', '/api/timeline/buckets?isTrashed=true'), []);
 
+db.exec('CREATE TABLE IF NOT EXISTS faces (id INTEGER PRIMARY KEY, point TEXT, fileid INTEGER, cluster INTEGER)'); // made by ai.mjs
+// Review fixes: scoped and locked queries must not 500; video duration in ms; non-ASCII downloads; fixed routes before :id
+for (const q of [
+  `albumId=${toUuid('album', 1)}`,
+  `personId=${toUuid('person', 1)}`,
+  `tagId=${toUuid('tag', 1)}`,
+  'visibility=locked',
+  'visibility=hidden',
+  `visibility=archive&albumId=${toUuid('album', 1)}`,
+])
+  assert.equal((await call('GET', `/api/timeline/buckets?${q}`)).status, 200, q);
+db.exec('UPDATE nodes SET name = \'写真 "x".jpg\' WHERE id = 4');
+
 // Media: thumbnails from Frames previews, originals and video with Range, bad ids are 400s
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-immich-'));
 fs.writeFileSync(path.join(tmp, 'a.jpg'), 'JPEGDATA');
@@ -136,6 +151,16 @@ r = await call('GET', `/api/assets/${toUuid('asset', 2)}/original`, undefined, {
 assert.equal(r.status, 206);
 r = await call('GET', '/api/assets/not-a-uuid/thumbnail');
 assert.equal(r.status, 400);
+fs.writeFileSync(path.join(tmp, '.archive'), '');
+fs.mkdirSync(path.join(tmp, '.archive2'), { recursive: true });
+ctx.lib.abs = (rel) => path.join(tmp, rel.replace('.archive/', ''));
+fs.writeFileSync(path.join(tmp, 'c.jpg'), 'JPEG');
+r = await call('GET', `/api/assets/${toUuid('asset', 4)}/original?download=true`);
+assert.equal(r.status, 200);
+assert.match(r.headers['Content-Disposition'], /attachment/);
+assert.equal((await api('GET', `/api/assets/${toUuid('asset', 3)}`)).duration, 6000);
+assert.equal((await api('GET', `/api/assets/${toUuid('asset', 2)}`)).duration, null);
+assert.deepEqual(await api('GET', '/api/assets/statistics'), { images: 2, videos: 1, total: 3 });
 
 // Asset info and actions: favorite, archive, rating/description via EXIF, delete to trash
 db.exec(

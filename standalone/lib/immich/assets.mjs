@@ -1,12 +1,8 @@
-import { badRequest, notFound, readJson, sendFile } from '../http.mjs';
+import { badRequest, contentDisposition, notFound, readJson, sendFile } from '../http.mjs';
 import { fromUuid, toUuid } from './ids.mjs';
-import { ASSET_SELECT, projectionOf, visibilityOf } from './timeline.mjs';
+import { ASSET_SELECT, assetFilter, projectionOf, visibilityOf } from './timeline.mjs';
 
 const iso = (sec) => (sec == null ? null : new Date(sec * 1000).toISOString());
-const pad = (n) => String(n).padStart(2, '0');
-/** Immich durations look like "0:00:06.000000". */
-const duration = (sec) =>
-  `${Math.floor(sec / 3600)}:${pad(Math.floor((sec % 3600) / 60))}:${pad(Math.floor(sec % 60))}.${String(Math.round((sec % 1) * 1e6)).padStart(6, '0')}`;
 const exposure = (t) => (t == null ? null : t >= 1 ? `${t}` : `1/${Math.round(1 / t)}`);
 
 /** Frames row (ASSET_SELECT) -> Gallery's AssetResponseDto. */
@@ -38,7 +34,7 @@ export function assetDto(ctx, r) {
     fileCreatedAt: iso(r.epoch),
     fileModifiedAt: iso(r.mtime),
     localDateTime: iso(r.datetaken),
-    duration: duration(r.isvideo ? r.video_duration || 0 : 0),
+    duration: r.isvideo ? Math.round((r.video_duration || 0) * 1000) : null,
     hasMetadata: true,
     width: r.w,
     height: r.h,
@@ -115,6 +111,17 @@ export function registerAssets(router, ctx, A) {
   }
   const ids = (list) => (Array.isArray(list) ? list : []).map((i) => fromUuid(i, 'asset'));
 
+  // Fixed paths first: the router matches in order and /assets/:id would swallow them
+  A.get('/assets/statistics', (req, _, q) => {
+    const { f, from } = assetFilter(ctx, q);
+    const r = db.prepare(`SELECT sum(m.isvideo = 0) AS images, sum(m.isvideo = 1) AS videos ${from}`).get(f.args);
+    return { images: r.images ?? 0, videos: r.videos ?? 0, total: (r.images ?? 0) + (r.videos ?? 0) };
+  });
+  A.put('/assets/favorites', async (req) => {
+    const b = await readJson(req);
+    for (const id of ids(b.ids)) await update(id, { isFavorite: !!b.isFavorite });
+    return null;
+  });
   A.get('/assets/:id', (req, { id }) => ctx.assetDto(fromUuid(id, 'asset')));
   A.put('/assets/:id', async (req, { id }) => {
     const n = fromUuid(id, 'asset');
@@ -124,11 +131,6 @@ export function registerAssets(router, ctx, A) {
   A.put('/assets', async (req) => {
     const b = await readJson(req);
     for (const id of ids(b.ids)) await update(id, b);
-    return null;
-  });
-  A.put('/assets/favorites', async (req) => {
-    const b = await readJson(req);
-    for (const id of ids(b.ids)) await update(id, { isFavorite: !!b.isFavorite });
     return null;
   });
   A.del('/assets', async (req) => {
@@ -159,7 +161,7 @@ export function registerAssets(router, ctx, A) {
 
   A.get('/assets/:id/original', async (req, { id }, q, res) => {
     const n = mustNode(id);
-    const download = q.get('download') === 'true' ? { 'Content-Disposition': `attachment; filename="${n.name}"` } : {};
+    const download = q.get('download') === 'true' ? { 'Content-Disposition': contentDisposition(n.name, true) } : {};
     if (n.isvideo || WEB_IMAGES.includes(n.mime) || download['Content-Disposition'])
       return sendFile(req, res, ctx.lib.abs(n.path), { type: n.mime, headers: { ...etag(n), ...download } });
     const { file } = await ctx.previewFile(n.id, SIZES.fullsize, SIZES.fullsize, false);

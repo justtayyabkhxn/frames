@@ -16,14 +16,16 @@ export const ASSET_SELECT = `n.id, n.path, n.name, n.mime, n.size, n.favorite, n
  * Immich-only conditions. Returns { f, from } ready for SQL.
  */
 export function assetFilter(ctx, q) {
-  const p = new URLSearchParams();
-  if (q.get('visibility') === 'archive') p.set('archive', '1');
-  const f = ctx.filter(p);
-  const add = (sql, args = {}) => (f.where.push(sql), Object.assign(f.args, args));
   const vis = q.get('visibility');
-  // Albums, people and tags span the whole library, archived files included
-  const scoped = q.has('albumId') || q.has('personId') || q.has('personIds') || q.has('tagId') || q.has('tagIds');
-  if (scoped || vis === 'hidden' || vis === 'locked') f.where = f.where.filter((w) => !w.includes('n.path'));
+  // Albums, people and tags span the whole library (archived files too), so they skip Frames' timeline-path filter
+  const scoped = ['albumId', 'personId', 'personIds', 'tagId', 'tagIds'].some((k) => q.has(k));
+  const p = new URLSearchParams(vis === 'archive' ? { archive: '1' } : {});
+  // No visibility means everything visible (timeline and archive), as in Immich
+  const wide = scoped || !vis;
+  const f = wide ? { where: ['m.livevideo = 0'], args: {}, joins: [] } : ctx.filter(p);
+  const add = (sql, args = {}) => (f.where.push(sql), Object.assign(f.args, args));
+  if (wide && vis === 'archive') add(archived);
+  if (wide && vis === 'timeline') add(`NOT ${archived}`);
   if (vis === 'hidden' || vis === 'locked' || q.get('isTrashed') === 'true') add('0');
   if (q.get('isFavorite') === 'true') add('n.favorite = 1');
   if (q.get('isFavorite') === 'false') add('n.favorite = 0');
