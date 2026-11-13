@@ -19,6 +19,12 @@ NEIGHBORS = 20
 REJECTED = -1
 
 
+def faces_stale(payload: dict) -> bool:
+    """True when an image point was not yet face-scanned by the current face model (local mode only)."""
+
+    return config.local and payload.get("face_version") != config.face.version
+
+
 def new_cluster_id() -> int:
     """Random positive id below 2**53 so JavaScript clients keep it exact."""
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { faceCropFilter, faceIdOf, registerAi } from './lib/ai.mjs';
+import { faceCropFilter, faceIdOf, legacyMatches, registerAi } from './lib/ai.mjs';
 import { openDb } from './lib/db.mjs';
 import { Router } from './lib/http.mjs';
 
@@ -13,6 +13,14 @@ assert.equal(
   faceCropFilter({ x: 0.1, y: 0.2, w: 0.2, h: 0.1 }),
   'crop=w=min(min(iw\\,ih)\\,1.5*max(0.20000*iw\\,0.10000*ih)):h=ow:x=max(0\\,min(iw-ow\\,0.20000*iw-ow/2)):y=max(0\\,min(ih-oh\\,0.25000*ih-oh/2)),scale=256:256',
 );
+
+{
+  const box = (fileid, cluster, x = 0) => ({ fileid, cluster, x, y: 0, w: 0.1, h: 0.1 });
+  const legacy = [box(1, 7), box(2, 7), box(3, 7), box(4, 8), box(5, 7)];
+  // cluster 50 is mostly 7, cluster 60 is 7's old mix-up with 8 (no majority), 70 is a smaller part of 7
+  const faces = [box(1, 50), box(2, 50), box(3, 50, 0.01), box(4, 60), box(5, 60), box(6, 70), box(2, 70, 0.5)];
+  assert.deepEqual(legacyMatches(faces, legacy), [[50, 7]]);
+}
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-ai-'));
 const db = openDb(':memory:');

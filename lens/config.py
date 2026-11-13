@@ -78,7 +78,7 @@ class PlacesConfig:
 
 @dataclass(frozen=True)
 class FaceConfig:
-    """Pinned YuNet/SFace checkpoints plus detection/clustering thresholds."""
+    """Pinned SCRFD/ArcFace checkpoints plus detection/clustering thresholds."""
 
     det_url: str
     det_sha: str
@@ -124,15 +124,15 @@ class Config:
 def _face_config() -> FaceConfig:
     """Build the face section from env; raise on garbage."""
 
-    det_threshold = _float("FACE_DET_THRESHOLD", 0.6)
+    det_threshold = _float("FACE_DET_THRESHOLD", 0.7)
     if det_threshold < 0 or det_threshold > 1:
         raise RuntimeError("FACE_DET_THRESHOLD must be between 0 and 1")
 
-    det_max_side = _int("FACE_DET_MAX_SIDE", 1920)
+    det_max_side = _int("FACE_DET_MAX_SIDE", 1280)
     if det_max_side < 320 or det_max_side > 8192:
         raise RuntimeError("FACE_DET_MAX_SIDE must be between 320 and 8192")
 
-    max_distance = _float("FACE_MAX_DISTANCE", 0.6)
+    max_distance = _float("FACE_MAX_DISTANCE", 0.5)
     if max_distance <= 0 or max_distance > 2:
         raise RuntimeError("FACE_MAX_DISTANCE must be between 0 and 2")
 
@@ -161,8 +161,8 @@ def _face_config() -> FaceConfig:
         det_sha=os.environ["FACE_DET_SHA"],
         rec_url=os.environ["FACE_REC_URL"],
         rec_sha=os.environ["FACE_REC_SHA"],
-        version=_int("FACE_VERSION", 1),
-        qdrant_collection=os.environ.get("FACE_QDRANT_COLLECTION", "lens_faces"),
+        version=_int("FACE_VERSION", 2),
+        qdrant_collection=os.environ.get("FACE_QDRANT_COLLECTION", "lens_faces_v2"),
         det_threshold=det_threshold,
         det_max_side=det_max_side,
         max_distance=max_distance,

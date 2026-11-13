@@ -1,9 +1,7 @@
-"""Face detection + recognition backend: pinned YuNet/SFace ONNX, load, detect, embed."""
+"""Face detection + recognition backend: pinned InsightFace buffalo_l (SCRFD-10G + ArcFace R50) ONNX."""
 
 # Provisioning mirrors sentence.py (URL+SHA files instead of an HF snapshot).
-# YuNet decode ports OpenCV's FaceDetectorYN postprocess; SFace alignment ports
-# FaceRecognizerSF's similarity warp. Both verified to parity against the cv2
-# wrappers (cosine 1.0) in the Phase 0 spike.
+# SCRFD decode and ArcFace alignment port insightface (Apache-2.0), as Gallery/Immich do.
 
 import asyncio
 import hashlib
@@ -25,7 +23,8 @@ log = logging.getLogger("lens.face")
 
 STRIDES = (8, 16, 32)
 DIVISOR = 32
-NMS_THRESHOLD = 0.3
+ANCHORS = 2
+NMS_THRESHOLD = 0.4
 TOP_K = 5000
 ALIGN_SIZE = 112
 
@@ -43,7 +42,7 @@ DST_MEAN = np.array([56.0262, 71.9008], dtype=np.float64)
 
 
 class FaceModel:
-    """Pinned YuNet + SFace checkpoints: files on disk, loaded ORT sessions."""
+    """Pinned SCRFD + ArcFace checkpoints: files on disk, loaded ORT sessions."""
 
     def __init__(self):
         """Empty state; call ensure_snapshot + load before detecting."""
@@ -112,14 +111,16 @@ class FaceModel:
         paths = {}
 
         for name, url, sha in (
-            ("yunet", config.face.det_url, config.face.det_sha),
-            ("sface", config.face.rec_url, config.face.rec_sha),
+            ("scrfd", config.face.det_url, config.face.det_sha),
+            ("arcface", config.face.rec_url, config.face.rec_sha),
         ):
             path = self.snapshot_path(name)
 
             if offline:
                 if not self._snapshot_complete(path, sha):
-                    raise RuntimeError(f"HF_HUB_OFFLINE=1 but no complete weights at {path}")
+                    raise RuntimeError(
+                        f"HF_HUB_OFFLINE=1 but no complete weights at {path}; run node standalone/setup-ai.mjs"
+                    )
 
                 log.warning("HF_HUB_OFFLINE=1: serving from cached weights at %s", path)
             elif not self._snapshot_complete(path, sha):
@@ -128,19 +129,22 @@ class FaceModel:
 
             paths[name] = path
 
-        return paths["yunet"] + "," + paths["sface"]
+        return paths["scrfd"] + "," + paths["arcface"]
 
     def load(self) -> int:
         """Load both ORT sessions (CUDA preferred, CPU fallback); return dim D."""
 
-        det_path = self.snapshot_path("yunet")
-        rec_path = self.snapshot_path("sface")
+        det_path = self.snapshot_path("scrfd")
+        rec_path = self.snapshot_path("arcface")
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
         log.info("loading face models from %s and %s", det_path, rec_path)
 
-        self._det = ort.InferenceSession(det_path, providers=providers)
-        self._rec = ort.InferenceSession(rec_path, providers=providers)
+        # Both graphs declare fixed output shapes but run with dynamic ones; silence those warnings.
+        opts = ort.SessionOptions()
+        opts.log_severity_level = 3
+        self._det = ort.InferenceSession(det_path, opts, providers=providers)
+        self._rec = ort.InferenceSession(rec_path, opts, providers=providers)
         self._det_input = self._det.get_inputs()[0].name
         self._rec_input = self._rec.get_inputs()[0].name
         self._dim = int(self._rec.get_outputs()[0].shape[1])
@@ -160,16 +164,16 @@ class FaceModel:
     def detect_image(self, image: np.ndarray) -> list[dict]:
         """Detect faces in BGR pixels; boxes/landmarks as fractions, sorted by (x, y)."""
 
-        blob, det_w, det_h, pad_w = self._preprocess(image)
+        blob, det_w, det_h, pad_w, pad_h = self._preprocess(image)
         outputs = self._det.run(None, {self._det_input: blob})
-        faces = self._decode(outputs, pad_w, det_w, det_h)
+        faces = self._decode(outputs, pad_w, pad_h, det_w, det_h)
         faces.sort(key=lambda face: (face["x"], face["y"]))
 
         return faces
 
     @staticmethod
-    def _preprocess(image: np.ndarray) -> tuple[np.ndarray, int, int, int]:
-        """Downscale to the working cap, pad to a multiple of 32, build the BGR blob."""
+    def _preprocess(image: np.ndarray) -> tuple[np.ndarray, int, int, int, int]:
+        """Downscale to the working cap, pad to a multiple of 32, build the normalized RGB blob."""
 
         height, width = image.shape[:2]
         scale = min(1.0, config.face.det_max_side / max(height, width))
@@ -182,15 +186,17 @@ class FaceModel:
         pad_h = ((det_h - 1) // DIVISOR + 1) * DIVISOR
         padded = cv2.copyMakeBorder(image, 0, pad_h - det_h, 0, pad_w - det_w, cv2.BORDER_CONSTANT)
 
-        return cv2.dnn.blobFromImage(padded), det_w, det_h, pad_w
+        blob = cv2.dnn.blobFromImage(padded, 1 / 128, mean=(127.5, 127.5, 127.5), swapRB=True)
 
-    def _decode(self, outputs: list[np.ndarray], pad_w: int, det_w: int, det_h: int) -> list[dict]:
-        """Port of OpenCV's YuNet postprocess (sqrt cls*obj score, exp boxes, NMS)."""
+        return blob, det_w, det_h, pad_w, pad_h
+
+    def _decode(self, outputs: list[np.ndarray], pad_w: int, pad_h: int, det_w: int, det_h: int) -> list[dict]:
+        """Port of insightface's SCRFD postprocess (anchor-center distances, NMS)."""
 
         boxes, scores, landmarks = [], [], []
 
         for i, stride in enumerate(STRIDES):
-            decoded = _decode_stride(outputs, i, stride, pad_w)
+            decoded = _decode_stride(outputs, i, stride, pad_w, pad_h)
 
             if decoded is not None:
                 boxes.extend(decoded[0])
@@ -206,37 +212,35 @@ class FaceModel:
         return [_format_face(boxes[k], scores[k], landmarks[k], det_w, det_h) for k in kept]
 
     def embed_image_faces(self, image: np.ndarray, faces: list[dict]) -> list[list[float]]:
-        """Align each face to 112x112 and embed in one session run; L2-normed 128-d."""
+        """Align each face to 112x112 and embed in one session run; L2-normed 512-d."""
 
         return self.embed_crops(self.align_faces(image, faces))
 
     @staticmethod
     def align_faces(image: np.ndarray, faces: list[dict]) -> list[np.ndarray]:
-        """Warp each face's landmarks to a 112x112 BGR crop (SFace reference geometry)."""
+        """Warp each face's landmarks to a 112x112 BGR crop (ArcFace reference geometry)."""
 
         height, width = image.shape[:2]
 
         return [_align_crop(image, face, width, height) for face in faces]
 
     def embed_crops(self, crops: list[np.ndarray]) -> list[list[float]]:
-        """Embed 112x112 BGR crops one run each (the SFace graph has a fixed batch of 1); L2-normed 128-d."""
+        """Embed 112x112 BGR crops in one batched run; L2-normed 512-d."""
 
-        batch = np.stack([cv2.cvtColor(crop, cv2.COLOR_BGR2RGB).astype(np.float32) for crop in crops])
-        batch = batch.transpose(0, 3, 1, 2)
-        vectors = np.concatenate([self._rec.run(None, {self._rec_input: row[None]})[0] for row in batch])
-        vectors = vectors.astype(np.float64)
+        batch = cv2.dnn.blobFromImages(crops, 1 / 127.5, mean=(127.5, 127.5, 127.5), swapRB=True)
+        vectors = self._rec.run(None, {self._rec_input: batch})[0].astype(np.float64)
         vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
 
         return vectors.tolist()
 
     async def detect_async(self, image: np.ndarray) -> list[dict]:
-        """Serialize YuNet inference through the shared semaphore."""
+        """Serialize SCRFD inference through the shared semaphore."""
 
         async with inference_sem:
             return await asyncio.to_thread(self.detect_image, image)
 
     async def embed_async(self, image: np.ndarray, faces: list[dict]) -> list[list[float]]:
-        """Serialize one batched SFace inference through the shared semaphore."""
+        """Serialize one batched ArcFace inference through the shared semaphore."""
 
         async with inference_sem:
             return await asyncio.to_thread(self.embed_image_faces, image, faces)
@@ -252,31 +256,22 @@ class FaceModel:
         return self._device
 
 
-def _decode_stride(
-    outputs: list[np.ndarray],
-    level: int,
-    stride: int,
-    pad_w: int,
-) -> tuple | None:
-    """Decode one YuNet stride level; None when nothing passes the threshold."""
+def _decode_stride(outputs: list[np.ndarray], level: int, stride: int, pad_w: int, pad_h: int) -> tuple | None:
+    """Decode one SCRFD stride level (2 anchors per cell); None when nothing passes the threshold."""
 
-    cls = outputs[level].reshape(-1)
-    obj = outputs[level + 3].reshape(-1)
-    score = np.sqrt(np.clip(cls, 0, 1) * np.clip(obj, 0, 1))
+    score = outputs[level].reshape(-1)
     keep = np.where(score >= config.face.det_threshold)[0]
 
     if keep.size == 0:
         return None
 
-    cols = pad_w // stride
-    row, col = keep // cols, keep % cols
-    bbox = outputs[level + 6].reshape(-1, 4)[keep]
-    kps = outputs[level + 9].reshape(-1, 10)[keep]
-    width = np.exp(bbox[:, 2]) * stride
-    height = np.exp(bbox[:, 3]) * stride
-    boxes = np.stack([(col + bbox[:, 0]) * stride - width / 2, (row + bbox[:, 1]) * stride - height / 2,
-                      width, height], axis=1).tolist()
-    landmarks = (np.stack([kps[:, 0::2] + col[:, None], kps[:, 1::2] + row[:, None]], axis=2) * stride).tolist()
+    ys, xs = np.mgrid[: pad_h // stride, : pad_w // stride]
+    centers = np.repeat(np.stack([xs, ys], axis=-1).reshape(-1, 2) * stride, ANCHORS, axis=0)[keep]
+    dist = outputs[level + 3].reshape(-1, 4)[keep] * stride
+    kps = outputs[level + 6].reshape(-1, 5, 2)[keep] * stride
+    x1y1, x2y2 = centers - dist[:, :2], centers + dist[:, 2:]
+    boxes = np.concatenate([x1y1, x2y2 - x1y1], axis=1).tolist()
+    landmarks = (kps + centers[:, None]).tolist()
 
     return boxes, score[keep].tolist(), landmarks
 
@@ -295,7 +290,7 @@ def _format_face(box: list[float], score: float, landmarks: list, det_w: int, de
 
 
 def _align_crop(image: np.ndarray, face: dict, width: int, height: int) -> np.ndarray:
-    """Warp one face's landmarks to a 112x112 BGR crop via the SFace similarity fit."""
+    """Warp one face's landmarks to a 112x112 BGR crop via the ArcFace similarity fit."""
 
     matrix = _similarity_matrix(np.array(face["landmarks5"]) * [width, height])
 
@@ -303,7 +298,7 @@ def _align_crop(image: np.ndarray, face: dict, width: int, height: int) -> np.nd
 
 
 def _similarity_matrix(src: np.ndarray) -> np.ndarray:
-    """Umeyama similarity src->DST_TEMPLATE; port of FaceRecognizerSF's warp fit."""
+    """Umeyama similarity src->DST_TEMPLATE (insightface norm_crop)."""
 
     src_mean = src.mean(axis=0)
     src_demean = src - src_mean

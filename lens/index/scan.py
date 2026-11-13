@@ -5,6 +5,7 @@ import logging
 import time
 
 from config import config
+from index.faces import faces_stale
 from nextcloud import ScanBatch, fetch_scan_batch
 from store import FAILURE_KIND
 
@@ -132,9 +133,10 @@ class Scanner:
                     # Places and faces are optional; only an image proves the file was indexed.
                     if collection is self.store.embedding:
                         indexed.add(fileid)
-                    if payload.get("mtime") != file.mtime:
+                    image_point = collection is self.store.embedding
+                    if payload.get("mtime") != file.mtime or (image_point and faces_stale(payload)):
                         stale.add(fileid)
-                        if collection is self.store.embedding:
+                        if image_point:
                             image_stale.add(fileid)
                     if payload.get("parent_id") != file.parentid or payload.get("etag") != file.etag:
                         repairs.add((collection, fileid))

@@ -1,4 +1,4 @@
-"""Pinned model backends: SigLIP, multilingual-e5, GLiNER2, YuNet+SFace."""
+"""Pinned model backends: SigLIP, multilingual-e5, GLiNER2, SCRFD+ArcFace (buffalo_l)."""
 
 from models.common import inference_sem
 from models.embedding import EmbeddingModel

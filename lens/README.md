@@ -52,10 +52,10 @@ services:
       SENTENCE_MODEL_REVISION: "614241f622f53c4eeff9890bdc4f31cfecc418b3"
       SCHEMA_MODEL_ID: "fastino/gliner2.5-multi-v1"
       SCHEMA_MODEL_REVISION: "a221b77a8baf4a613b8f8652661d41fa10a5641e"
-      FACE_DET_URL: "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2026may.onnx"
-      FACE_DET_SHA: "ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0"
-      FACE_REC_URL: "https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx"
-      FACE_REC_SHA: "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+      FACE_DET_URL: "https://huggingface.co/immich-app/buffalo_l/resolve/main/detection/model.onnx"
+      FACE_DET_SHA: "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91"
+      FACE_REC_URL: "https://huggingface.co/immich-app/buffalo_l/resolve/main/recognition/model.onnx"
+      FACE_REC_SHA: "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
       FACE_SCORE_MARGIN: "0.1"
     depends_on:
       - qdrant

@@ -61,6 +61,7 @@ class FileStore:
                     "kind",
                     "stage",
                     "retry_at",
+                    "face_version",
                 ],
                 with_vectors=False,
             )
@@ -77,6 +78,16 @@ class FileStore:
         await self.client.delete(
             collection_name=self.collection,
             points_selector=self._file_filter([fileid]),
+            wait=True,
+        )
+
+    async def set_file_payload(self, fileids: list[int], payload: dict):
+        """Merge payload fields into every point of the given files."""
+
+        await self.client.set_payload(
+            collection_name=self.collection,
+            payload=payload,
+            points=self._file_filter(fileids),
             wait=True,
         )
 

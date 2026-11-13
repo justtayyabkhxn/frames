@@ -1,4 +1,4 @@
-"""Faces collection: one SFace vector per (file, face) pair."""
+"""Faces collection: one ArcFace vector per (file, face) pair."""
 
 import logging
 import uuid
@@ -23,7 +23,7 @@ log = logging.getLogger("lens.store")
 
 @dataclass(frozen=True)
 class FacePoint:
-    """One detected face: geometry in fractions, L2-normed 128-d vector, uint63 cluster or null."""
+    """One detected face: geometry in fractions, L2-normed 512-d vector, uint63 cluster or null."""
 
     fileid: int
     parent_id: int

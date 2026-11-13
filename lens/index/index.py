@@ -5,7 +5,8 @@ import logging
 import time
 from dataclasses import replace
 
-from index.faces import index_faces
+from config import config
+from index.faces import faces_stale, index_faces
 from nextcloud import NotFoundError, fetch_file
 from store import FAILURE_KIND, FileMeta, PlacePoint, UpsertPoint
 
@@ -131,6 +132,9 @@ class Indexer:
                 except Exception:
                     log.exception("face indexing failed for %d", fileid)
 
+            # Stamped even after a failure so one bad file is not re-indexed every sweep.
+            await self.store.embedding.set_file_payload([f for f, _, _ in good], {"face_version": config.face.version})
+
         await self._finish_places(
             files=[(fileid, res) for fileid, res, _ in good],
             parents=parents,
@@ -167,7 +171,9 @@ class Indexer:
                     meta = files[fileid]
                     if collection is self.store.embedding:
                         missing.discard(fileid)
-                    if payload.get("mtime") != meta.mtime:
+                    if payload.get("mtime") != meta.mtime or (
+                        collection is self.store.embedding and faces_stale(payload)
+                    ):
                         if collection is self.store.places:
                             places.add(fileid)
                         else:

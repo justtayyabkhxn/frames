@@ -24,8 +24,27 @@ if (process.platform !== 'win32' || process.arch !== 'x64') {
 const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: 'inherit', windowsHide: true, ...opts });
 const py = (args, opts = {}) => sh(PYTHON, args, { env: { ...process.env, PYTHONNOUSERSITE: '1' }, ...opts });
 
+/** Download any pinned model not yet on disk (all SHA-checked; complete ones are skipped). */
+function fetchModels() {
+  console.log('Downloading AI models (pinned revisions)...');
+  fs.mkdirSync(MODELS_DIR, { recursive: true });
+  py(
+    [
+      '-c',
+      'from routes.context import embedding_model as e, sentence_model as s, schema_model as c, face_model as f\n' +
+        'for m in (e, s, c, f): m.ensure_snapshot()',
+    ],
+    {
+      cwd: LENS_DIR,
+      env: lensEnv({ url: 'http://127.0.0.1', token: 'setup', qdrantPath: 'unused', offline: false }),
+    },
+  );
+}
+
+// Already set up: only fetch models whose pins changed since (e.g. a new face model)
 if (fs.existsSync(READY_MARKER)) {
-  console.log('AI features are already set up.');
+  fetchModels();
+  console.log('AI features are set up. Restart Frames if models were updated.');
   process.exit(0);
 }
 
@@ -59,19 +78,7 @@ const deps = execFileSync(PYTHON, [
   .filter(Boolean);
 py([...pip, '--extra-index-url', TORCH_INDEX, ...deps]);
 
-console.log('Downloading AI models (pinned revisions)...');
-fs.mkdirSync(MODELS_DIR, { recursive: true });
-py(
-  [
-    '-c',
-    'from routes.context import embedding_model as e, sentence_model as s, schema_model as c, face_model as f\n' +
-      'for m in (e, s, c, f): m.ensure_snapshot()',
-  ],
-  {
-    cwd: LENS_DIR,
-    env: lensEnv({ url: 'http://127.0.0.1', token: 'setup', qdrantPath: 'unused', offline: false }),
-  },
-);
+fetchModels();
 
 fs.writeFileSync(READY_MARKER, new Date().toISOString());
 console.log('AI features are ready. Restart Frames to start indexing People and smart search.');

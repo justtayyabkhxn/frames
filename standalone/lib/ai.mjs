@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { LensDaemon } from './ai-lens.mjs';
+import { LensDaemon, PINS } from './ai-lens.mjs';
 import { DAV, destination, sendMultistatus } from './dav.mjs';
 import { badRequest, HttpError, json, notFound, readBody, readJson, sendFile } from './http.mjs';
 import { ARCHIVE } from './indexer.mjs';
@@ -51,12 +51,50 @@ const fail = (e) => {
   throw e;
 };
 
+const iou = (a, b) => {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  const i = w > 0 && h > 0 ? w * h : 0;
+  return i / (a.w * a.h + b.w * b.h - i || 1);
+};
+
+/**
+ * After a face model change, map new clusters to the named people of the old model.
+ * A person's name goes to the one new cluster where they hold the most (and a majority of the)
+ * matched faces; other clusters stay unnamed rather than repeating the old model's mix-ups.
+ */
+export function legacyMatches(faces, legacy) {
+  const byFile = Map.groupBy(legacy, (l) => l.fileid);
+  const votes = new Map();
+  for (const f of faces) {
+    const l = f.cluster > 0 && byFile.get(f.fileid)?.find((l) => iou(f, l) > 0.5);
+    if (!l) continue;
+    const v = votes.get(f.cluster) ?? votes.set(f.cluster, new Map()).get(f.cluster);
+    v.set(l.cluster, (v.get(l.cluster) ?? 0) + 1);
+  }
+  const best = new Map();
+  for (const [cluster, v] of votes) {
+    const total = [...v.values()].reduce((a, b) => a + b, 0);
+    const [person, n] = [...v].sort((a, b) => b[1] - a[1])[0];
+    if (n * 2 > total && n > (best.get(person)?.[1] ?? 0)) best.set(person, [cluster, n]);
+  }
+  return [...best].map(([person, [cluster]]) => [cluster, person]);
+}
+
 /** "123-IMG_1.jpg" -> 123 */
 export const faceIdOf = (item) => Number(/^(\d+)-/.exec(item ?? '')?.[1]) || 0;
 
 export function registerAi(router, ctx) {
   const { db, lib, uid } = ctx;
   db.exec(SCHEMA);
+  // Faces from another model live in another embedding space: drop them, keep named ones to re-match
+  if (db.getKv('ai.facemodel', '') !== PINS.FACE_REC_SHA)
+    db.tx(() => {
+      db.exec(`CREATE TABLE IF NOT EXISTS faces_legacy AS
+        SELECT f.fileid, f.cluster, f.x, f.y, f.w, f.h FROM faces f JOIN people p ON p.id = f.cluster`);
+      db.exec('DELETE FROM faces; UPDATE people SET cover = NULL');
+      db.setKv('ai.facemodel', PINS.FACE_REC_SHA);
+    });
   const status = (ctx.indexer.status.ai = { state: 'unavailable' });
 
   /* ---------------- people ---------------- */
@@ -376,6 +414,14 @@ export function registerAi(router, ctx) {
     facesVersion = version;
   }
 
+  async function carryOverNames() {
+    const legacy = db.q('SELECT * FROM faces_legacy').all();
+    for (const [cluster, person] of legacyMatches(db.q('SELECT * FROM faces').all(), legacy))
+      await assign(facesOf(cluster), person);
+    db.exec('DROP TABLE faces_legacy');
+    console.log('People names carried over to the new face model.');
+  }
+
   async function poll() {
     if (busy || lens.state !== 'ready') return;
     busy = true;
@@ -383,6 +429,9 @@ export function registerAi(router, ctx) {
       const s = await lens.get('/v1/stats');
       const queued = s.queue_depth + s.in_flight.length;
       if (s.faces_version !== facesVersion) await syncFaces();
+      // Only once every photo was re-scanned: one full sweep finished and nothing left to do
+      if (!queued && s.scan?.sweeps_total && db.q("SELECT 1 FROM sqlite_master WHERE name = 'faces_legacy'").get())
+        await carryOverNames();
       if (status.queued && !queued) console.log('AI index up to date.');
       Object.assign(status, {
         state: queued || s.scan?.status === 'scanning' ? 'indexing' : 'ready',
