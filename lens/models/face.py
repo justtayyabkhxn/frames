@@ -79,6 +79,11 @@ class FaceModel:
         for attempt in range(1, 4):
             try:
                 with urllib.request.urlopen(url, timeout=60) as res, open(path, "wb") as handle:
+                    total = int(res.headers.get("Content-Length") or 0)
+                    done = 0
+                    # Same "Progress a of b" lines as pip's raw progress bar; Frames' installer draws them
+                    print(f"Downloading {os.path.basename(path)}", flush=True)
+
                     while True:
                         chunk = res.read(1 << 20)
 
@@ -86,6 +91,10 @@ class FaceModel:
                             break
 
                         handle.write(chunk)
+                        done += len(chunk)
+
+                        if total:
+                            print(f"Progress {done} of {total}", flush=True)
 
                 if self._snapshot_complete(path, sha):
                     log.info("face weights ready at %s", path)

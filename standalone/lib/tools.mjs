@@ -64,9 +64,11 @@ export async function findExiftool() {
   if (process.platform !== 'win32')
     throw new Error('exiftool not found. Install it (apt install libimage-exiftool-perl / brew install exiftool).');
 
-  console.log(`One-time setup: downloading exiftool ${ET_VER}...`);
-  const res = await fetch(`https://sourceforge.net/projects/exiftool/files/exiftool-${ET_VER}_64.zip/download`);
-  const buf = Buffer.from(await res.arrayBuffer());
+  const { download } = await import('./ui.mjs');
+  const buf = await download(
+    `https://sourceforge.net/projects/exiftool/files/exiftool-${ET_VER}_64.zip/download`,
+    `exiftool ${ET_VER}`,
+  );
   if (createHash('sha256').update(buf).digest('hex') !== ET_SHA256)
     throw new Error('exiftool download failed (checksum mismatch)');
   const tmp = path.join(TOOLS, 'exiftool-tmp');

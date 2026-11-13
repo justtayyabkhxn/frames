@@ -2,10 +2,9 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import zlib from 'node:zlib';
 import { TOOLS } from './tools.mjs';
+import { download } from './ui.mjs';
 
 // Same planet data Memories' `occ memories:places-setup` uses (OSM admin boundaries, ODbL).
 const PLANET_URL = 'https://github.com/pulsejet/memories-assets/releases/download/geo-20260902/planet_postgres.zip';
@@ -108,18 +107,10 @@ export const fromBlob = (u8) => new Float32Array(u8.buffer.slice(u8.byteOffset, 
 export async function downloadPlanet() {
   if (fs.existsSync(PLANET_ZIP)) return;
   fs.mkdirSync(path.dirname(PLANET_ZIP), { recursive: true });
-  const part = `${PLANET_ZIP}.part`;
-  console.log('Places: downloading planet boundaries (~108 MB, one time)...');
-  const res = await fetch(PLANET_URL);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const hash = createHash('sha256');
-  const tap = new Transform({ transform: (c, _, cb) => (hash.update(c), cb(null, c)) });
-  await pipeline(Readable.fromWeb(res.body), tap, fs.createWriteStream(part));
-  if (hash.digest('hex') !== PLANET_SHA256) {
-    fs.rmSync(part, { force: true });
+  const buf = await download(PLANET_URL, 'place boundaries (OpenStreetMap)');
+  if (createHash('sha256').update(buf).digest('hex') !== PLANET_SHA256)
     throw new Error('planet download checksum mismatch');
-  }
-  fs.renameSync(part, PLANET_ZIP);
+  fs.writeFileSync(PLANET_ZIP, buf);
 }
 
 /** Lines of one entry of a (non-zip64) zip file, streamed. */

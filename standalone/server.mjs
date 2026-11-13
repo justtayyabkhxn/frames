@@ -20,6 +20,8 @@ import { Previews } from './lib/previews.mjs';
 import { renderShell } from './lib/shell.mjs';
 import { registerImmich } from './lib/immich/server.mjs';
 import { APP_ROOT, findExiftool, findFfmpeg, GALLERY_BUILD } from './lib/tools.mjs';
+import { banner, c } from './lib/ui.mjs';
+import { install } from './install.mjs';
 
 const DATA = process.env.FRAMES_DATA ? path.resolve(process.env.FRAMES_DATA) : path.join(APP_ROOT, 'data');
 // Temp files of Frames and every tool it runs (exiftool unpacks itself into TEMP) stay in the data folder
@@ -31,17 +33,37 @@ const PORT = Number(process.env.PORT) || 7310;
 const arg = (name) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
 
 fs.mkdirSync(DATA, { recursive: true });
-if (!fs.existsSync(path.join(JS, 'memories-main.js'))) {
-  console.error('The web interface is not built yet. Run: npm run build');
+const isDir = (d) => d && fs.statSync(d, { throwIfNoEntry: false })?.isDirectory();
+const savedRoot = arg('--dir') ?? JSON.parse(fs.existsSync(CONFIG) ? fs.readFileSync(CONFIG, 'utf8') : '{}').dir;
+
+banner();
+try {
+  await install({ folderStep: !isDir(savedRoot) });
+} catch (e) {
+  console.error(`\n  ${c.red('× Setup stopped:')} ${e.message}`);
+  console.error(`  ${c.dim('Check your internet connection and start Frames again; finished steps are kept.')}`);
+  process.exit(1);
+}
+const MAIN_JS = path.join(JS, 'memories-main.js');
+if (!fs.existsSync(path.join(GALLERY_BUILD, 'index.html')) && !fs.existsSync(MAIN_JS)) {
+  console.error('The web interface is not built yet. Run: node standalone/build-gallery.mjs');
   process.exit(1);
 }
 
 async function askRoot() {
-  let dir = arg('--dir') ?? JSON.parse(fs.existsSync(CONFIG) ? fs.readFileSync(CONFIG, 'utf8') : '{}').dir;
-  while (!dir || !fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
-    if (dir) console.log(`Not a folder: ${dir}`);
+  let dir = savedRoot;
+  if (!isDir(dir)) {
+    console.log(`   Which folder holds your photos? ${c.dim('Frames only reads it; nothing is uploaded.')}`);
+    console.log(`   ${c.dim('Tip: drag the folder into this window, then press Enter.')}`);
+  }
+  while (!isDir(dir)) {
+    if (dir) console.log(`   ${c.red('×')} Not a folder: ${dir}`);
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    dir = (await rl.question('Which folder holds your photos? ')).trim().replace(/^"(.*)"$/, '$1');
+    // A dragged-in folder can arrive quoted, or as PowerShell's & '...'
+    dir = (await rl.question(`   ${c.pink('›')} `))
+      .trim()
+      .replace(/^&\s*/, '')
+      .replace(/^["']|["']$/g, '');
     rl.close();
   }
   dir = path.resolve(dir);
@@ -56,7 +78,7 @@ const ctx = {
   uid: 'me',
   displayName: os.userInfo().username,
   token: randomBytes(24).toString('hex'),
-  buildId: fs.statSync(path.join(JS, 'memories-main.js')).mtimeMs.toString(36),
+  buildId: (fs.statSync(MAIN_JS, { throwIfNoEntry: false })?.mtimeMs ?? 0).toString(36),
   language: locale.split('-')[0],
   locale: locale.replace('-', '_'),
   dataDir: DATA,
@@ -102,6 +124,7 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.webp': 'image/webp',
   '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
   '.wasm': 'application/wasm',
   '.webmanifest': 'application/manifest+json',
   '.txt': 'text/plain',
@@ -198,9 +221,9 @@ server.on('error', (e) => {
   process.exit(0);
 });
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Photo folder: ${ctx.root}`);
-  console.log('  To use a different folder: frames.cmd --dir "D:\\Photos"');
-  console.log(`Open ${appUrl} (Ctrl+C to stop)`);
+  console.log(`\n   ${c.green('●')} ${c.bold('Frames is running')}  ${c.cyan(appUrl)}`);
+  console.log(`   ${c.dim('Photo folder')}  ${ctx.root}`);
+  console.log(`   ${c.dim('Other folder: frames.cmd --dir "D:\\Photos"   Stop: Ctrl+C')}\n`);
   if (!process.argv.includes('--no-open')) openBrowser();
   void ctx.indexer.scan();
 });

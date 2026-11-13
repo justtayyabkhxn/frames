@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { LENS_DIR, lensEnv, MODELS_DIR, PYTHON, PYTHON_DIR, READY_MARKER } from './lib/ai-lens.mjs';
 import { cacheEnv, TOOLS } from './lib/tools.mjs';
+import { download, ok } from './lib/ui.mjs';
 
 // python-build-standalone (astral-sh), relocatable CPython
 const PY_REL = '20261026';
@@ -27,7 +28,7 @@ const py = (args, opts = {}) =>
 
 /** Download any pinned model not yet on disk (all SHA-checked; complete ones are skipped). */
 function fetchModels() {
-  console.log('Downloading AI models (pinned revisions)...');
+  console.log('Downloading AI models (pinned revisions)');
   fs.mkdirSync(MODELS_DIR, { recursive: true });
   py(
     [
@@ -50,12 +51,10 @@ if (fs.existsSync(READY_MARKER)) {
 }
 
 if (!fs.existsSync(PYTHON)) {
-  console.log(`Downloading Python (${PY_FILE})...`);
-  const res = await fetch(
+  const buf = await download(
     `https://github.com/astral-sh/python-build-standalone/releases/download/${PY_REL}/${encodeURIComponent(PY_FILE)}`,
+    'Python 3.12',
   );
-  if (!res.ok) throw new Error(`Python download failed: ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
   if (createHash('sha256').update(buf).digest('hex') !== PY_SHA256)
     throw new Error('Python download failed (checksum mismatch)');
   // The archive's root folder is "python/", so it unpacks straight into tools/python
@@ -64,10 +63,13 @@ if (!fs.existsSync(PYTHON)) {
   fs.writeFileSync(tgz, buf);
   sh(path.join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-xzf', tgz, '-C', TOOLS]);
   fs.rmSync(tgz, { force: true });
+  ok('Python ready');
 }
 
-console.log('Installing AI packages (CPU-only PyTorch; this is a large one-time download)...');
+console.log('Installing AI packages (CPU-only PyTorch; this is a large one-time download)');
 const pip = ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-warn-script-location'];
+// Under the installer: "Progress a of b" lines, which it draws as bars
+if (!process.stdout.isTTY) pip.push('--progress-bar', 'raw');
 py([...pip, '--index-url', TORCH_INDEX, 'torch>=2.14,<3']);
 const deps = execFileSync(PYTHON, [
   '-c',
@@ -78,8 +80,10 @@ const deps = execFileSync(PYTHON, [
   .split(/\r?\n/)
   .filter(Boolean);
 py([...pip, '--extra-index-url', TORCH_INDEX, ...deps]);
+ok('AI packages installed');
 
 fetchModels();
+ok('AI models downloaded');
 
 fs.writeFileSync(READY_MARKER, new Date().toISOString());
 console.log('AI features are ready. Restart Frames to start indexing People and smart search.');

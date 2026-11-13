@@ -23,7 +23,8 @@ const copy = (rel, filter = () => true) =>
 
 // App code and assets (no PHP backend, sources, data or caches)
 copy('standalone');
-copy('js', (p) => !p.endsWith('.map'));
+if (exists('js')) copy('js', (p) => !p.endsWith('.map'));
+copy('gallery/web/build', (p) => !p.endsWith('.map'));
 copy('img');
 for (const f of ['package.json', 'frames.cmd', 'COPYING', 'README.md']) copy(f);
 if (exists('lens') && fs.existsSync(path.join(TOOLS, 'python')))

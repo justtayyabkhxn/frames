@@ -1,6 +1,18 @@
 # Frames setup
 
-Step-by-step instructions to get Frames running from a fresh clone. They are written for a coding agent working in a terminal, but a person can follow them too. Run every command from the repository root unless a step says otherwise.
+## Quick start (Windows)
+
+Double-click `frames.cmd`, or run `.\frames.cmd` in a terminal. On the first run it installs everything Frames needs, showing live progress for each download:
+
+1. **Node.js runtime:** a portable Node 24 in `tools\node`, checksum-verified.
+2. **Portable tools:** exiftool, ffmpeg and place data.
+3. **Web interface:** installs the UI libraries and builds the app.
+4. **AI engine and models:** Python, CPU-only PyTorch, and the face and search models (about 4.5 GB).
+5. **Your photo folder:** it asks which folder to use. You can drag the folder into the window.
+
+Everything is stored inside the Frames folder. A step that finished is not repeated, so if setup stops (for example because the internet dropped), start `frames.cmd` again to continue. If only the AI step fails, Frames starts anyway and retries that step on the next start. The full log is in `tools\install.log`.
+
+The rest of this document describes the same steps done by hand. The steps are written for a coding agent working in a terminal, but a person can follow them too. Run every command from the repository root unless a step says otherwise.
 
 ## What you end up with
 
@@ -165,8 +177,8 @@ The status response has these fields:
 | `data\lens\` | AI search and face index |
 | `data\vod\`, `data\live\` | Video transcoding and live-photo cache (temporary) |
 | `data\config.json` | The chosen photo folder |
-| `<photo folder>\.archive\` | Archived photos (moved there by Archive) |
-| `<photo folder>\.frames-trash\` | Deleted photos until the trash is emptied (kept on the same drive as the photos) |
+| `data\trash\` | Deleted photos (the Bin) until it is emptied |
+| `data\exports\` | Metadata exports (Settings → Backup and restore) |
 
 To start over, stop Frames and delete `data\`. Your photos are not affected.
 

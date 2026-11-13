@@ -13,7 +13,8 @@ Keep it concise, short bullets, no wrapping.
 - Build UI: `npm ci`, `npm run build` (writes `js/`); typecheck: `npx vue-tsc --noEmit`.
 - Run: `frames.cmd` or `node standalone/server.mjs --dir <photos> [--no-open]`; `PORT`, `FRAMES_DATA`, `FRAMES_JS` env overrides.
 - The server loads code at start: restart it after backend or theme changes.
-- Checks: `standalone/test.mjs`, `map-test.mjs`, `media-test.mjs`, `ai-test.mjs`.
+- First run: `frames.cmd` bootstraps Node (`standalone/bootstrap-node.ps1`), then `standalone/install.mjs` runs the missing setup steps; terminal UI in `lib/ui.mjs`.
+- Checks: `standalone/test.mjs`, `map-test.mjs`, `media-test.mjs`, `ai-test.mjs`, `ui-test.mjs`, `immich-*-test.mjs`.
 - Format: `npx prettier --write src standalone` before committing.
 - Never install new deps without explicit user consent.
 - Never read built JS in `js/`; exclude it from grep etc.
@@ -21,7 +22,7 @@ Keep it concise, short bullets, no wrapping.
 ## Architecture (`standalone/lib/`)
 - `shell.mjs` + `theme.css`: fake Nextcloud page (globals, theme tokens, header, status chip, rescan).
 - `db.mjs`: SQLite (`node:sqlite`); `indexer.mjs`: scan + exiftool metadata; `previews.mjs`: ffmpeg thumbnails.
-- `library.mjs`: move/copy/trash/archive keeping disk and index in sync; trash in `<library>/.frames-trash`.
+- `library.mjs`: move/copy/trash/archive keeping disk and index in sync; Bin in `data/trash`; archive is a mark (`nodes.archived`).
 - `api.mjs` (Memories API), `dav.mjs` (WebDAV subset), `clusters.mjs` (albums, tags), `map.mjs` + `places-data.mjs`, `media*.mjs` (HLS, live photos, editor), `ai*.mjs` (spawns `lens/`).
 - exiftool calls go through `tools.mjs` `exiftool()` (UTF-8 argfile; Windows-safe).
 - Data in `data/` (db, previews, lens index, config); never in git.
