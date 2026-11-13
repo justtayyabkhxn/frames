@@ -235,7 +235,7 @@ export function registerPeople(router, ctx, A) {
     return {
       total: all.length,
       items: items.map((f) => ({
-        ...faceBox(f, f.iw, f.ih),
+        ...faceBox({ ...f, id: f.faceid }, f.iw, f.ih),
         id: undefined,
         assetFaceId: toUuid('face', f.faceid),
         assetId: toUuid('asset', f.fileid),

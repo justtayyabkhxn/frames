@@ -15,6 +15,8 @@ import { registerUtilities } from './utilities.mjs';
 import { registerSearch } from './search.mjs';
 import { registerTrash } from './trash.mjs';
 import { registerTags } from './tags.mjs';
+import { registerBackup } from '../backup.mjs';
+import { registerExtras } from './extras.mjs';
 
 const require = (f) => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), 'utf8'));
 const DEFAULTS = require('./config-defaults.json');
@@ -309,5 +311,7 @@ export function registerImmich(router, ctx) {
   registerSearch(router, ctx, A);
   registerTrash(router, ctx, A);
   registerTags(router, ctx, A);
+  registerBackup(router, ctx, A);
+  registerExtras(router, ctx, A);
   return A;
 }

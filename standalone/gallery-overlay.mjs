@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+const SETTINGS_LIST = 'web/src/routes/(user)/user-settings/UserSettingsList.svelte';
 const EDITS = [
   // Upload: header button, drag-and-drop overlay, upload panel, empty-state click, command palette, album action
   [
@@ -96,6 +97,35 @@ const EDITS = [
 `,
     '',
   ],
+  // Settings: Frames backup (export/import); no account, device, notification, sharing or purchase sections
+  [
+    SETTINGS_LIST,
+    "  import UserUsageStatistic from './UserUsageStatistic.svelte';\n",
+    "  import UserUsageStatistic from './UserUsageStatistic.svelte';\n  import FramesBackupSettings from '#lib/frames/FramesBackupSettings.svelte';\n  import { mdiBackupRestore } from '@mdi/js';\n",
+  ],
+  [
+    SETTINGS_LIST,
+    '<SettingAccordion icon={mdiApi} key="api-keys"',
+    '{#if false}\n<SettingAccordion icon={mdiApi} key="api-keys"',
+  ],
+  [SETTINGS_LIST, '  <DeviceList />\n</SettingAccordion>\n', '  <DeviceList />\n</SettingAccordion>\n{/if}\n'],
+  [
+    SETTINGS_LIST,
+    '  <DownloadSettings />\n</SettingAccordion>\n',
+    '  <DownloadSettings />\n</SettingAccordion>\n\n<SettingAccordion icon={mdiBackupRestore} key="frames-backup" title="Backup and restore" subtitle="Export everything Frames knows about your photos, and import it again">\n  <FramesBackupSettings />\n</SettingAccordion>\n',
+  ],
+  [
+    SETTINGS_LIST,
+    '<SettingAccordion\n  icon={mdiBellOutline}',
+    '{#if false}\n<SettingAccordion\n  icon={mdiBellOutline}',
+  ],
+  [SETTINGS_LIST, '  <SharingSettings />\n</SettingAccordion>', '  <SharingSettings />\n</SettingAccordion>\n{/if}'],
+  // No locked folder (Frames has no PIN-protected area)
+  [
+    'web/src/lib/components/shared-components/side-bar/UserSidebar.svelte',
+    "  <NavbarItem title={$t('locked_folder')} href={Route.locked()} icon={mdiLockOutline} activeIcon={mdiLock} />\n",
+    '',
+  ],
   // Branding
   ['web/src/routes/+layout.svelte', `|| 'Web'} - Immich</title>`, `|| 'Photos'} - Frames</title>`],
   ['web/src/app.html', 'To use Immich,', 'To use Frames,'],
@@ -120,6 +150,9 @@ export function applyFramesOverlay(dest, brandingDir) {
     return raw.replace(/\r\n/g, '\n');
   };
   const write = (rel, s) => fs.writeFileSync(path.join(dest, rel), crlf.get(rel) ? s.replace(/\n/g, '\r\n') : s);
+
+  // Frames' own UI files (web/src/lib/frames/*) first, so edits can import them
+  fs.cpSync(path.join(brandingDir, '..', 'gallery-files'), dest, { recursive: true });
 
   for (const [rel, find, replace] of EDITS) {
     const s = read(rel);

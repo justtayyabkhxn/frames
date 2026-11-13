@@ -8,6 +8,11 @@ const QUEUES = {
   facialRecognition: 'ai',
   duplicateDetection: 'none',
 };
+const ALL_QUEUES = [
+  ...'thumbnailGeneration metadataExtraction videoConversion faceDetection facialRecognition smartSearch duplicateDetection backgroundTask peopleBackfill storageTemplateMigration migration search sidecar library notifications backupDatabase ocr petDetection petRecognition workflow integrityCheck editor storageBackendMigration classification qualityAnalysis spatialScene'.split(
+    ' ',
+  ),
+];
 const zero = { active: 0, completed: 0, delayed: 0, failed: 0, paused: 0, waiting: 0 };
 
 export function registerAdmin(router, ctx, A) {
@@ -45,9 +50,10 @@ export function registerAdmin(router, ctx, A) {
   A.get('/queues/:name/jobs', () => []);
   A.del('/queues/:name/jobs', () => null);
   // Legacy job endpoints: "start" rescans the library, which also feeds the AI engine
+  // Gallery's admin pages read every queue by name, so list them all (unknown ones idle)
   A.get('/jobs', () =>
     Object.fromEntries(
-      Object.keys(QUEUES).map((n) => [
+      ALL_QUEUES.map((n) => [
         n,
         { jobCounts: stats(QUEUES[n]), queueStatus: { isActive: !!stats(QUEUES[n]).active, isPaused: false } },
       ]),
@@ -108,7 +114,7 @@ export function registerAdmin(router, ctx, A) {
     '/workflows/triggers',
   ])
     A.get(p, () => []);
-  A.get('/admin/integrity/summary', () => ({}));
+  A.get('/admin/integrity/summary', () => ({ checksum_mismatch: 0, missing_file: 0, untracked_file: 0 }));
   A.get('/storage-migration/status', () => ({ isRunning: false }));
   A.get('/storage-migration/estimate', () => ({ fileCount: 0, totalSize: 0 }));
 }

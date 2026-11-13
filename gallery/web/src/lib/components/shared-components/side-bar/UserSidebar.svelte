@@ -112,7 +112,6 @@
     activeIcon={mdiArchiveArrowDown}
   />
 
-  <NavbarItem title={$t('locked_folder')} href={Route.locked()} icon={mdiLockOutline} activeIcon={mdiLock} />
 
   {#if config.trash.enabled}
     <NavbarItem title={$t('trash')} href={Route.trash()} icon={mdiTrashCanOutline} activeIcon={mdiTrashCan} />

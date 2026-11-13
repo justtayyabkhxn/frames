@@ -39,6 +39,8 @@
   import UserProfileSettings from './UserProfileSettings.svelte';
   import UserPurchaseSettings from './UserPurchaseSettings.svelte';
   import UserUsageStatistic from './UserUsageStatistic.svelte';
+  import FramesBackupSettings from '#lib/frames/FramesBackupSettings.svelte';
+  import { mdiBackupRestore } from '@mdi/js';
 
   const query = createPreloadedQuery(getUserConfigQuery);
   const config = $derived(query.data);
@@ -68,6 +70,7 @@
   <UserUsageStatistic />
 </SettingAccordion>
 
+{#if false}
 <SettingAccordion icon={mdiApi} key="api-keys" title={$t('api_keys')} subtitle={$t('manage_your_api_keys')}>
   <UserApiKeyList />
 </SettingAccordion>
@@ -80,6 +83,7 @@
 >
   <DeviceList />
 </SettingAccordion>
+{/if}
 
 <SettingAccordion
   icon={mdiDownload}
@@ -88,6 +92,10 @@
   subtitle={$t('download_settings_description')}
 >
   <DownloadSettings />
+</SettingAccordion>
+
+<SettingAccordion icon={mdiBackupRestore} key="frames-backup" title="Backup and restore" subtitle="Export everything Frames knows about your photos, and import it again">
+  <FramesBackupSettings />
 </SettingAccordion>
 
 <SettingAccordion
@@ -99,6 +107,7 @@
   <FeatureSettings />
 </SettingAccordion>
 
+{#if false}
 <SettingAccordion
   icon={mdiBellOutline}
   key={OpenQueryParam.NOTIFICATIONS}
@@ -177,3 +186,4 @@
 >
   <SharingSettings />
 </SettingAccordion>
+{/if}

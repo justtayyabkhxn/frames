@@ -605,6 +605,8 @@ export function registerAi(router, ctx) {
       const s = await lens.get('/v1/stats');
       const queued = s.queue_depth + s.in_flight.length;
       if (s.faces_version !== facesVersion) await syncFaces();
+      // Faces from an imported export apply once the photos they are in have been scanned
+      if (!queued) await ctx.applyFaceImports?.();
       // Only once every photo was re-scanned: one full sweep finished and nothing left to do
       if (!queued && s.scan?.sweeps_total && db.q("SELECT 1 FROM sqlite_master WHERE name = 'faces_legacy'").get())
         await carryOverNames();
