@@ -3,6 +3,9 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { APP_ROOT, cacheEnv } from './lib/tools.mjs';
+import { cli } from './lib/ui.mjs';
+
+cli();
 
 const cwd = path.join(APP_ROOT, 'gallery');
 const env = { ...process.env, ...cacheEnv(), COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' };

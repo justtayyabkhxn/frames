@@ -11,7 +11,7 @@ const has = (...p) => fs.existsSync(path.join(...p));
 const STEPS = [
   {
     title: 'Portable tools',
-    note: 'exiftool, ffmpeg and offline place names (about 250 MB)',
+    note: 'exiftool, ffmpeg and offline place names (about 200 MB)',
     done: () => has(TOOLS, 'exiftool', 'exiftool.exe') && has(TOOLS, 'ffmpeg', 'bin', 'ffmpeg.exe') && has(PLANET_ZIP),
     script: 'setup.mjs',
   },

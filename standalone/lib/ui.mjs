@@ -121,9 +121,17 @@ export class Live {
   }
 }
 
+/** For setup scripts: a failure ends in one "Error: ..." line (which runLive reports), not a stack trace. */
+export function cli() {
+  process.on('uncaughtException', (e) => {
+    console.error(`Error: ${e.message}`);
+    process.exit(1);
+  });
+}
+
 /**
  * Run a command with its output shown as one live line (and kept in `log`).
- * Resolves when it exits 0; otherwise prints the last lines of output and rejects.
+ * Resolves when it exits 0; otherwise rejects with its "Error: ..." line, or prints its last lines.
  */
 export function runLive(cmd, args, { env, cwd, log, shell } = {}) {
   return new Promise((resolve, reject) => {
@@ -139,10 +147,17 @@ export function runLive(cmd, args, { env, cwd, log, shell } = {}) {
         rest = parts.pop();
         // eslint-disable-next-line no-control-regex
         for (const l of parts.map((x) => x.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')).filter((x) => x.trim())) {
+          if (l.trim().startsWith('√')) {
+            // A finished item of the step stays on screen
+            live.clear();
+            console.log(`   ${c.green('√')}${l.trim().slice(1)}`);
+            continue;
+          }
           live.text(l);
+          if (l.startsWith('Progress ')) continue;
           tail.push(l);
-          if (tail.length > 25) tail.shift();
-          if (!tty && !l.startsWith('Progress ')) console.log(`   ${l}`);
+          if (tail.length > 8) tail.shift();
+          if (!tty) console.log(`   ${l}`);
         }
       });
     }
@@ -151,30 +166,101 @@ export function runLive(cmd, args, { env, cwd, log, shell } = {}) {
       live.stop();
       out?.end();
       if (code === 0) return resolve();
-      console.log(c.dim(tail.map((l) => `     ${l}`).join('\n')));
-      reject(new Error(`${path.basename(cmd)} exited with code ${code}${log ? ` (full log: ${log})` : ''}`));
+      let error = tail.findLast((l) => l.startsWith('Error: '))?.slice(7);
+      // A tool (pip, pnpm) failed: its own last lines say why
+      if (!error || error.startsWith('Command failed')) {
+        console.log(
+          c.dim(
+            tail
+              .filter((l) => !l.startsWith('Error: '))
+              .map((l) => `     ${l}`)
+              .join('\n'),
+          ),
+        );
+        error = 'a setup command failed (see above)';
+      }
+      reject(new Error(`${error}${log ? `\n  Full log: ${log}` : ''}`));
     });
   });
 }
 
-/** Download into memory, reporting "Progress a of b" lines (drawn as a bar on a terminal, parsed by runLive otherwise). */
-export async function download(url, label = path.basename(new URL(url).pathname)) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  const total = Number(res.headers.get('content-length')) || 0;
-  const live = tty ? new Live() : null;
-  const report = (done) => (live ? live.progress(done, total) : console.log(`Progress ${done} of ${total}`));
-  if (live) live.label = `Downloading ${label}`;
-  else console.log(`Downloading ${label}`);
-  const chunks = [];
-  let done = 0;
-  let last = 0;
-  for await (const chunk of res.body) {
-    chunks.push(chunk);
-    done += chunk.length;
-    if (total && Date.now() - last > 150) (report(done), (last = Date.now()));
+const why = (e) =>
+  ({
+    UND_ERR_CONNECT_TIMEOUT: 'the server did not answer',
+    ENOTFOUND: 'no internet connection?',
+    ECONNRESET: 'the connection dropped',
+    ECONNREFUSED: 'the server refused the connection',
+    UND_ERR_SOCKET: 'the connection dropped',
+  })[e.cause?.code] ?? e.message;
+
+const PARTS = 8;
+const PARALLEL_FROM = 16 * MB;
+
+/** One byte range of a parallel download, retried on its own; `add` gets the byte count (negative to undo). */
+async function fetchPart(url, start, end, add) {
+  for (let attempt = 1; ; attempt++) {
+    let got = 0;
+    try {
+      const res = await fetch(url, {
+        headers: { Range: `bytes=${start}-${end}` },
+        signal: AbortSignal.timeout(30 * 60_000),
+      });
+      if (res.status !== 206) throw new Error(`HTTP ${res.status}`);
+      const chunks = [];
+      for await (const chunk of res.body) (chunks.push(chunk), (got += chunk.length), add(chunk.length));
+      if (got !== end - start + 1) throw new Error('the connection dropped');
+      return Buffer.concat(chunks);
+    } catch (e) {
+      add(-got);
+      if (attempt === 4) throw e;
+      await new Promise((r) => setTimeout(r, 3000 * attempt));
+    }
   }
-  if (total) report(total);
-  live?.stop();
-  return Buffer.concat(chunks);
+}
+
+/**
+ * Download into memory with retries (flaky mirrors and dropped connections are common), reporting
+ * "Progress a of b" lines: drawn as a bar on a terminal, parsed by runLive otherwise. `quiet` skips the progress.
+ */
+export async function download(url, label = path.basename(new URL(url).pathname), { quiet = false } = {}) {
+  const TRIES = 4;
+  for (let attempt = 1; ; attempt++) {
+    const live = tty && !quiet ? new Live() : null;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(30 * 60_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const total = Number(res.headers.get('content-length')) || 0;
+      const report = (done) => (live ? live.progress(done, total) : console.log(`Progress ${done} of ${total}`));
+      if (live) live.label = `Downloading ${label}`;
+      else if (!quiet) console.log(`Downloading ${label}`);
+      let done = 0;
+      let last = 0;
+      const add = (n) => {
+        done += n;
+        if (!quiet && total && Date.now() - last > 150) (report(done), (last = Date.now()));
+      };
+      let buf;
+      if (res.headers.get('accept-ranges') === 'bytes' && total > PARALLEL_FROM) {
+        // CDNs (GitHub's included) cap each connection: fetch the parts side by side from the final (redirected) URL
+        void res.body.cancel();
+        const size = Math.ceil(total / PARTS);
+        const ranges = [...Array(PARTS)].map((_, i) => [i * size, Math.min(total, (i + 1) * size) - 1]);
+        buf = Buffer.concat(await Promise.all(ranges.map(([s, e]) => fetchPart(res.url, s, e, add))));
+      } else {
+        const chunks = [];
+        for await (const chunk of res.body) (chunks.push(chunk), add(chunk.length));
+        buf = Buffer.concat(chunks);
+      }
+      if (total && buf.length !== total) throw new Error('the connection dropped');
+      if (!quiet && total) report(total);
+      return buf;
+    } catch (e) {
+      if (attempt === TRIES) throw new Error(`Could not download ${label}: ${why(e)}`);
+      const wait = 5 * attempt;
+      console.log(`${label}: ${why(e)}; retrying in ${wait}s (try ${attempt + 1} of ${TRIES})`);
+      await new Promise((r) => setTimeout(r, wait * 1000));
+    } finally {
+      live?.stop();
+    }
+  }
 }

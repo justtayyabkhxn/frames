@@ -9,7 +9,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { LENS_DIR, lensEnv, MODELS_DIR, PYTHON, PYTHON_DIR, READY_MARKER } from './lib/ai-lens.mjs';
 import { cacheEnv, TOOLS } from './lib/tools.mjs';
-import { download, ok } from './lib/ui.mjs';
+import { cli, download, ok } from './lib/ui.mjs';
+
+cli();
 
 // python-build-standalone (astral-sh), relocatable CPython
 const PY_REL = '20261026';
