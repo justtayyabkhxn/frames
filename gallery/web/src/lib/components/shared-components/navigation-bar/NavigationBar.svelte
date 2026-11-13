@@ -6,6 +6,7 @@
   import { clickOutside } from '#lib/actions/click-outside.ts';
   import GlobalSearchInputTrigger from '#lib/components/global-search/global-search-input-trigger.svelte';
   import Logo from '#lib/components/shared-components/Logo.svelte';
+  import FramesStatus from '#lib/frames/FramesStatus.svelte';
   import NotificationPanel from '#lib/components/shared-components/navigation-bar/NotificationPanel.svelte';
   import SkipLink from '#lib/elements/SkipLink.svelte';
   import { authManager } from '#lib/managers/auth-manager.svelte.ts';
@@ -163,6 +164,7 @@
       <!-- `w-full` until the trigger reappears, or `justify-between` would leave this row parked
            against the logo with a stretch of empty bar after it. -->
       <section class="flex w-full place-items-center justify-end gap-1 md:gap-2 xl:w-auto">
+        <FramesStatus />
         <IconButton
           color="secondary"
           shape="round"

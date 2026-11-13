@@ -68,4 +68,6 @@ def stats():
         "deferred_total": queue.deferred_total,
         "scan": state.scanner.stats if state.scanner else None,
         "faces_version": state.store.faces.version if state.store else 0,
+        # What the current batch is doing (reading, objects, faces, places), for Frames' status pill
+        "stage": state.indexer.stage if state.indexer else None,
     }

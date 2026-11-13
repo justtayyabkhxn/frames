@@ -126,6 +126,17 @@ const EDITS = [
     "  <NavbarItem title={$t('locked_folder')} href={Route.locked()} icon={mdiLockOutline} activeIcon={mdiLock} />\n",
     '',
   ],
+  // Live activity pill (scan, photo reading, AI stage) at the start of the top bar's right-hand group
+  [
+    'web/src/lib/components/shared-components/navigation-bar/NavigationBar.svelte',
+    "  import Logo from '#lib/components/shared-components/Logo.svelte';\n",
+    "  import Logo from '#lib/components/shared-components/Logo.svelte';\n  import FramesStatus from '#lib/frames/FramesStatus.svelte';\n",
+  ],
+  [
+    'web/src/lib/components/shared-components/navigation-bar/NavigationBar.svelte',
+    '      <section class="flex w-full place-items-center justify-end gap-1 md:gap-2 xl:w-auto">\n',
+    '      <section class="flex w-full place-items-center justify-end gap-1 md:gap-2 xl:w-auto">\n        <FramesStatus />\n',
+  ],
   // Font: Parkinsans everywhere (bundled in gallery-files, never fetched from Google)
   [
     'web/src/app.css',

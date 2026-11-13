@@ -161,4 +161,18 @@ assert.ok(destroyed);
   await ix.indexIds([ids[0]]);
   assert.deepEqual(removed, [ids[0]]);
 }
+
+// The UI's activity pill reads the indexer's status, the AI stage and the photo count
+{
+  const h = setup();
+  h.media('2024/p.jpg', '2024-01-01T10:00:00');
+  Object.assign(h.ctx.indexer.status, {
+    phase: 'indexing',
+    done: 3,
+    total: 9,
+    ai: { state: 'indexing', stage: 'faces', queued: 5 },
+  });
+  const s = await h.api('GET', '/api/frames/status');
+  assert.deepEqual([s.phase, s.done, s.total, s.ai.stage, s.count], ['indexing', 3, 9, 'faces', 1]);
+}
 console.log('ok');

@@ -68,6 +68,7 @@ async def lifespan(_app: FastAPI):
         done=index_queue.done,
         face_model=face_model if config.local else None,
     )
+    state.indexer = indexer
     scanner = Scanner(store, index_queue)
     state.scanner = scanner
 

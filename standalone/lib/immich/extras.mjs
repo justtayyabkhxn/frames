@@ -69,6 +69,11 @@ export function registerExtras(router, ctx, A) {
     return { from, to, series, totalCount: series.reduce((s, d) => s + d.count, 0) };
   });
 
+  // Frames' own status for the UI's top-left pill: library scan/indexing and the AI engine's current stage
+  A.get('/frames/status', () => ({
+    ...ctx.indexer.status,
+    count: db.q('SELECT count(*) AS n FROM media WHERE livevideo = 0').get().n,
+  }));
   A.get('/system-config', () => ctx.immichConfig());
   A.put('/system-config', async (req) => {
     db.setKv('immich.config', JSON.stringify(await readJson(req)));

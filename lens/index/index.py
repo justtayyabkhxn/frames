@@ -29,9 +29,18 @@ class Indexer:
         self.store = store
         self.done = done
         self.face_model = face_model
+        self.stage = None  # reading | objects | faces | places, while a batch runs
 
     async def handle_batch(self, batch):
         """Check current metadata first, then download and embed only files needing work."""
+
+        try:
+            await self._handle_batch(batch)
+        finally:
+            self.stage = None
+
+    async def _handle_batch(self, batch):
+        self.stage = "reading"
 
         try:
             failures = await self.store.embedding.get_failures([fileid for fileid, _ in batch])
@@ -85,6 +94,7 @@ class Indexer:
         if not good:
             return
 
+        self.stage = "objects"
         try:
             frames = [split_frames(image) if is_video(res) else [image] for _, res, image in good]
             flat = await self.embedding_model.embed_pil_images_async([f for group in frames for f in group])
@@ -133,6 +143,7 @@ class Indexer:
             )
 
         if self.face_model:
+            self.stage = "faces"
             for fileid, res, image in good:
                 if is_video(res):
                     continue
@@ -145,6 +156,7 @@ class Indexer:
             # Stamped even after a failure so one bad file is not re-indexed every sweep.
             await self.store.embedding.set_file_payload([f for f, _, _ in good], {"face_version": config.face.version})
 
+        self.stage = "places"
         await self._finish_places(
             files=[(fileid, res) for fileid, res, _ in good],
             parents=parents,

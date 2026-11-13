@@ -616,6 +616,7 @@ export function registerAi(router, ctx) {
         queued,
         indexed: s.indexed_total,
         failed: s.failed_total,
+        stage: queued ? s.stage : null,
         faces: db.q('SELECT count(*) AS n FROM faces').get().n,
         people: db.q('SELECT count(DISTINCT cluster) AS n FROM faces WHERE cluster > 0').get().n,
       });
@@ -629,7 +630,7 @@ export function registerAi(router, ctx) {
   void lens.start().then((ok) => {
     if (!ok) return Object.assign(status, { state: 'error', error: lens.error });
     console.log('AI engine ready (People, smart search).');
-    setInterval(poll, 5000).unref();
+    setInterval(poll, 2000).unref();
     return poll();
   });
 }
