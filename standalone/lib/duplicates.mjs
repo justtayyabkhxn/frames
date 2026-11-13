@@ -19,7 +19,7 @@ export function registerDuplicates(router, ctx) {
   const dismissed = () => new Set(JSON.parse(db.getKv('dup.dismissed', '[]')));
   const fileRow = db.prepare(
     `SELECT n.id AS fileid, n.name AS basename, n.path, n.size, n.etag, n.mime AS mimetype, n.favorite,
-       m.w, m.h, m.datetaken, m.dayid, m.exif
+       m.w, m.h, m.datetaken, m.dayid, m.exif, m.isvideo
      FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ? AND m.livevideo = 0`,
   );
 
@@ -28,12 +28,15 @@ export function registerDuplicates(router, ctx) {
     const skip = dismissed();
     const out = [];
     for (const ids of groups) {
-      const files = ids
+      const all = ids
         .map((id) => fileRow.get(id))
         .filter(Boolean)
         .map(({ exif, ...f }) => ({ ...f, exifCount: exifCount(exif), rating: JSON.parse(exif || '{}').Rating ?? 0 }));
-      if (files.length < 2 || skip.has(groupKey(files.map((f) => f.fileid)))) continue;
-      out.push({ key: groupKey(files.map((f) => f.fileid)), files, keep: pickKeep(files) });
+      // Photos and videos are only compared with their own kind
+      for (const files of Map.groupBy(all, (f) => f.isvideo).values()) {
+        if (files.length < 2 || skip.has(groupKey(files.map((f) => f.fileid)))) continue;
+        out.push({ key: groupKey(files.map((f) => f.fileid)), files, keep: pickKeep(files) });
+      }
     }
     return out;
   }

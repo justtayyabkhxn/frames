@@ -7,10 +7,17 @@ from dataclasses import replace
 
 from config import config
 from index.faces import faces_stale, index_faces
+from process.video import mean_vectors, split_frames
 from nextcloud import NotFoundError, fetch_file
 from store import FAILURE_KIND, FileMeta, PlacePoint, UpsertPoint
 
 log = logging.getLogger("lens.queue")
+
+
+def is_video(res) -> bool:
+    """Videos arrive as a strip of sampled frames."""
+
+    return res.metadata.mimetype.startswith("video/")
 
 
 class Indexer:
@@ -79,8 +86,9 @@ class Indexer:
             return
 
         try:
-            images = [image for _, _, image in good]
-            vectors = await self.embedding_model.embed_pil_images_async(images)
+            frames = [split_frames(image) if is_video(res) else [image] for _, res, image in good]
+            flat = await self.embedding_model.embed_pil_images_async([f for group in frames for f in group])
+            vectors = mean_vectors([len(group) for group in frames], flat)
         except Exception as exc:  # noqa: BLE001
             for fileid, _, _ in good:
                 await self._fail(fileid, exc)
@@ -126,6 +134,8 @@ class Indexer:
 
         if self.face_model:
             for fileid, res, image in good:
+                if is_video(res):
+                    continue
                 try:
                     count = await index_faces(self.face_model, self.store, fileid, parents[fileid], res.metadata, image)
                     log.info("indexed %d faces for %d", count, fileid)
@@ -144,13 +154,7 @@ class Indexer:
     async def _refresh_metadata(self, heads, failures):
         """Repair parent/etag and distinguish image work from metadata-only places work."""
 
-        files = {}
-        for fileid, res in heads:
-            if res.metadata.mimetype.startswith("video/"):
-                for collection in self.store.collections:
-                    await collection.delete_fileid(fileid)
-            else:
-                files[fileid] = res.metadata
+        files = {fileid: res.metadata for fileid, res in heads}
 
         if not files:
             return set(), set()

@@ -85,6 +85,11 @@ export function legacyMatches(faces, legacy) {
   return [...best].map(([person, [cluster]]) => [cluster, person]);
 }
 
+const VIDEO_TILE = 'scale=512:512:force_original_aspect_ratio=increase,crop=512:512,setsar=1';
+
+/** Seconds to sample (at 1/8, 3/8, 5/8, 7/8 of the length); short or unknown lengths sample near the start. */
+export const videoFrameTimes = (len) => [1, 3, 5, 7].map((k) => (len > 2 ? (len * k) / 8 : ((k - 1) * 10) / 100));
+
 /** "123-IMG_1.jpg" -> 123 */
 export const faceIdOf = (item) => Number(/^(\d+)-/.exec(item ?? '')?.[1]) || 0;
 
@@ -216,6 +221,33 @@ export function registerAi(router, ctx) {
     const file = ctx.previews.file(n.id, 'base');
     if (!fs.existsSync(file)) await ctx.previews.generate(n.id, lib.abs(n.path), false);
     return fs.existsSync(file) ? file : null;
+  }
+
+  /** Four frames across a video, stacked vertically in one JPEG, for lens to embed and average. */
+  async function videoStrip(n) {
+    if (!ctx.ff) return null;
+    const out = path.join(ctx.dataDir, 'previews', 'lens-video', `${n.id}-${n.etag}.jpg`);
+    if (fs.existsSync(out)) return out;
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    const len = Math.max(Number(n.video_duration) || 0, 0);
+    const at = videoFrameTimes(len);
+    const tiles = at.map((_, i) => `[${i}:v]${VIDEO_TILE}[t${i}]`).join(';');
+    const stack = `${at.map((_, i) => `[t${i}]`).join('')}vstack=inputs=${at.length}`;
+    const src = lib.abs(n.path);
+    await run(ctx.ff.ffmpeg, [
+      '-v',
+      'error',
+      '-y',
+      ...at.flatMap((t) => ['-ss', t.toFixed(2), '-i', src]),
+      '-filter_complex',
+      `${tiles};${stack}`,
+      '-frames:v',
+      '1',
+      '-q:v',
+      '3',
+      out,
+    ]);
+    return fs.existsSync(out) ? out : null;
   }
 
   async function faceCrop(face) {
@@ -448,7 +480,9 @@ export function registerAi(router, ctx) {
   const lensFile = async (req, res, { id }) => {
     guard(req);
     const n = db
-      .q('SELECT n.*, m.dayid, m.epoch, m.isvideo FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ?')
+      .q(
+        'SELECT n.*, m.dayid, m.epoch, m.isvideo, m.video_duration FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ?',
+      )
       .get(Number(id) | 0);
     if (!n) throw notFound();
     const meta = {
@@ -461,9 +495,9 @@ export function registerAi(router, ctx) {
       places: placesOf(n.id),
     };
     const headers = { 'X-Memories-Metadata': Buffer.from(JSON.stringify(meta)).toString('base64') };
-    if (req.method === 'HEAD' || n.isvideo) return res.writeHead(200, headers).end();
-    // Lens reads Frames' 1024px preview: fast to decode and works for RAW/HEIC alike
-    const file = await basePreview(n);
+    if (req.method === 'HEAD') return res.writeHead(200, headers).end();
+    // Lens reads Frames' 1024px preview (fast, RAW/HEIC alike); videos as a strip of sampled frames
+    const file = n.isvideo ? await videoStrip(n) : await basePreview(n);
     if (!file) throw new HttpError(500, 'Preview not available');
     sendFile(req, res, file, { type: 'image/jpeg', headers });
   };
@@ -503,7 +537,7 @@ export function registerAi(router, ctx) {
     if (lens.state !== 'ready') return;
     for (const id of ids) {
       const n = db
-        .q('SELECT n.parent FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ? AND m.isvideo = 0')
+        .q('SELECT n.parent FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ? AND m.livevideo = 0')
         .get(id);
       if (n) await lens.post('/v1/index', { fileid: id, parent_id: n.parent }).catch(() => {});
     }

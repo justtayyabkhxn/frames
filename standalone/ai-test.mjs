@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { faceCropFilter, faceIdOf, legacyMatches, registerAi } from './lib/ai.mjs';
+import { faceCropFilter, faceIdOf, legacyMatches, registerAi, videoFrameTimes } from './lib/ai.mjs';
 import { registerApi } from './lib/api.mjs';
 import { pickKeep, registerDuplicates } from './lib/duplicates.mjs';
 import { openDb } from './lib/db.mjs';
 import { Router } from './lib/http.mjs';
 
+assert.deepEqual(videoFrameTimes(8), [1, 3, 5, 7]);
+assert.deepEqual(videoFrameTimes(0), [0, 0.2, 0.4, 0.6]);
 assert.equal(faceIdOf('12-IMG 1.jpg'), 12);
 assert.equal(faceIdOf('IMG.jpg'), 0);
 assert.equal(

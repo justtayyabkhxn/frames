@@ -89,7 +89,7 @@ class Scanner:
         """Read and repair a stable range, then enqueue outside the mutation lock."""
 
         started = time.monotonic()
-        files = {file.fileid: file for file in batch.files if not file.isvideo}
+        files = {file.fileid: file for file in batch.files}
         log.info(
             "scan batch: range=[%d,%s] received=%d images=%d videos=%d done=%s",
             batch.start,
