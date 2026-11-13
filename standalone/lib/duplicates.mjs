@@ -10,9 +10,13 @@ const exifCount = (exif) => Object.values(JSON.parse(exif || '{}')).filter((v) =
 export const pickKeep = (files) =>
   [...files].sort((a, b) => b.size - a.size || b.exifCount - a.exifCount || a.fileid - b.fileid)[0].fileid;
 
-const groupKey = (ids) => [...ids].sort((a, b) => a - b).join(',');
+export const groupKey = (ids) => [...ids].sort((a, b) => a - b).join(',');
 
-export function registerDuplicates(router, ctx) {
+const shared = new WeakMap();
+
+/** Lens duplicate groups, dismissals and resolving, shared by Frames' and Gallery's APIs (one cache per ctx). */
+export function duplicatesOf(ctx) {
+  if (shared.has(ctx)) return shared.get(ctx);
   const { db, lib } = ctx;
   let cache = null; // { distance, groups, at }
 
@@ -41,21 +45,17 @@ export function registerDuplicates(router, ctx) {
     return out;
   }
 
-  router.add('GET', `${API}/duplicates`, async (req, res, _, url) => {
-    const p = url.searchParams;
-    const distance = SENSITIVITY[p.get('sensitivity')] ?? SENSITIVITY.normal;
-    if (!cache || cache.distance !== distance || p.has('refresh')) {
+  async function scan(distance = SENSITIVITY.normal, refresh = false) {
+    if (!cache || cache.distance !== distance || refresh) {
       if (ctx.lens?.state !== 'ready') throw new HttpError(503, 'AI engine is not running');
       const { groups } = await ctx.lens.get(`/v1/duplicates?max_distance=${distance}`, 15 * 60_000);
       cache = { distance, groups, at: Date.now() };
     }
-    json(res, { scannedAt: cache.at, groups: present(cache.groups) });
-  });
+    return { scannedAt: cache.at, groups: present(cache.groups) };
+  }
 
-  /** Keep some files, trash the rest; a single kept file inherits favorite, albums and tags. */
-  router.add('POST', `${API}/duplicates/resolve`, async (req, res) => {
-    const { keep = [], trash = [] } = await readJson(req);
-    if (!Array.isArray(keep) || !Array.isArray(trash) || !trash.length) throw badRequest('Nothing to trash');
+  /** Keep some files, trash the rest; a single kept file inherits favorite, albums and tags. Returns trashed ids. */
+  function resolve(keep, trash) {
     if (keep.length === 1) {
       const [k] = keep.map(Number);
       db.tx(() => {
@@ -68,24 +68,47 @@ export function registerDuplicates(router, ctx) {
         }
       });
     }
-    let trashed = 0;
+    const trashed = [];
     for (const t of trash) {
       try {
         lib.trash(t);
-        trashed++;
+        trashed.push(t);
       } catch (e) {
         console.error(`duplicates: cannot trash ${t}:`, e?.message ?? e);
       }
     }
-    json(res, { trashed });
-  });
+    return trashed;
+  }
 
-  /** "Keep all": hide this group until its membership changes. */
-  router.add('POST', `${API}/duplicates/dismiss`, async (req, res) => {
-    const { keys = [] } = await readJson(req);
+  /** "Keep all": hide these groups until their membership changes. */
+  function dismiss(keys) {
     const all = dismissed();
     for (const k of keys) all.add(String(k));
     db.setKv('dup.dismissed', JSON.stringify([...all]));
+  }
+
+  const api = { scan, resolve, dismiss };
+  shared.set(ctx, api);
+  return api;
+}
+
+export function registerDuplicates(router, ctx) {
+  const dups = duplicatesOf(ctx);
+
+  router.add('GET', `${API}/duplicates`, async (req, res, _, url) => {
+    const p = url.searchParams;
+    json(res, await dups.scan(SENSITIVITY[p.get('sensitivity')] ?? SENSITIVITY.normal, p.has('refresh')));
+  });
+
+  router.add('POST', `${API}/duplicates/resolve`, async (req, res) => {
+    const { keep = [], trash = [] } = await readJson(req);
+    if (!Array.isArray(keep) || !Array.isArray(trash) || !trash.length) throw badRequest('Nothing to trash');
+    json(res, { trashed: dups.resolve(keep, trash).length });
+  });
+
+  router.add('POST', `${API}/duplicates/dismiss`, async (req, res) => {
+    const { keys = [] } = await readJson(req);
+    dups.dismiss(keys);
     json(res, { dismissed: keys.length });
   });
 }

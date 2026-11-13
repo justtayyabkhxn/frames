@@ -10,6 +10,7 @@ import { registerBrowse } from './browse.mjs';
 import { registerMemories } from './memories.mjs';
 import { registerAdmin } from './admin.mjs';
 import { registerAlbums } from './albums.mjs';
+import { registerUtilities } from './utilities.mjs';
 
 const require = (f) => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), 'utf8'));
 const DEFAULTS = require('./config-defaults.json');
@@ -266,5 +267,6 @@ export function registerImmich(router, ctx) {
   registerMemories(router, ctx, A);
   registerAdmin(router, ctx, A);
   registerAlbums(router, ctx, A);
+  registerUtilities(router, ctx, A);
   return A;
 }
