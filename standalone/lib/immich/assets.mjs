@@ -48,7 +48,11 @@ export function assetDto(ctx, r) {
     livePhotoVideoId: r.livevideo_id ? toUuid('asset', r.livevideo_id) : null,
     duplicateId: null,
     stack: null,
-    people: [],
+    people: [
+      ...new Set(
+        (ctx.db.q('SELECT cluster FROM faces WHERE fileid = ? AND cluster > 0').all(r.id) ?? []).map((f) => f.cluster),
+      ),
+    ].map((c) => ({ ...ctx.personDto(c), faces: [] })),
     tags: [],
     exifInfo: {
       make: x.Make ?? null,
@@ -140,7 +144,6 @@ export function registerAssets(router, ctx, A) {
 
   // Gallery features Frames does not have (yet): OCR, stacks, spaces, per-asset album list until albums land
   A.get('/assets/:id/ocr', () => []);
-  A.get('/faces', () => []);
   A.post('/assets/spaces', () => []);
   A.get('/albums', () => []);
   const node = (id) =>

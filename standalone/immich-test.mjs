@@ -9,6 +9,7 @@ import { openDb } from './lib/db.mjs';
 import { Router } from './lib/http.mjs';
 import { fromUuid, toUuid } from './lib/immich/ids.mjs';
 import { registerImmich } from './lib/immich/server.mjs';
+import { registerAi } from './lib/ai.mjs';
 import { registerApi } from './lib/api.mjs';
 
 assert.equal(fromUuid(toUuid('asset', 1234), 'asset'), 1234);
@@ -21,7 +22,10 @@ const db = openDb(':memory:');
 const ctx = { db, root: process.cwd(), dayFilters: [], clustersOf: {}, indexer: { status: {} }, displayName: 'Me' };
 const router = new Router();
 Object.assign(ctx, { uid: 'me', lib: { node: (id) => db.q('SELECT * FROM nodes WHERE id = ?').get(id) } });
+const lensCalls = [];
+ctx.lens = { state: 'ready', post: async (p, b) => (lensCalls.push([p, b]), { items: [] }) };
 registerApi(router, ctx);
+registerAi(router, ctx);
 registerImmich(router, ctx);
 
 export const call = async (method, p, body, headers = {}) => {
@@ -121,7 +125,6 @@ for (const k of [
   assert.equal(b[k].length, 2, k);
 assert.deepEqual(await api('GET', '/api/timeline/buckets?isTrashed=true'), []);
 
-db.exec('CREATE TABLE IF NOT EXISTS faces (id INTEGER PRIMARY KEY, point TEXT, fileid INTEGER, cluster INTEGER)'); // made by ai.mjs
 // Review fixes: scoped and locked queries must not 500; video duration in ms; non-ASCII downloads; fixed routes before :id
 for (const q of [
   `albumId=${toUuid('album', 1)}`,
@@ -202,5 +205,52 @@ assert.deepEqual(calls, [
   ['exif', 2, { Rating: 4, Description: 'hi' }],
   ['trash', 2],
 ]);
+
+// People: list, hide, rename, statistics, faces of an asset, merge, search
+db.exec(`DELETE FROM trash; INSERT INTO people (id, name) VALUES (100, 'Alice');
+  INSERT INTO faces (id, point, fileid, cluster, x, y, w, h, score) VALUES
+    (1, 'p1', 2, 100, 0.1, 0.2, 0.25, 0.5, 0.9), (2, 'p2', 3, 100, 0, 0, 0.1, 0.1, 0.9), (3, 'p3', 4, 200, 0, 0, 0.1, 0.1, 0.9)`);
+const alice = toUuid('person', 100);
+const anon = toUuid('person', 200);
+let people = await api('GET', '/api/people?withHidden=true');
+assert.equal(people.total, 2);
+assert.deepEqual(
+  people.people.map((p) => [p.id, p.name, p.numberOfAssets, p.isHidden]),
+  [
+    [alice, 'Alice', 2, false],
+    [anon, '', 1, false],
+  ],
+);
+await api('PUT', `/api/people/${anon}`, { isHidden: true });
+people = await api('GET', '/api/people');
+assert.deepEqual([people.total, people.hidden, people.people.length], [2, 1, 1]);
+assert.equal((await api('PUT', `/api/people/${anon}`, { name: 'Bob', isHidden: false })).name, 'Bob');
+assert.deepEqual(await api('GET', `/api/people/${alice}/statistics`), { assets: 2, faces: 2 });
+const faces = await api('GET', `/api/faces?id=${toUuid('asset', 2)}`);
+assert.equal(faces.length, 1);
+assert.equal(faces[0].person.name, 'Alice');
+assert.deepEqual(
+  [
+    faces[0].imageWidth,
+    faces[0].imageHeight,
+    faces[0].boundingBoxX1,
+    faces[0].boundingBoxY1,
+    faces[0].boundingBoxX2,
+    faces[0].boundingBoxY2,
+  ],
+  [400, 300, 40, 60, 140, 210],
+);
+assert.deepEqual(
+  (await api('GET', '/api/search/person?name=ali')).map((p) => p.name),
+  ['Alice'],
+);
+assert.deepEqual(await api('POST', `/api/people/${alice}/merge`, { ids: [anon] }), [{ id: anon, success: true }]);
+assert.equal(db.q('SELECT cluster FROM faces WHERE id = 3').get().cluster, 100);
+assert.deepEqual(lensCalls.at(-1), ['/v1/faces/assign', { ids: ['p3'], cluster_id: 100 }]);
+assert.equal((await api('GET', `/api/people/${alice}`)).name, 'Alice');
+assert.deepEqual(
+  (await api('GET', `/api/assets/${toUuid('asset', 2)}`)).people.map((p) => p.name),
+  ['Alice'],
+);
 
 console.log('ok');

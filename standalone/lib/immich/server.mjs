@@ -5,6 +5,7 @@ import { APP_ROOT } from '../tools.mjs';
 import { toUuid } from './ids.mjs';
 import { registerTimeline } from './timeline.mjs';
 import { registerAssets } from './assets.mjs';
+import { registerPeople } from './people.mjs';
 
 const require = (f) => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), 'utf8'));
 const DEFAULTS = require('./config-defaults.json');
@@ -22,7 +23,7 @@ const MEMORY_TYPES = [
   'themed',
   'person_throwback',
 ];
-/** Gallery's getDefaultPreferences(), verbatim values. */
+/** Gallery's getDefaultPreferences(), except Frames shows People in the sidebar and has ratings on, like its old UI. */
 const PREFERENCES = {
   albums: { defaultAssetOrder: 'desc' },
   folders: { enabled: false, sidebarWeb: false },
@@ -32,9 +33,9 @@ const PREFERENCES = {
     types: Object.fromEntries(MEMORY_TYPES.map((k) => [k, true])),
     sidebarWeb: true,
   },
-  people: { enabled: true, sidebarWeb: false, minimumFaces: 3, updateStrategy: 'everyone' },
+  people: { enabled: true, sidebarWeb: true, minimumFaces: 3, updateStrategy: 'everyone' },
   sharedLinks: { enabled: false, sidebarWeb: false },
-  ratings: { enabled: false },
+  ratings: { enabled: true },
   tags: { enabled: false, sidebarWeb: false },
   emailNotifications: { enabled: false, albumInvite: false, albumUpdate: false },
   download: { archiveSize: 4 * 1024 ** 3, includeEmbeddedVideos: false },
@@ -256,5 +257,6 @@ export function registerImmich(router, ctx) {
   registerServer(router, ctx, A);
   registerTimeline(router, ctx, A);
   registerAssets(router, ctx, A);
+  registerPeople(router, ctx, A);
   return A;
 }

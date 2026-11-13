@@ -96,6 +96,9 @@ export const faceIdOf = (item) => Number(/^(\d+)-/.exec(item ?? '')?.[1]) || 0;
 export function registerAi(router, ctx) {
   const { db, lib, uid } = ctx;
   db.exec(SCHEMA);
+  for (const col of ['hidden INTEGER NOT NULL DEFAULT 0', 'favorite INTEGER NOT NULL DEFAULT 0', 'birthdate TEXT'])
+    if (!db.q('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get('people', col.split(' ')[0]))
+      db.exec(`ALTER TABLE people ADD COLUMN ${col}`);
   // Faces from another model live in another embedding space: drop them, keep named ones to re-match
   if (db.getKv('ai.facemodel', '') !== PINS.FACE_REC_SHA)
     db.tx(() => {
@@ -293,8 +296,8 @@ export function registerAi(router, ctx) {
     sendFile(req, res, file, { type: 'image/jpeg', cache: 'private, max-age=86400' });
   });
 
-  router.add('GET', `${API}/people/:cluster/suggestions`, async (req, res, { cluster }) => {
-    const id = mustCluster(cluster);
+  /** Unassigned faces that may be this person (Gallery's 0.5-0.7 band), minus ones turned down. */
+  async function suggestions(id) {
     const exclude = db
       .q("SELECT point FROM face_verdicts WHERE cluster = ? AND status IN ('rejected', 'ignored')")
       .all(id)
@@ -307,16 +310,27 @@ export function registerAi(router, ctx) {
         return f && !(f.cluster > 0) && { ...faceOut(f), distance: it.distance };
       })
       .filter((f) => f?.fileid);
+    return out;
+  }
+
+  async function actOnSuggestion(cluster, face, action) {
+    if (action === 'confirm') await assign([face], cluster);
+    else if (action === 'reject' || action === 'ignore')
+      verdict.run(face.point, cluster, action === 'reject' ? 'rejected' : 'ignored');
+    else throw badRequest('Unknown action');
+  }
+
+  ctx.faces = { assign, faceCrop, bestFace, facesOf, ensurePerson, suggestions, actOnSuggestion, faceById, personName };
+
+  router.add('GET', `${API}/people/:cluster/suggestions`, async (req, res, { cluster }) => {
+    const id = mustCluster(cluster);
+    const out = await suggestions(id);
     json(res, { name: personName(id), total: out.length, items: out });
   });
 
   router.add('POST', `${API}/people/:cluster/suggestions/:faceid`, async (req, res, { cluster, faceid }) => {
     const { action } = await readJson(req);
-    const face = faceById(faceid);
-    if (action === 'confirm') await assign([face], mustCluster(cluster));
-    else if (action === 'reject' || action === 'ignore')
-      verdict.run(face.point, mustCluster(cluster), action === 'reject' ? 'rejected' : 'ignored');
-    else throw badRequest('Unknown action');
+    await actOnSuggestion(mustCluster(cluster), faceById(faceid), action);
     json(res, { acted: action });
   });
 
