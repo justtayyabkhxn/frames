@@ -3,6 +3,7 @@ import path from 'node:path';
 import { json, readJson } from '../http.mjs';
 import { APP_ROOT } from '../tools.mjs';
 import { toUuid } from './ids.mjs';
+import { registerTimeline } from './timeline.mjs';
 
 const require = (f) => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), 'utf8'));
 const DEFAULTS = require('./config-defaults.json');
@@ -252,5 +253,6 @@ export function apiRouter(router) {
 export function registerImmich(router, ctx) {
   const A = apiRouter(router);
   registerServer(router, ctx, A);
+  registerTimeline(router, ctx, A);
   return A;
 }

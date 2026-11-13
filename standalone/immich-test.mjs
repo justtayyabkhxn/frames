@@ -4,6 +4,7 @@ import { openDb } from './lib/db.mjs';
 import { Router } from './lib/http.mjs';
 import { fromUuid, toUuid } from './lib/immich/ids.mjs';
 import { registerImmich } from './lib/immich/server.mjs';
+import { registerApi } from './lib/api.mjs';
 
 assert.equal(fromUuid(toUuid('asset', 1234), 'asset'), 1234);
 assert.equal(fromUuid(toUuid('person', 2 ** 52 + 7), 'person'), 2 ** 52 + 7);
@@ -14,6 +15,8 @@ assert.throws(() => fromUuid(toUuid('album', 5), 'asset'));
 const db = openDb(':memory:');
 const ctx = { db, root: process.cwd(), dayFilters: [], clustersOf: {}, indexer: { status: {} }, displayName: 'Me' };
 const router = new Router();
+Object.assign(ctx, { uid: 'me', lib: { node: (id) => db.q('SELECT * FROM nodes WHERE id = ?').get(id) } });
+registerApi(router, ctx);
 registerImmich(router, ctx);
 
 export const call = async (method, p, body, headers = {}) => {
@@ -76,5 +79,45 @@ const prefs = await api('PUT', '/api/users/me/preferences', { ratings: { enabled
 assert.equal(prefs.ratings.enabled, true);
 assert.equal(prefs.people.enabled, true);
 assert.deepEqual(await api('GET', '/api/notifications'), []);
+
+// Timeline: month buckets of the main timeline (archived files only with visibility=archive), columnar buckets
+db.exec(
+  `INSERT INTO nodes (id, path, parent, name, dir) VALUES (1, '', NULL, '', 1), (9, '.archive', 1, '.archive', 1)`,
+);
+const media = (id, path, taken, extra = '') =>
+  db.exec(`INSERT INTO nodes (id, path, parent, name, dir, etag, mime, size) VALUES (${id}, '${path}', 1, '${path.split('/').pop()}', 0, 'e${id}', 'image/jpeg', 100);
+    INSERT INTO media (id, datetaken, dayid, epoch, w, h, indexed_at ${extra ? ', ' + extra.split('=')[0] : ''})
+    VALUES (${id}, ${taken}, ${Math.floor(taken / 86400)}, ${taken - 3600 * 5.5}, 400, 300, 0 ${extra ? ', ' + extra.split('=')[1] : ''})`);
+const T = (s) => Date.parse(`${s}Z`) / 1000;
+media(2, 'a.jpg', T('2024-03-05T10:00:00'));
+media(3, 'b.jpg', T('2024-03-20T10:00:00'), 'isvideo=1');
+media(4, '.archive/c.jpg', T('2024-01-02T10:00:00'));
+db.exec('UPDATE media SET video_duration = 6 WHERE id = 3');
+assert.deepEqual(await api('GET', '/api/timeline/buckets?visibility=timeline'), [
+  { timeBucket: '2024-03-01', count: 2 },
+]);
+assert.deepEqual(await api('GET', '/api/timeline/buckets?visibility=archive'), [
+  { timeBucket: '2024-01-01', count: 1 },
+]);
+const b = await api('GET', '/api/timeline/bucket?timeBucket=2024-03-01&visibility=timeline');
+assert.deepEqual(b.id, [toUuid('asset', 3), toUuid('asset', 2)]);
+assert.deepEqual(b.ratio, [4 / 3, 4 / 3]);
+assert.deepEqual(b.isImage, [false, true]);
+assert.deepEqual(b.duration, [6000, null]);
+assert.deepEqual(b.localOffsetHours, [5.5, 5.5]);
+assert.deepEqual(b.visibility, ['timeline', 'timeline']);
+for (const k of [
+  'createdAt',
+  'fileCreatedAt',
+  'isFavorite',
+  'isTrashed',
+  'livePhotoVideoId',
+  'ownerId',
+  'projectionType',
+  'thumbhash',
+  'stack',
+])
+  assert.equal(b[k].length, 2, k);
+assert.deepEqual(await api('GET', '/api/timeline/buckets?isTrashed=true'), []);
 
 console.log('ok');
