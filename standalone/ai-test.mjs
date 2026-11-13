@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { faceCropFilter, faceIdOf, legacyMatches, registerAi } from './lib/ai.mjs';
 import { registerApi } from './lib/api.mjs';
+import { pickKeep, registerDuplicates } from './lib/duplicates.mjs';
 import { openDb } from './lib/db.mjs';
 import { Router } from './lib/http.mjs';
 
@@ -141,6 +142,48 @@ assert.equal(db.q('SELECT cluster FROM faces WHERE id = 10').get().cluster, -1);
 await dav('DELETE', 'recognize/me/faces/Alice');
 assert.deepEqual(await people(), []);
 assert.equal(db.q('SELECT count(*) AS n FROM people').get().n, 0);
+
+// Duplicates: largest file wins, then more metadata; missing files and dismissed groups drop out
+assert.equal(
+  pickKeep([
+    { fileid: 1, size: 5, exifCount: 9 },
+    { fileid: 2, size: 7, exifCount: 1 },
+  ]),
+  2,
+);
+assert.equal(
+  pickKeep([
+    { fileid: 1, size: 5, exifCount: 1 },
+    { fileid: 2, size: 5, exifCount: 3 },
+  ]),
+  2,
+);
+registerDuplicates(router, ctx);
+db.exec('UPDATE nodes SET size = id * 10');
+ctx.lens.get = async () => ({
+  groups: [
+    [2, 3],
+    [4, 99],
+  ],
+});
+const dups = await api('duplicates');
+assert.deepEqual(
+  dups.groups.map((g) => [g.key, g.keep]),
+  [['2,3', 3]],
+);
+const post = async (p, body) => {
+  const m = router.match('POST', `/apps/memories/api/${p}`);
+  const req = {
+    method: 'POST',
+    headers: {},
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(JSON.stringify(body));
+    },
+  };
+  await m.fn(req, { writeHead: () => ({ end() {} }), end() {} }, m.params, new URL('http://x/'));
+};
+await post('duplicates/dismiss', { keys: ['2,3'] });
+assert.deepEqual((await api('duplicates')).groups, []);
 
 fs.rmSync(dataDir, { recursive: true, force: true });
 console.log('ok');

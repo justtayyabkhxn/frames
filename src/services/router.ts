@@ -161,6 +161,13 @@ export const routes = {
     props: (route: RouteLocationNormalized) => ({ rootTitle: t('memories', 'Explore') }),
   },
 
+  Duplicates: {
+    path: '/duplicates',
+    component: () => import('@components/Duplicates.vue'),
+    name: 'duplicates',
+    props: (route: RouteLocationNormalized) => ({ rootTitle: t('memories', 'Duplicates') }),
+  },
+
   Search: {
     path: '/search',
     component: () => import('@components/Timeline.vue'),

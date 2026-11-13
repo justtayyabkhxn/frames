@@ -9,6 +9,7 @@ import { registerApi } from './lib/api.mjs';
 import { registerClusters } from './lib/clusters.mjs';
 import { registerDav } from './lib/dav.mjs';
 import { registerAi } from './lib/ai.mjs';
+import { registerDuplicates } from './lib/duplicates.mjs';
 import { registerMap } from './lib/map.mjs';
 import { registerMedia } from './lib/media.mjs';
 import { openDb } from './lib/db.mjs';
@@ -81,6 +82,7 @@ registerClusters(router, ctx);
 registerMap(router, ctx);
 registerMedia(router, ctx);
 registerAi(router, ctx);
+registerDuplicates(router, ctx);
 registerDav(router, ctx);
 
 const shell = () => renderShell(ctx);

@@ -117,16 +117,16 @@ export class LensDaemon {
     this.proc?.kill();
   }
 
-  async req(method, p, body) {
+  async req(method, p, body, timeout = 60_000) {
     const res = await fetch(this.base + p, {
       method,
       headers: { Authorization: `Bearer ${this.token}`, ...(body && { 'Content-Type': 'application/json' }) },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(timeout),
     });
     if (!res.ok) throw new Error(`lens ${method} ${p}: ${res.status} ${await res.text()}`);
     return res.json();
   }
-  get = (p) => this.req('GET', p);
+  get = (p, timeout) => this.req('GET', p, undefined, timeout);
   post = (p, body) => this.req('POST', p, body);
 }
