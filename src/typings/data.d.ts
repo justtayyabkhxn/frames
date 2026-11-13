@@ -172,6 +172,7 @@ declare module '@typings' {
 
     Title?: string;
     Description?: string;
+    Rating?: number;
     Make?: string;
     Model?: string;
 

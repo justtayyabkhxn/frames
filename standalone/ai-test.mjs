@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { faceCropFilter, faceIdOf, legacyMatches, registerAi } from './lib/ai.mjs';
+import { registerApi } from './lib/api.mjs';
 import { openDb } from './lib/db.mjs';
 import { Router } from './lib/http.mjs';
 
@@ -53,7 +54,7 @@ db.exec(`INSERT INTO faces (id, point, fileid, cluster, x, y, w, h, score) VALUE
   (10, 'a', 2, 100, 0, 0, .1, .1, .9), (11, 'b', 3, 100, 0, 0, .2, .2, .9), (12, 'c', 4, NULL, 0, 0, .1, .1, .9)`);
 
 const call = async (method, p, headers = {}) => {
-  const m = router.match(method, p);
+  const m = router.match(method, p.split('?')[0]);
   const res = { writeHead: (s) => ((res.status = s), res), end: (b) => (res.body = b) };
   await m.fn({ method, headers }, res, m.params, new URL(`http://x${p}`));
   return res;
@@ -97,6 +98,42 @@ assert.ok(f.cluster && f.select.includes('fc.id AS faceid'));
 const row = { face_x: 0.1, face_y: 0.2, face_w: 0.3, face_h: 0.4 };
 f.post[0](row);
 assert.deepEqual(row, { facerect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 } });
+
+// Filter panel: rating, camera, person, place and type narrow each other
+registerApi(router, ctx);
+db.exec(`UPDATE media SET exif = json_object('Rating', id, 'Model', 'Cam' || (id % 2)) WHERE id > 1;
+  CREATE TABLE IF NOT EXISTS planet (osm_id INTEGER PRIMARY KEY, admin_level INTEGER, name TEXT);
+  CREATE TABLE IF NOT EXISTS places (fileid INTEGER, osm_id INTEGER);
+  INSERT INTO planet VALUES (9, 8, 'Pune'); INSERT INTO places VALUES (3, 9), (4, 9);`);
+const api = async (p) => JSON.parse((await call('GET', `/apps/memories/api/${p}`)).body);
+let facets = await api('filters?frating=3');
+assert.deepEqual(
+  facets.ratings.map((r) => [r.value, r.count]),
+  [
+    [4, 1],
+    [3, 1],
+    [2, 1],
+  ],
+);
+assert.deepEqual(
+  facets.cameras.map((r) => [r.value, r.count]),
+  [
+    ['Cam0', 1],
+    ['Cam1', 1],
+  ],
+);
+assert.deepEqual(
+  facets.places.map((r) => [r.name, r.count]),
+  [['Pune', 2]],
+);
+assert.deepEqual(
+  facets.people.map((r) => [r.name, r.count]),
+  [['Alice', 2]],
+);
+assert.deepEqual(
+  (await api(`days?frating=3&fcamera=Cam0&fplace=9&fperson=${alice}&ftype=photo`)).map((d) => d.count),
+  [1],
+);
 
 // Remove one face, then delete the person
 await dav('DELETE', 'recognize/me/faces/Alice/10-p2.jpg');

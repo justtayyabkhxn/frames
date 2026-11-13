@@ -28,7 +28,11 @@ const EXIF_WRITABLE = [
   'GPSCoordinates',
   'OffsetTimeOriginal',
   'OffsetTime',
+  'Rating',
 ];
+
+const RATING = "coalesce(CAST(json_extract(m.exif, '$.Rating') AS INTEGER), 0)";
+const CAMERA = "nullif(trim(json_extract(m.exif, '$.Model')), '')";
 
 /** Per-user settings: [kv key, response key, default, type]. */
 const SETTINGS = [
@@ -108,6 +112,17 @@ export function registerApi(router, ctx) {
       f.where.push(`NOT ${underSql(f, ARCHIVE)}`);
     }
 
+    if (p.has('frating')) ((f.args.frating = Number(p.get('frating')) | 0), f.where.push(`${RATING} >= :frating`));
+    if (p.has('fcamera')) ((f.args.fcamera = p.get('fcamera')), f.where.push(`${CAMERA} = :fcamera`));
+    if (p.has('fperson')) {
+      f.args.fperson = Number(p.get('fperson')) || 0;
+      f.where.push('m.id IN (SELECT fileid FROM faces WHERE cluster = :fperson)');
+    }
+    if (p.has('fplace')) {
+      f.args.fplace = Number(p.get('fplace')) | 0;
+      f.where.push('m.id IN (SELECT fileid FROM places WHERE osm_id = :fplace)');
+    }
+    if (p.has('ftype')) f.where.push(`m.isvideo = ${p.get('ftype') === 'video' ? 1 : 0}`);
     if (p.has('fav')) f.where.push('n.favorite = 1');
     if (p.has('vid')) f.where.push('m.isvideo = 1');
     if (p.has('pano')) f.where.push('m.pano = 1');
@@ -354,6 +369,46 @@ export function registerApi(router, ctx) {
     return out;
   }
   ctx.info = info;
+  /** Values the filter panel can offer, narrowed by every other active filter. */
+  router.add('GET', `${API}/filters`, (req, res, _, url) => {
+    const facet = (param, sql) => {
+      const p = new URLSearchParams(url.searchParams);
+      p.delete(param);
+      const f = filter(p);
+      return db.prepare(sql(from(f))).all(f.args);
+    };
+    json(res, {
+      ratings: facet(
+        'frating',
+        (w) => `SELECT ${RATING} AS value, count(DISTINCT n.id) AS count ${w} GROUP BY value ORDER BY value DESC`,
+      ),
+      cameras: facet(
+        'fcamera',
+        (w) =>
+          `SELECT ${CAMERA} AS value, count(DISTINCT n.id) AS count ${w} AND value IS NOT NULL GROUP BY value ORDER BY count DESC, value LIMIT 50`,
+      ),
+      people: facet(
+        'fperson',
+        (w) => `SELECT fc.cluster AS value, p.name, count(DISTINCT fc.fileid) AS count
+          FROM faces fc LEFT JOIN people p ON p.id = fc.cluster
+          WHERE fc.cluster > 0 AND fc.fileid IN (SELECT n.id ${w})
+          GROUP BY fc.cluster ORDER BY p.name IS NULL, count DESC LIMIT 50`,
+      ),
+      places: facet(
+        'fplace',
+        (w) => `SELECT pl.osm_id AS value, pt.name, pt.admin_level, count(*) AS count
+          FROM places pl JOIN planet pt ON pt.osm_id = pl.osm_id
+          WHERE pl.fileid IN (SELECT n.id ${w})
+          GROUP BY pl.osm_id ORDER BY count DESC, pt.admin_level LIMIT 50`,
+      ),
+      types: facet(
+        'ftype',
+        (w) =>
+          `SELECT CASE m.isvideo WHEN 1 THEN 'video' ELSE 'photo' END AS value, count(DISTINCT n.id) AS count ${w} GROUP BY value`,
+      ),
+    });
+  });
+
   router.add('GET', `${API}/image/info/:id`, (req, res, { id }, url) => json(res, info(id, q(url))));
 
   router.add('GET', `${API}/image/decodable/:id`, async (req, res, { id }) => {

@@ -120,6 +120,7 @@ import axios from '@nextcloud/axios';
 
 import { config } from '@services/user-config';
 import { fragment } from '@services/route-fragment';
+import { setRating } from '@services/rating';
 import { windowDims } from '@services/viewport';
 import { useRouteIs } from '@services/route-is';
 import { API } from '@services/API';
@@ -1370,6 +1371,11 @@ function keydown(e: KeyboardEvent) {
 
   if (e.key === 'M' && e.shiftKey) {
     editMetadata();
+  }
+
+  const photo = currentPhoto.value;
+  if (/^[0-5]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && photo && !photo.isvideo) {
+    setRating(photo.fileid, Number(e.key));
   }
 }
 

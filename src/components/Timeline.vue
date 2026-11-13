@@ -54,6 +54,8 @@
             <!-- Gap for mobile header -->
             <div v-if="routeHasNative" class="mobile-header-top-gap"></div>
 
+            <FilterBar v-if="routeIs.Base || routeIs.Favorites || routeIs.Videos" />
+
             <!-- Route-specific top matter -->
             <DynamicTopMatter ref="dtm" @load="scrollerManager?.adjust()" />
           </div>
@@ -135,6 +137,7 @@ import SwipeRefresh from './SwipeRefresh.vue';
 import EmptyContent from '@components/top-matter/EmptyContent.vue';
 import TopMatter from '@components/top-matter/TopMatter.vue';
 import DynamicTopMatter from '@components/top-matter/DynamicTopMatter.vue';
+import FilterBar, { FILTER_KEYS } from '@components/FilterBar.vue';
 import TimelineTopOverlay from '@components/top-matter/TimelineTopOverlay.vue';
 import TimelineSkeleton from '@components/TimelineSkeleton.vue';
 import MobileHeader from '@components/MobileHeader.vue';
@@ -943,6 +946,12 @@ function getQuery() {
   if (isMonthView.value) {
     set(DaysFilterType.MONTH_VIEW);
     set(DaysFilterType.REVERSE);
+  }
+
+  // Filter panel
+  for (const key of FILTER_KEYS) {
+    const value = route.query[key];
+    if (value) (query as Record<string, string>)[key] = String(value);
   }
 
   return query;

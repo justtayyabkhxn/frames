@@ -76,6 +76,10 @@ export class API {
     }
   }
 
+  static FILTERS() {
+    return gen(`${BASE}/filters`);
+  }
+
   static DAYS() {
     return tok(gen(`${BASE}/days`));
   }

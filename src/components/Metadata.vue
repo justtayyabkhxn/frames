@@ -26,6 +26,10 @@
     </div>
 
     <div class="section-title">{{ t('memories', 'Metadata') }}</div>
+    <div class="top-field top-field--rating" v-if="!baseInfo.mimetype?.startsWith('video/')">
+      <StarRating :value="rating" :readonly="!canEdit" @change="(r) => setRating(fileid!, r)" />
+      <span v-if="canEdit" class="hint">{{ t('memories', 'Keys 1–5 rate, 0 clears') }}</span>
+    </div>
     <div v-for="field of topFields" :key="field.title" :class="`top-field top-field--${field.id}`">
       <div class="icon">
         <component :is="field.icon" :size="24" />
@@ -91,6 +95,8 @@ import { useRouteIs } from '@services/route-is';
 import Cluster from '@components/frame/Cluster.vue';
 import AlbumsList from '@components/modal/AlbumsList.vue';
 import XLoadingIcon from '@components/XLoadingIcon.vue';
+import StarRating from '@components/StarRating.vue';
+import { setRating } from '@services/rating';
 const MapStandalone = defineAsyncComponent(() => import('@components/MapStandalone.vue'));
 
 import EditIcon from 'vue-material-design-icons/Pencil.vue';
@@ -141,6 +147,9 @@ const abort = useAbort();
 
 /** Whether the current user may edit this file */
 const canEdit = computed(() => baseInfo.value?.permissions?.includes('U'));
+
+/** Star rating (0 = unrated) */
+const rating = computed(() => Math.max(0, Math.min(5, Number(exif.value.Rating) || 0)));
 
 /** Title EXIF value */
 const title = computed(() => exif.value.Title || null);
@@ -562,6 +571,14 @@ a {
   font-size: 0.96em;
   :deep(.line-one__title) {
     font-weight: 400 !important; // no bold title
+  }
+}
+
+.top-field--rating {
+  gap: 12px;
+  .hint {
+    font-size: 0.8em;
+    color: var(--color-text-maxcontrast);
   }
 }
 
