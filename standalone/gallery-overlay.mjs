@@ -126,6 +126,29 @@ const EDITS = [
     "  <NavbarItem title={$t('locked_folder')} href={Route.locked()} icon={mdiLockOutline} activeIcon={mdiLock} />\n",
     '',
   ],
+  // Font: Parkinsans everywhere (bundled in gallery-files, never fetched from Google)
+  [
+    'web/src/app.css',
+    `@layer utilities {
+  @font-face {
+    font-family: 'GoogleSans';`,
+    `@layer utilities {
+  @font-face {
+    font-family: 'Parkinsans';
+    src: url('./lib/assets/fonts/Parkinsans/Parkinsans.ttf') format('truetype-variations');
+    font-weight: 300 800;
+    font-style: normal;
+  }
+
+  @font-face {
+    font-family: 'GoogleSans';`,
+  ],
+  ['web/src/app.css', "--font-sans: 'GoogleSans', sans-serif;", "--font-sans: 'Parkinsans', 'GoogleSans', sans-serif;"],
+  [
+    'web/src/hooks.server.ts',
+    "import GoogleSans from '#lib/assets/fonts/GoogleSans/GoogleSans.ttf?url';",
+    "import GoogleSans from '#lib/assets/fonts/Parkinsans/Parkinsans.ttf?url';",
+  ],
   // Branding
   ['web/src/routes/+layout.svelte', `|| 'Web'} - Immich</title>`, `|| 'Photos'} - Frames</title>`],
   ['web/src/app.html', 'To use Immich,', 'To use Frames,'],

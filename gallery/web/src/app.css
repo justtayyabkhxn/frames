@@ -19,7 +19,7 @@
 }
 
 @theme {
-  --font-sans: 'GoogleSans', sans-serif;
+  --font-sans: 'Parkinsans', 'GoogleSans', sans-serif;
   --font-mono: 'GoogleSansCode', monospace;
 
   --color-logo-red: #fa2921;
@@ -106,6 +106,13 @@
 }
 
 @layer utilities {
+  @font-face {
+    font-family: 'Parkinsans';
+    src: url('./lib/assets/fonts/Parkinsans/Parkinsans.ttf') format('truetype-variations');
+    font-weight: 300 800;
+    font-style: normal;
+  }
+
   @font-face {
     font-family: 'GoogleSans';
     src: url('./lib/assets/fonts/GoogleSans/GoogleSans.ttf') format('truetype-variations');
