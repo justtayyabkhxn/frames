@@ -26,7 +26,7 @@ Point Frames at a folder of photos and videos. It indexes every file once, then 
 - Map and Places, with offline reverse geocoding from OpenStreetMap boundaries
 - Light and dark themes that follow Windows
 
-**Find** (optional AI setup, runs on your CPU)
+**Find** (AI runs locally on your CPU)
 
 - People: faces grouped automatically; name and merge them
 - Explore and smart search: describe what you want, like "dog on the beach"
@@ -47,22 +47,31 @@ Sharing links and multi-user features are not included: Frames is single-user an
 
 ## Quick start
 
-Requirements: Windows 10 or 11 (x64), Git, and an internet connection during setup only. Plan for about 1 GB of disk for tools and dependencies, plus about 4.5 GB if you enable the AI features.
+Requirements: Windows 10 or 11 (x64) and an internet connection during the first run only. Plan for about 1 GB of disk for tools and dependencies, plus about 4.5 GB for the AI features. Nothing else needs to be installed first, not even Node.js.
 
-```powershell
-git clone https://github.com/justtayyabkhxn/frames.git
-cd frames
+1. Get Frames: `git clone https://github.com/justtayyabkhxn/frames.git`, or download the ZIP from GitHub and unpack it.
+2. Double-click `frames.cmd` (or run `.\frames.cmd` in a terminal).
 
-node standalone\setup.mjs                      # portable Node 24, exiftool, ffmpeg, place data -> tools\
-$env:PATH = "$PWD\tools\node;$env:PATH"
-npm ci; npm run build                          # build the web interface -> js\
-node standalone\setup-ai.mjs                   # optional: people + smart search
-.\frames.cmd                                   # asks for your photo folder the first time
-```
+That is all. On the first run `frames.cmd` sets up everything by itself, with live progress for each download:
 
-The setup script needs Node.js 22 or newer to start. No Node installed, or on Linux/macOS? **[SETUP.md](SETUP.md)** has the full step-by-step guide, including a verified portable Node download. It is written so a coding agent can follow it too.
+1. **Node.js runtime:** a portable, checksum-verified Node 24.
+2. **Portable tools:** exiftool, ffmpeg and offline place names.
+3. **Web interface:** installs the UI libraries and builds the app.
+4. **AI engine and models:** Python, CPU-only PyTorch, and the face and search models.
+5. **Your photo folder:** it asks which folder to use; you can drag the folder into the window.
+
+Then Frames opens in your browser. Later starts skip all of this and open straight away.
+
+- Everything is kept inside the Frames folder (`tools\`, `data\`); nothing is installed system-wide.
+- Finished steps are not repeated: if setup stops, for example because the internet dropped, run `frames.cmd` again to continue.
+- If only the AI step fails, Frames starts anyway and retries it on the next start.
+- The full setup log is in `tools\install.log`.
+
+Want to run the steps by hand, or on Linux/macOS? See **[SETUP.md](SETUP.md)**.
 
 ## Using Frames
+
+Start Frames with `frames.cmd` every time. To use a different photo folder:
 
 ```powershell
 .\frames.cmd --dir "D:\Photos"
@@ -134,11 +143,11 @@ The server loads its code at start, so restart it after backend or theme changes
 
 | Symptom | Fix |
 |---|---|
-| `The web interface is not built yet` | Run `npm ci; npm run build`. |
+| Setup stopped or a download failed | Check your internet connection and run `frames.cmd` again; it continues where it stopped. Details are in `tools\install.log`. |
 | `Port 7310 is busy` | Frames is already running: open http://localhost:7310, or set a different `PORT`. |
-| No thumbnails, or videos don't play | `tools\ffmpeg` is missing: re-run `node standalone\setup.mjs`. |
-| People and search missing from the menu | Re-run `node standalone\setup-ai.mjs`, then restart Frames. |
-| Places stay empty | Re-run `node standalone\setup.mjs` while online to fetch the place data. |
+| No thumbnails, or videos don't play | `tools\ffmpeg` is missing: run `frames.cmd` again while online to fetch it. |
+| People and search missing from the menu | The AI setup did not finish: restart `frames.cmd` while online and it retries. |
+| Places stay empty | The place data is missing: run `frames.cmd` again while online to fetch it. |
 
 More in [SETUP.md](SETUP.md#troubleshooting).
 
