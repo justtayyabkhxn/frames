@@ -17,8 +17,5 @@
   {/if}
 </div>
 
-<PurchaseInfo />
 
-<div class="mt-2 mb-6">
-  <ServerStatus />
-</div>
+<div class="mb-6"></div>

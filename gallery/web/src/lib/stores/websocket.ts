@@ -110,6 +110,7 @@ websocket
   .on('connect_error', (e) => console.log('Websocket Connect Error', e));
 
 export const openWebsocketConnection = () => {
+  return;
   try {
     if (
       authManager.authenticated ||

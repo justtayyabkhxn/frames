@@ -60,10 +60,47 @@ const EDITS = [
     `  <NavbarItem title={$t('import')} href={Route.import()} icon={mdiDatabaseImportOutline} />\n`,
     '',
   ],
+  // Single local app: no server status, purchase box or realtime socket; no workflows
+  ['web/src/lib/components/shared-components/side-bar/BottomInfo.svelte', '<PurchaseInfo />\n', ''],
+  [
+    'web/src/lib/components/shared-components/side-bar/BottomInfo.svelte',
+    '<div class="mt-2 mb-6">\n  <ServerStatus />\n</div>',
+    '<div class="mb-6"></div>',
+  ],
+  [
+    'web/src/lib/stores/websocket.ts',
+    'export const openWebsocketConnection = () => {\n',
+    'export const openWebsocketConnection = () => {\n  return;\n',
+  ],
+  [
+    'web/src/routes/(user)/utilities/UtilitiesMenu.svelte',
+    "    { href: Route.workflows(), icon: mdiStateMachine, label: $t('workflows') },\n",
+    '',
+  ],
+  // Admin pages that need several users, external libraries, backups or a database server
+  [
+    'web/src/lib/components/layouts/AdminPageLayout.svelte',
+    `      {#if featureFlagsManager.value.backups}
+        <ImmichBackupsAdminNavButton href={Route.backups()} />
+      {/if}
+
+      <NavbarItem title={$t('users')} href={Route.users()} icon={mdiAccountMultipleOutline} />
+      <NavbarItem title={$t('external_libraries')} href={Route.libraries()} icon={mdiBookshelf} />
+`,
+    '',
+  ],
+  [
+    'web/src/lib/components/layouts/AdminPageLayout.svelte',
+    `      <NavbarItem title={$t('admin.maintenance_settings')} href={Route.systemMaintenance()} icon={mdiWrench} />
+      <NavbarItem title="Storage Migration" href={Route.storageMigration()} icon={mdiCloudSyncOutline} />
+`,
+    '',
+  ],
   // Branding
   ['web/src/routes/+layout.svelte', `|| 'Web'} - Immich</title>`, `|| 'Photos'} - Frames</title>`],
   ['web/src/app.html', 'To use Immich,', 'To use Frames,'],
   ['web/src/lib/components/layouts/AuthPageLayout.svelte', 'alt="Gallery logo"', 'alt="Frames logo"'],
+  ['web/src/lib/components/shared-components/Logo.svelte', 'alt="Gallery logo"', 'alt="Frames logo"'],
 ];
 
 /** Product names in translations; Frames is a single offline app, not "Immich" or "(Noodle) Gallery". */

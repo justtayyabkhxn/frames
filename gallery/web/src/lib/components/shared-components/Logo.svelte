@@ -44,4 +44,4 @@
   const classes = $derived([sizeClasses[size], variantClasses[variant], className].filter(Boolean).join(' '));
 </script>
 
-<img {src} class={classes} alt="Gallery logo" />
+<img {src} class={classes} alt="Frames logo" />

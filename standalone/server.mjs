@@ -161,7 +161,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (hasGallery && SAFE.has(req.method) && !p.startsWith('/api/') && !p.startsWith('/remote.php/'))
       return serveGallery(req, res, p);
-    if (p.startsWith('/api/'))
+    if (p.startsWith('/api/') && !p.startsWith('/api/socket.io'))
       console.warn(`Gallery UI asked for ${req.method} ${p}, which Frames does not support yet`);
     throw new HttpError(404, 'Not found');
   } catch (e) {
