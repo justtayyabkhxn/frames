@@ -302,6 +302,7 @@ export function registerApi(router, ctx) {
     if (!file) throw notFound('Preview not available');
     return { file, n };
   }
+  ctx.previewFile = previewFile;
   router.add('GET', `${API}/image/preview/:id`, async (req, res, { id }, url) => {
     const p = q(url);
     const { file, n } = await previewFile(id, Number(p.get('x')) || 256, Number(p.get('y')) || 256, p.get('a') !== '1');

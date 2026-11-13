@@ -1,5 +1,9 @@
 // Self-check for the Immich API that serves Gallery's web UI: node standalone/immich-test.mjs
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { Writable } from 'node:stream';
+import os from 'node:os';
+import path from 'node:path';
 import { openDb } from './lib/db.mjs';
 import { Router } from './lib/http.mjs';
 import { fromUuid, toUuid } from './lib/immich/ids.mjs';
@@ -32,33 +36,28 @@ export const call = async (method, p, body, headers = {}) => {
       yield* chunks;
     },
   };
-  const res = {
-    status: 200,
-    headers: {},
-    headersSent: false,
-    writeHead(s, h) {
-      this.status = s;
-      Object.assign(this.headers, h);
-      this.headersSent = true;
-      return this;
+  const chunks2 = [];
+  const res = new Writable({
+    write(chunk, _, cb) {
+      chunks2.push(Buffer.from(chunk));
+      cb();
     },
-    setHeader(k, v) {
-      this.headers[k] = v;
-    },
-    write(b) {
-      (this.chunks ??= []).push(Buffer.from(b));
-      return true;
-    },
-    end(b) {
-      if (b) (this.chunks ??= []).push(Buffer.from(b));
-      this.body = Buffer.concat(this.chunks ?? []);
-      this.headersSent = true;
-    },
-    on() {},
-    once() {},
-    emit() {},
-  };
-  await m.fn(req, res, m.params, url);
+  });
+  Object.assign(res, { status: 200, headers: {} });
+  res.writeHead = (st, h) => (
+    Object.assign(res, { status: st, headersSent: true }),
+    Object.assign(res.headers, h),
+    res
+  );
+  res.setHeader = (k, v) => (res.headers[k] = v);
+  const done = new Promise((r) => res.on('finish', r));
+  try {
+    await m.fn(req, res, m.params, url);
+  } catch (e) {
+    return { status: e.status ?? 500, headers: {}, body: Buffer.from(JSON.stringify({ message: e.message })) };
+  }
+  await done;
+  res.body = Buffer.concat(chunks2);
   return res;
 };
 export const api = async (method, p, body) => {
@@ -119,5 +118,23 @@ for (const k of [
 ])
   assert.equal(b[k].length, 2, k);
 assert.deepEqual(await api('GET', '/api/timeline/buckets?isTrashed=true'), []);
+
+// Media: thumbnails from Frames previews, originals and video with Range, bad ids are 400s
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-immich-'));
+fs.writeFileSync(path.join(tmp, 'a.jpg'), 'JPEGDATA');
+fs.writeFileSync(path.join(tmp, 'preview.jpg'), 'PREVIEW');
+ctx.lib.abs = (rel) => path.join(tmp, rel);
+const asked = [];
+ctx.previewFile = async (id, x, y, sq) => (asked.push([id, x, y, sq]), { file: path.join(tmp, 'preview.jpg') });
+let r = await call('GET', `/api/assets/${toUuid('asset', 2)}/thumbnail?size=thumbnail`);
+assert.equal(r.status, 200);
+assert.equal(r.headers['Content-Type'], 'image/jpeg');
+assert.deepEqual(asked.at(-1), [2, 250, 250, false]);
+await call('GET', `/api/assets/${toUuid('asset', 2)}/thumbnail?size=preview`);
+assert.deepEqual(asked.at(-1), [2, 1440, 1440, false]);
+r = await call('GET', `/api/assets/${toUuid('asset', 2)}/original`, undefined, { range: 'bytes=0-1' });
+assert.equal(r.status, 206);
+r = await call('GET', '/api/assets/not-a-uuid/thumbnail');
+assert.equal(r.status, 400);
 
 console.log('ok');
