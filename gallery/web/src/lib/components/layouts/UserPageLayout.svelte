@@ -66,7 +66,7 @@
 
 <header>
   {#if !hideNavbar}
-    <NavigationBar onUploadClick={() => openFileUploadDialog()} railAware={!sidebar} />
+    <NavigationBar railAware={!sidebar} />
   {/if}
 </header>
 <!-- The two height sources are not interchangeable: with a navbar the grid sits *below* a real

@@ -1,0 +1,116 @@
+// Frames' changes on top of Gallery's web app, applied by sync-gallery.mjs after every copy:
+// Frames branding, and no upload / multi-user entry points (Frames is one offline library folder).
+// Each edit is an exact find/replace and fails loudly when Gallery's code moved, so nothing is silently skipped.
+import fs from 'node:fs';
+import path from 'node:path';
+
+const EDITS = [
+  // Upload: header button, drag-and-drop overlay, upload panel, empty-state click, command palette, album action
+  [
+    'web/src/lib/components/layouts/UserPageLayout.svelte',
+    '<NavigationBar onUploadClick={() => openFileUploadDialog()} ',
+    '<NavigationBar ',
+  ],
+  ['web/src/routes/(user)/+layout.svelte', '<UploadCover />', ''],
+  ['web/src/routes/+layout.svelte', '<UploadPanel />', ''],
+  ['web/src/routes/(user)/photos/[[assetId=id]]/+page.svelte', ` onClick={() => openFileUploadDialog()}`, ''],
+  [
+    'web/src/routes/(user)/recently-added/[[photos=photos]]/[[assetId=id]]/+page.svelte',
+    ` onClick={() => openFileUploadDialog()}`,
+    '',
+  ],
+  [
+    'web/src/lib/managers/command-items.ts',
+    `  {
+    id: 'cmd:upload',
+    labelKey: 'upload',
+    descriptionKey: 'cmdk_cmd_upload_description',
+    icon: mdiCloudUploadOutline,
+    handler: () => openFileUploadDialog(),
+  },
+`,
+    '',
+  ],
+  [
+    'web/src/lib/services/album.service.ts',
+    `    icon: mdiUpload,\n    onAction:`,
+    `    icon: mdiUpload,\n    $if: () => false,\n    onAction:`,
+  ],
+  // Safety net: no code path can open a file picker or send files
+  [
+    'web/src/lib/utils/file-uploader.ts',
+    'export const openFileUploadDialog = async (options: FileUploadParam = {}) => {\n',
+    'export const openFileUploadDialog = async (options: FileUploadParam = {}): Promise<string[]> => {\n  return [];\n',
+  ],
+  // Single user: no spaces, sharing or import
+  ['web/src/lib/components/shared-components/side-bar/UserSidebar.svelte', '  <SpacesNavItem />\n', ''],
+  [
+    'web/src/lib/components/shared-components/side-bar/UserSidebar.svelte',
+    `  <NavbarItem
+    title={$t('sharing')}
+    href={Route.sharing()}
+    icon={mdiAccountMultipleOutline}
+    activeIcon={mdiAccountMultiple}
+  />
+`,
+    '',
+  ],
+  [
+    'web/src/lib/components/shared-components/side-bar/UserSidebar.svelte',
+    `  <NavbarItem title={$t('import')} href={Route.import()} icon={mdiDatabaseImportOutline} />\n`,
+    '',
+  ],
+  // Branding
+  ['web/src/routes/+layout.svelte', `|| 'Web'} - Immich</title>`, `|| 'Photos'} - Frames</title>`],
+  ['web/src/app.html', 'To use Immich,', 'To use Frames,'],
+  ['web/src/lib/components/layouts/AuthPageLayout.svelte', 'alt="Gallery logo"', 'alt="Frames logo"'],
+];
+
+/** Product names in translations; Frames is a single offline app, not "Immich" or "(Noodle) Gallery". */
+const NAMES = [
+  [/\bNoodle Gallery\b/g, 'Frames'],
+  [/\bImmich\b/g, 'Frames'],
+  [/\bGallery\b/g, 'Frames'],
+];
+const EN = { no_assets_message: 'No photos yet: copy some into your library folder' };
+
+export function applyFramesOverlay(dest, brandingDir) {
+  const crlf = new Map();
+  const read = (rel) => {
+    const raw = fs.readFileSync(path.join(dest, rel), 'utf8');
+    crlf.set(rel, raw.includes('\r\n'));
+    return raw.replace(/\r\n/g, '\n');
+  };
+  const write = (rel, s) => fs.writeFileSync(path.join(dest, rel), crlf.get(rel) ? s.replace(/\n/g, '\r\n') : s);
+
+  for (const [rel, find, replace] of EDITS) {
+    const s = read(rel);
+    if (!s.includes(find)) throw new Error(`Frames overlay: "${find.trim().slice(0, 60)}" not found in ${rel}`);
+    write(rel, s.replace(find, replace));
+  }
+
+  for (const dir of ['i18n', 'i18n/gallery'])
+    for (const f of fs.readdirSync(path.join(dest, dir)).filter((f) => f.endsWith('.json'))) {
+      const rel = `${dir}/${f}`;
+      const rename = (v) =>
+        typeof v === 'string'
+          ? NAMES.reduce((s, [re, to]) => s.replace(re, to), v)
+          : v && typeof v === 'object'
+            ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, rename(x)]))
+            : v;
+      const data = rename(JSON.parse(read(rel)));
+      if (f === 'en.json') for (const [k, v] of Object.entries(EN)) if (k in data) data[k] = v;
+      write(rel, `${JSON.stringify(data, null, 2)}\n`);
+    }
+
+  const manifest = JSON.parse(read('web/static/manifest.json'));
+  Object.assign(manifest, {
+    name: 'Frames',
+    short_name: 'Frames',
+    description: 'Your photo library, offline on your PC.',
+  });
+  write('web/static/manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
+
+  for (const f of fs.readdirSync(brandingDir))
+    fs.copyFileSync(path.join(brandingDir, f), path.join(dest, 'web', 'static', f));
+}

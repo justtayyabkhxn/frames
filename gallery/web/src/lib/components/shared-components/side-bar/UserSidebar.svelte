@@ -49,7 +49,6 @@
 <Sidebar ariaLabel={$t('primary')}>
   <NavbarItem title={$t('photos')} href={Route.photos()} icon={mdiImageMultipleOutline} activeIcon={mdiImageMultiple} />
 
-  <SpacesNavItem />
 
   <NavbarItem title={$t('explore')} href={Route.explore()} icon={mdiMagnify} />
 
@@ -69,12 +68,6 @@
     <NavbarItem title={$t('shared_links')} href={Route.sharedLinks()} icon={mdiLink} />
   {/if}
 
-  <NavbarItem
-    title={$t('sharing')}
-    href={Route.sharing()}
-    icon={mdiAccountMultipleOutline}
-    activeIcon={mdiAccountMultiple}
-  />
 
   <NavbarGroup title={$t('library')} size="tiny" />
 
@@ -111,7 +104,6 @@
 
   <NavbarItem title={$t('utilities')} href={Route.utilities()} icon={mdiToolboxOutline} activeIcon={mdiToolbox} />
 
-  <NavbarItem title={$t('import')} href={Route.import()} icon={mdiDatabaseImportOutline} />
 
   <NavbarItem
     title={$t('archive')}

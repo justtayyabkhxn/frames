@@ -69,7 +69,8 @@ export const openFilePicker = async (options: FilePickerParam = {}) => {
   });
 };
 
-export const openFileUploadDialog = async (options: FileUploadParam = {}) => {
+export const openFileUploadDialog = async (options: FileUploadParam = {}): Promise<string[]> => {
+  return [];
   const { albumId, multiple = true } = options;
   const extensions = uploadManager.getExtensions();
   const files = await openFilePicker({

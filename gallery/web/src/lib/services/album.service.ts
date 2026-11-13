@@ -153,6 +153,7 @@ export const getAlbumAssetsActions = ($t: MessageFormatter, album: AlbumResponse
     title: $t('select_from_computer'),
     description: $t('album_upload_assets'),
     icon: mdiUpload,
+    $if: () => false,
     onAction: () => void openFileUploadDialog({ albumId: album.id }),
   };
 

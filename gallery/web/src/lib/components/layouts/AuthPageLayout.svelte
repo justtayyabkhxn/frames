@@ -19,7 +19,7 @@
       <img
         src="/gallery-logo-mark.svg"
         class="mx-auto mb-2 h-full max-w-(--breakpoint-md) overflow-hidden antialiased"
-        alt="Gallery logo"
+        alt="Frames logo"
       />
       <div
         class="absolute inset-s-0 top-0 h-[99%] w-full bg-transparent backdrop-blur-[200px] dark:bg-immich-dark-bg/20"

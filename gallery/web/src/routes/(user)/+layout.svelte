@@ -26,7 +26,7 @@
 <div class:display-none={assetViewerManager.isViewing}>
   {@render children?.()}
 </div>
-<UploadCover />
+
 
 <style>
   :root {

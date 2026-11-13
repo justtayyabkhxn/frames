@@ -103,7 +103,7 @@
     withStacked
   >
     {#snippet empty()}
-      <EmptyPlaceholder text={$t('no_assets_message')} onClick={() => openFileUploadDialog()} class="mx-auto mt-10" />
+      <EmptyPlaceholder text={$t('no_assets_message')} class="mx-auto mt-10" />
     {/snippet}
   </Timeline>
 </FilteredTimelinePage>

@@ -125,7 +125,7 @@
       {#if filtered.isNarrowed}
         <EmptyPlaceholder text={$t('no_results')} class="mx-auto mt-10" />
       {:else}
-        <EmptyPlaceholder text={$t('no_assets_message')} onClick={() => openFileUploadDialog()} class="mx-auto mt-10" />
+        <EmptyPlaceholder text={$t('no_assets_message')} class="mx-auto mt-10" />
       {/if}
     {/snippet}
   </Timeline>

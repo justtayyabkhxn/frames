@@ -140,13 +140,6 @@ export const COMMAND_ITEMS: readonly CommandItem[] = [
     handler: () => themeManager.toggle(),
   },
   {
-    id: 'cmd:upload',
-    labelKey: 'upload',
-    descriptionKey: 'cmdk_cmd_upload_description',
-    icon: mdiCloudUploadOutline,
-    handler: () => openFileUploadDialog(),
-  },
-  {
     id: 'cmd:new_album',
     labelKey: 'new_album',
     descriptionKey: 'cmdk_cmd_new_album_description',

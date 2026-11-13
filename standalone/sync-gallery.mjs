@@ -2,6 +2,7 @@
 // Usage: node standalone/sync-gallery.mjs <path to Gallery repo>
 import fs from 'node:fs';
 import path from 'node:path';
+import { applyFramesOverlay } from './gallery-overlay.mjs';
 import { APP_ROOT } from './lib/tools.mjs';
 
 const src = path.resolve(process.argv[2] ?? '');
@@ -93,6 +94,8 @@ function configViews(spec) {
     );
   return { user: tree('UserConfigDto'), public: tree('PublicConfigDto') };
 }
+
+applyFramesOverlay(dest, path.join(APP_ROOT, 'standalone', 'branding'));
 
 const out = path.join(APP_ROOT, 'standalone', 'lib', 'immich');
 fs.mkdirSync(out, { recursive: true });
