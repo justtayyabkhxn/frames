@@ -6,6 +6,17 @@ import path from 'node:path';
 
 export const APP_ROOT = path.resolve(import.meta.dirname, '..', '..');
 export const TOOLS = path.join(APP_ROOT, 'tools');
+/** Caches of the tools Frames runs (AI libraries, package managers) stay inside the Frames folder. */
+export const CACHE = path.join(TOOLS, 'cache');
+export const cacheEnv = () => ({
+  XDG_CACHE_HOME: CACHE,
+  HF_HOME: path.join(CACHE, 'huggingface'),
+  TORCH_HOME: path.join(CACHE, 'torch'),
+  PIP_CACHE_DIR: path.join(CACHE, 'pip'),
+  COREPACK_HOME: path.join(CACHE, 'corepack'),
+  npm_config_cache: path.join(CACHE, 'npm'),
+  npm_config_store_dir: path.join(CACHE, 'pnpm-store'),
+});
 /** Gallery's web app, built by standalone/build-gallery.mjs; served at / */
 export const GALLERY_BUILD = path.join(APP_ROOT, 'gallery', 'web', 'build');
 

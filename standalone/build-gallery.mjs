@@ -2,10 +2,10 @@
 // Usage: node standalone/build-gallery.mjs
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { APP_ROOT } from './lib/tools.mjs';
+import { APP_ROOT, cacheEnv } from './lib/tools.mjs';
 
 const cwd = path.join(APP_ROOT, 'gallery');
-const env = { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' };
+const env = { ...process.env, ...cacheEnv(), COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' };
 const pnpm = (...args) =>
   execFileSync(process.platform === 'win32' ? 'corepack.cmd' : 'corepack', ['pnpm', ...args], {
     cwd,

@@ -1,5 +1,4 @@
 import { badRequest, json, notFound } from './http.mjs';
-import { ARCHIVE } from './indexer.mjs';
 import { createTiles } from './map-tiles.mjs';
 import { createPlaces } from './places-data.mjs';
 
@@ -13,9 +12,9 @@ export function registerMap(router, ctx) {
   /** Shared timeline WHERE (api.mjs filter when exposed as ctx.filter, else everything outside the archive). */
   const base = (p = new URLSearchParams()) => {
     const f = ctx.filter?.(p) ?? {
-      args: { a: ARCHIVE, as: `${ARCHIVE}/`, al: ARCHIVE.length + 1 },
+      args: {},
       joins: [],
-      where: ['m.livevideo = 0', 'NOT (n.path = :a OR substr(n.path, 1, :al) = :as)'],
+      where: ['m.livevideo = 0', 'n.archived = 0'],
     };
     return {
       ...f,

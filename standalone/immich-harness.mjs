@@ -40,12 +40,22 @@ export function setup({ lensPost, lensGet, register } = {}) {
       setArchived: (id, on) => lensCalls.push(['archive', Number(id), on]),
     },
   };
+  let next = 100;
   const router = new Router();
   registerApi(router, ctx);
   registerAi(router, ctx);
   const A = registerImmich(router, ctx);
   register?.(router, ctx, A);
   db.exec(`INSERT INTO nodes (id, path, parent, name, dir) VALUES (1, '', NULL, '', 1)`);
+  /** Like Indexer.ensureNode: the id of rel's node, creating it (and parent folders) when missing. */
+  ctx.indexer.ensureNode = (rel, { dir = false } = {}) => {
+    const have = db.q('SELECT id FROM nodes WHERE path = ?').get(rel);
+    if (have) return have.id;
+    const parent = rel.includes('/') ? ctx.indexer.ensureNode(rel.slice(0, rel.lastIndexOf('/')), { dir: true }) : 1;
+    return db
+      .q('INSERT INTO nodes (id, path, parent, name, dir) VALUES (?, ?, ?, ?, ?) RETURNING id')
+      .get(next++, rel, parent, rel.split('/').pop(), dir ? 1 : 0).id;
+  };
 
   /** Run one request through the router like server.mjs does; errors become status codes. */
   const call = async (method, p, body, headers = {}) => {
@@ -95,7 +105,6 @@ export function setup({ lensPost, lensGet, register } = {}) {
 
   const T = (s) => Date.parse(`${s}Z`) / 1000;
   /** Add a file (and folders on the way) with media metadata; returns its id. */
-  let next = 100;
   const media = (rel, taken, { video = false, size = 100, w = 400, h = 300, exif = {}, favorite = 0 } = {}) => {
     let parent = 1;
     const parts = rel.split('/');

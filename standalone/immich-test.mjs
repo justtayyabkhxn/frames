@@ -98,6 +98,7 @@ const T = (s) => Date.parse(`${s}Z`) / 1000;
 media(2, 'a.jpg', T('2024-03-05T10:00:00'));
 media(3, 'b.jpg', T('2024-03-20T10:00:00'), 'isvideo=1');
 media(4, '.archive/c.jpg', T('2024-01-02T10:00:00'));
+db.exec('UPDATE nodes SET archived = 1 WHERE id = 4');
 db.exec('UPDATE media SET video_duration = 6 WHERE id = 3');
 assert.deepEqual(await api('GET', '/api/timeline/buckets?visibility=timeline'), [
   { timeBucket: '2024-03-01', count: 2 },

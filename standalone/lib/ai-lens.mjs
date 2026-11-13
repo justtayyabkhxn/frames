@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { APP_ROOT, TOOLS } from './tools.mjs';
+import { APP_ROOT, cacheEnv, TOOLS } from './tools.mjs';
 
 export const LENS_DIR = path.join(APP_ROOT, 'lens');
 export const PYTHON_DIR = path.join(TOOLS, 'python');
@@ -40,6 +40,7 @@ export function lensEnv({ url, token, qdrantPath, offline = true }) {
     SCAN_INTERVAL: '600',
     PYTHONNOUSERSITE: '1',
     PYTHONUTF8: '1',
+    ...cacheEnv(),
     ...(offline && { HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1' }),
   };
 }

@@ -62,4 +62,21 @@ if (d) await api('DELETE', '/api/assets', { ids: [toUuid('asset', d)] });
 assert.deepEqual(await api('POST', '/api/trash/empty', {}), { count: d ? 1 : 0 });
 assert.deepEqual(await api('GET', '/api/timeline/buckets?isTrashed=true'), []);
 
+// Archive is a mark: files never move
+const e = file('2022/e.jpg', media('2022/e.jpg', '2022-01-01T10:00:00'));
+await api('PUT', '/api/assets', { ids: [toUuid('asset', e)], visibility: 'archive' });
+assert.equal(db.q('SELECT archived FROM nodes WHERE id = ?').get(e).archived, 1);
+assert.ok(fs.existsSync(path.join(tmp, '2022/e.jpg')));
+assert.equal((await api('GET', '/api/timeline/buckets?visibility=archive'))[0].count, 1);
+
+// One-time migration from Frames-made folders in the library (.archive, .frames-trash) into marks / <data>/trash
+const old = file('.archive/2021/old.jpg', media('.archive/2021/old.jpg', '2021-01-01T10:00:00'));
+fs.mkdirSync(path.join(tmp, '.frames-trash'), { recursive: true });
+fs.writeFileSync(path.join(tmp, '.frames-trash', '9-gone.jpg'), 'g');
+ctx.lib.migrateLegacyFolders();
+assert.equal(db.q('SELECT path, archived FROM nodes WHERE id = ?').get(old).path, '2021/old.jpg');
+assert.equal(db.q('SELECT archived FROM nodes WHERE id = ?').get(old).archived, 1);
+assert.ok(fs.existsSync(path.join(tmp, '2021/old.jpg')) && !fs.existsSync(path.join(tmp, '.archive')));
+assert.ok(fs.existsSync(path.join(tmp, 'trash', '9-gone.jpg')) && !fs.existsSync(path.join(tmp, '.frames-trash')));
+
 console.log('ok');

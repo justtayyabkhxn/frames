@@ -4,7 +4,7 @@ import { ASSET_SELECT } from './timeline.mjs';
 
 const DAY = 86400;
 const MAX_ASSETS = 100;
-const notArchived = "NOT (n.path = '.archive' OR substr(n.path, 1, 9) = '.archive/')";
+const notArchived = 'n.archived = 0';
 
 /**
  * "On this day" memories for `today`: one per earlier year with photos within Frames' day range

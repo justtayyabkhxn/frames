@@ -22,6 +22,9 @@ import { registerImmich } from './lib/immich/server.mjs';
 import { APP_ROOT, findExiftool, findFfmpeg, GALLERY_BUILD } from './lib/tools.mjs';
 
 const DATA = process.env.FRAMES_DATA ? path.resolve(process.env.FRAMES_DATA) : path.join(APP_ROOT, 'data');
+// Temp files of Frames and every tool it runs (exiftool unpacks itself into TEMP) stay in the data folder
+process.env.TMP = process.env.TEMP = process.env.TMPDIR = path.join(DATA, 'tmp');
+fs.mkdirSync(process.env.TMP, { recursive: true });
 const CONFIG = path.join(DATA, 'config.json');
 const JS = process.env.FRAMES_JS ? path.resolve(process.env.FRAMES_JS) : path.join(APP_ROOT, 'js');
 const PORT = Number(process.env.PORT) || 7310;
@@ -76,6 +79,7 @@ if (ctx.db.getKv('root') !== ctx.root) {
   fs.rmSync(path.join(DATA, 'previews'), { recursive: true, force: true });
   ctx.db.setKv('root', ctx.root);
 }
+ctx.lib.migrateLegacyFolders();
 
 const router = new Router();
 registerApi(router, ctx);

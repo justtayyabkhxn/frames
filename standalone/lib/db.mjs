@@ -99,6 +99,9 @@ export function openDb(file) {
     db.setKv(key, id);
     return id;
   };
+  // Archive is a mark (files stay where they are); older versions moved files into <library>/.archive
+  if (!db.q("SELECT 1 FROM pragma_table_info('nodes') WHERE name = 'archived'").get())
+    db.exec('ALTER TABLE nodes ADD COLUMN archived INTEGER NOT NULL DEFAULT 0');
   db.getKv = (key, def) => db.q('SELECT value FROM kv WHERE key = ?').get(key)?.value ?? def;
   db.setKv = (key, value) =>
     db

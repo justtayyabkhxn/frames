@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { badRequest, contentDisposition, json, notFound, readJson, sendFile } from './http.mjs';
-import { ARCHIVE } from './indexer.mjs';
 import { cleanRel } from './library.mjs';
 import { exiftool } from './tools.mjs';
 import { zipStream } from './zip.mjs';
@@ -99,9 +98,9 @@ export function registerApi(router, ctx) {
         f.where.push('n.parent = :folder');
         f.args.folder = folder.id;
       }
-      if (!lib.isArchived(rel)) f.where.push(`NOT ${underSql(f, ARCHIVE)}`);
+      f.where.push('n.archived = 0');
     } else if (archive) {
-      f.where.push(underSql(f, ARCHIVE));
+      f.where.push('n.archived = 1');
     } else {
       if (!f.cluster)
         f.where.push(
@@ -109,7 +108,7 @@ export function registerApi(router, ctx) {
             .map((t) => underSql(f, t))
             .join(' OR ')})`,
         );
-      f.where.push(`NOT ${underSql(f, ARCHIVE)}`);
+      f.where.push('n.archived = 0');
     }
 
     if (p.has('frating')) ((f.args.frating = Number(p.get('frating')) | 0), f.where.push(`${RATING} >= :frating`));

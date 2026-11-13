@@ -1,9 +1,8 @@
-import { ARCHIVE } from '../indexer.mjs';
 import { maybeId, toUuid } from './ids.mjs';
 
 const iso = (sec) => new Date(sec * 1000).toISOString();
 const BUCKET = "strftime('%Y-%m-01', m.datetaken, 'unixepoch')";
-const archived = `(n.path = '${ARCHIVE}' OR substr(n.path, 1, ${ARCHIVE.length + 1}) = '${ARCHIVE}/')`;
+const archived = 'n.archived = 1';
 
 /** Columns every asset query selects (timeline buckets, search results, asset info). */
 export const ASSET_SELECT = `n.id, n.path, n.name, n.mime, n.size, n.favorite, n.etag, n.mtime, m.w, m.h, m.datetaken, m.epoch,

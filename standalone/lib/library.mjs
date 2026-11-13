@@ -40,9 +40,9 @@ export class Library {
   constructor(ctx) {
     this.ctx = ctx;
     this.db = ctx.db;
-    // Trash lives inside the library so moving into it never crosses drives; the scan skips dot folders
-    this.trashDir = path.join(ctx.root, '.frames-trash');
-    this.legacyTrashDir = path.join(ctx.dataDir, 'trash');
+    // Everything Frames creates stays in its own folder: the Bin is <data>/trash (moves across drives copy)
+    this.trashDir = path.join(ctx.dataDir, 'trash');
+    this.legacyTrashDir = path.join(ctx.root, '.frames-trash');
   }
 
   /** Same file on this filesystem? (Windows and macOS compare names case-insensitively.) */
@@ -195,15 +195,52 @@ export class Library {
     this.db.q('DELETE FROM trash WHERE id = ?').run(t.id);
   }
 
-  isArchived(rel) {
-    return rel === ARCHIVE || rel.startsWith(`${ARCHIVE}/`);
-  }
-
-  /** Archive: move into /.archive keeping the relative layout; unarchive moves it back. */
+  /** Archive is a mark in the index; a folder marks everything in it. Files never move. */
   setArchived(id, archive) {
     const n = this.mustNode(id);
-    if (archive === this.isArchived(n.path)) return n.id;
-    const to = archive ? `${ARCHIVE}/${n.path}` : n.path.slice(ARCHIVE.length + 1);
-    return this.move(n.id, this.freeRel(to));
+    this.db
+      .q('UPDATE nodes SET archived = ? WHERE id = ? OR (? = 1 AND substr(path, 1, ?) = ?)')
+      .run(archive ? 1 : 0, n.id, n.dir, n.path.length + 1, `${n.path}/`);
+    return n.id;
+  }
+
+  /**
+   * One-time move away from Frames-made folders in the library: files older versions put in
+   * <library>/.archive go back to their own folder (marked archived), and the Bin moves into <data>/trash.
+   */
+  migrateLegacyFolders() {
+    const old = this.db
+      .q('SELECT * FROM nodes WHERE dir = 0 AND substr(path, 1, ?) = ? ORDER BY path')
+      .all(ARCHIVE.length + 1, `${ARCHIVE}/`);
+    for (const n of old) {
+      try {
+        const id = this.move(n.id, this.freeRel(n.path.slice(ARCHIVE.length + 1)));
+        this.db.q('UPDATE nodes SET archived = 1 WHERE id = ?').run(id ?? n.id);
+      } catch (e) {
+        console.error(`Could not move ${n.path} out of the archive folder:`, e?.message ?? e);
+      }
+    }
+    const archiveDir = this.abs(ARCHIVE);
+    if (
+      old.length &&
+      fs.existsSync(archiveDir) &&
+      !fs.readdirSync(archiveDir, { recursive: true }).some((f) => !fs.statSync(path.join(archiveDir, f)).isDirectory())
+    ) {
+      fs.rmSync(archiveDir, { recursive: true, force: true });
+      this.db
+        .q('DELETE FROM nodes WHERE path = ? OR substr(path, 1, ?) = ?')
+        .run(ARCHIVE, ARCHIVE.length + 1, `${ARCHIVE}/`);
+    }
+    if (fs.existsSync(this.legacyTrashDir)) {
+      fs.mkdirSync(this.trashDir, { recursive: true });
+      for (const f of fs.readdirSync(this.legacyTrashDir)) {
+        try {
+          moveFs(path.join(this.legacyTrashDir, f), path.join(this.trashDir, f));
+        } catch (e) {
+          console.error(`Could not move ${f} into the Frames Bin:`, e?.message ?? e);
+        }
+      }
+      if (!fs.readdirSync(this.legacyTrashDir).length) fs.rmSync(this.legacyTrashDir, { recursive: true, force: true });
+    }
   }
 }

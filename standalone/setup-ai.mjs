@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LENS_DIR, lensEnv, MODELS_DIR, PYTHON, PYTHON_DIR, READY_MARKER } from './lib/ai-lens.mjs';
-import { TOOLS } from './lib/tools.mjs';
+import { cacheEnv, TOOLS } from './lib/tools.mjs';
 
 // python-build-standalone (astral-sh), relocatable CPython
 const PY_REL = '20261026';
@@ -22,7 +22,8 @@ if (process.platform !== 'win32' || process.arch !== 'x64') {
 }
 
 const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: 'inherit', windowsHide: true, ...opts });
-const py = (args, opts = {}) => sh(PYTHON, args, { env: { ...process.env, PYTHONNOUSERSITE: '1' }, ...opts });
+const py = (args, opts = {}) =>
+  sh(PYTHON, args, { env: { ...process.env, ...cacheEnv(), PYTHONNOUSERSITE: '1' }, ...opts });
 
 /** Download any pinned model not yet on disk (all SHA-checked; complete ones are skipped). */
 function fetchModels() {
