@@ -376,6 +376,7 @@ function refreshNav() {
       name: 'thisday',
       icon: markRaw(CalendarIcon),
       title: t('memories', 'On this day'),
+      if: config.enable_top_memories,
     },
     {
       name: 'places-list',

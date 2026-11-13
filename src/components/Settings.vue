@@ -39,14 +39,6 @@
       </NcCheckboxRadioSwitch>
 
       <NcCheckboxRadioSwitch
-        :model-value="config.enable_top_memories"
-        @update:model-value="updateEnableTopMemories"
-        type="switch"
-      >
-        {{ t('memories', 'Show past photos on top of timeline') }}
-      </NcCheckboxRadioSwitch>
-
-      <NcCheckboxRadioSwitch
         :model-value="config.stack_raw_files"
         @update:model-value="updateStackRawFiles"
         type="switch"
@@ -288,6 +280,14 @@
     </NcAppSettingsSection>
 
     <NcAppSettingsSection id="onthisday-settings" :name="names.onthisday">
+      <NcCheckboxRadioSwitch
+        :model-value="config.enable_top_memories"
+        @update:model-value="updateEnableTopMemories"
+        type="switch"
+      >
+        {{ t('memories', 'Show memories ("2 years ago today") on the timeline and in the menu') }}
+      </NcCheckboxRadioSwitch>
+
       <NcTextField
         :label="t('memories', 'Day range (0-7)')"
         :label-visible="true"
