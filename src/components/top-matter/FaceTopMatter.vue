@@ -21,6 +21,14 @@
             {{ t('memories', 'Unassigned faces') }}
             <template #icon> <UnassignedIcon :size="20" /> </template>
           </NcActionButton>
+          <NcActionButton
+            :aria-label="t('memories', 'Clean up people')"
+            @click="router.push('/face-cleanup')"
+            close-after-click
+          >
+            {{ t('memories', 'Clean up people') }}
+            <template #icon> <CleanupIcon :size="20" /> </template>
+          </NcActionButton>
         </template>
 
         <!-- real cluster -->
@@ -82,6 +90,7 @@ import EditIcon from 'vue-material-design-icons/Pencil.vue';
 import DeleteIcon from 'vue-material-design-icons/Close.vue';
 import MergeIcon from 'vue-material-design-icons/Merge.vue';
 import UnassignedIcon from 'vue-material-design-icons/AccountQuestion.vue';
+import CleanupIcon from 'vue-material-design-icons/AccountCheck.vue';
 
 defineOptions({
   name: 'FaceTopMatter',

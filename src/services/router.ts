@@ -161,6 +161,13 @@ export const routes = {
     props: (route: RouteLocationNormalized) => ({ rootTitle: t('memories', 'Explore') }),
   },
 
+  FaceCleanup: {
+    path: '/face-cleanup',
+    component: () => import('@components/FaceCleanup.vue'),
+    name: 'face-cleanup',
+    props: (route: RouteLocationNormalized) => ({ rootTitle: t('memories', 'Clean up people') }),
+  },
+
   Duplicates: {
     path: '/duplicates',
     component: () => import('@components/Duplicates.vue'),

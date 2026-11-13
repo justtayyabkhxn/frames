@@ -185,5 +185,46 @@ const post = async (p, body) => {
 await post('duplicates/dismiss', { keys: ['2,3'] });
 assert.deepEqual((await api('duplicates')).groups, []);
 
+// Face suggestions: rejected faces are not offered again; confirming assigns
+db.exec(`INSERT INTO people (id, name) VALUES (500, 'Bob');
+  INSERT INTO faces (id, point, fileid, cluster, x, y, w, h, score) VALUES
+    (20, 's1', 2, 500, 0, 0, .1, .1, .9), (21, 's2', 3, NULL, 0, 0, .1, .1, .9), (22, 's3', 4, NULL, 0, 0, .1, .1, .9)`);
+const lensPost = ctx.lens.post;
+const sent = [];
+ctx.lens.post = async (p, body) => {
+  sent.push([p, body]);
+  if (p === '/v1/faces/suggestions')
+    return {
+      items: [
+        { id: 's2', distance: 0.55 },
+        { id: 's3', distance: 0.6 },
+      ].filter((i) => !body.exclude.includes(i.id)),
+    };
+  if (p === '/v1/faces/audit')
+    return { faces: [{ id: 's1', cluster_id: 500, suspected: 600, own: 0, other: 4, nearest: 0.2 }] };
+  return lensPost(p, body);
+};
+let sugg = await api('people/500/suggestions');
+assert.deepEqual(
+  sugg.items.map((i) => i.faceid),
+  [21, 22],
+);
+await post('people/500/suggestions/21', { action: 'reject' });
+await post('people/500/suggestions/22', { action: 'confirm' });
+assert.equal(db.q('SELECT cluster FROM faces WHERE id = 22').get().cluster, 500);
+sugg = await api('people/500/suggestions');
+assert.deepEqual(sent.at(-1)[1].exclude, ['s2']);
+assert.deepEqual(sugg.items, []);
+
+// Face cleanup: flagged faces grouped by person; "keep here" excludes them from later scans
+const cleanup = await api('faces/cleanup');
+assert.deepEqual(
+  cleanup.people.map((p) => [p.name, p.faces.map((f) => [f.faceid, f.suspected])]),
+  [['Bob', [[20, 600]]]],
+);
+await post('faces/cleanup/apply', { stay: [20] });
+await api('faces/cleanup');
+assert.deepEqual(sent.at(-1)[1].exclude, ['s1']);
+
 fs.rmSync(dataDir, { recursive: true, force: true });
 console.log('ok');

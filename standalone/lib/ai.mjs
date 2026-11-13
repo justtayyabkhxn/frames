@@ -25,6 +25,10 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS faces_fileid ON faces (fileid);
   CREATE INDEX IF NOT EXISTS faces_cluster ON faces (cluster);
   CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, name TEXT UNIQUE, cover INTEGER);
+  -- Review decisions: 'rejected'/'ignored' hide a suggestion for that person, 'stay' keeps a face out of cleanup
+  CREATE TABLE IF NOT EXISTS face_verdicts (
+    point TEXT NOT NULL, cluster INTEGER NOT NULL, status TEXT NOT NULL, PRIMARY KEY (point, cluster)
+  );
   -- A deleted file's faces must never attach to whatever file is indexed next
   CREATE TRIGGER IF NOT EXISTS faces_node_deleted AFTER DELETE ON nodes BEGIN
     DELETE FROM faces WHERE fileid = old.id;
@@ -226,6 +230,115 @@ export function registerAi(router, ctx) {
     await run(ctx.ff.ffmpeg, ['-v', 'error', '-y', '-i', base, '-vf', vf, '-frames:v', '1', '-q:v', '3', out]);
     return fs.existsSync(out) ? out : null;
   }
+
+  /* ---------------- face review: suggestions and cleanup (Gallery's rules, computed in lens) ---------------- */
+  const faceById = (id) =>
+    db.q('SELECT * FROM faces WHERE id = ?').get(Number(id) | 0) ?? fail(notFound('No such face'));
+  const verdict = db.q('INSERT OR REPLACE INTO face_verdicts (point, cluster, status) VALUES (?, ?, ?)');
+  const faceOut = (f) => {
+    const n = lib.node(f.fileid);
+    const m = db.q('SELECT w, h, dayid FROM media WHERE id = ?').get(f.fileid);
+    return (
+      n && {
+        faceid: f.id,
+        fileid: f.fileid,
+        x: f.x,
+        y: f.y,
+        w: f.w,
+        h: f.h,
+        ...{ basename: n.name, etag: n.etag, mimetype: n.mime },
+        iw: m?.w,
+        ih: m?.h,
+        dayid: m?.dayid,
+      }
+    );
+  };
+  const personName = (id) => db.q('SELECT name FROM people WHERE id = ?').get(id)?.name ?? '';
+
+  router.add('GET', `${API}/faces/:id/crop`, async (req, res, { id }) => {
+    const file = await faceCrop(faceById(id));
+    if (!file) throw notFound('No preview');
+    sendFile(req, res, file, { type: 'image/jpeg', cache: 'private, max-age=86400' });
+  });
+
+  router.add('GET', `${API}/people/:cluster/suggestions`, async (req, res, { cluster }) => {
+    const id = mustCluster(cluster);
+    const exclude = db
+      .q("SELECT point FROM face_verdicts WHERE cluster = ? AND status IN ('rejected', 'ignored')")
+      .all(id)
+      .map((r) => r.point);
+    const { items } = await mustLens().post('/v1/faces/suggestions', { cluster_id: id, exclude });
+    const byPoint = db.q('SELECT * FROM faces WHERE point = ?');
+    const out = items
+      .map((it) => {
+        const f = byPoint.get(it.id);
+        return f && !(f.cluster > 0) && { ...faceOut(f), distance: it.distance };
+      })
+      .filter((f) => f?.fileid);
+    json(res, { name: personName(id), total: out.length, items: out });
+  });
+
+  router.add('POST', `${API}/people/:cluster/suggestions/:faceid`, async (req, res, { cluster, faceid }) => {
+    const { action } = await readJson(req);
+    const face = faceById(faceid);
+    if (action === 'confirm') await assign([face], mustCluster(cluster));
+    else if (action === 'reject' || action === 'ignore')
+      verdict.run(face.point, mustCluster(cluster), action === 'reject' ? 'rejected' : 'ignored');
+    else throw badRequest('Unknown action');
+    json(res, { acted: action });
+  });
+
+  router.add('GET', `${API}/faces/cleanup`, async (req, res) => {
+    const exclude = db
+      .q("SELECT point FROM face_verdicts WHERE status = 'stay'")
+      .all()
+      .map((r) => r.point);
+    const { faces } = await mustLens().post('/v1/faces/audit', { exclude });
+    const byPoint = db.q('SELECT * FROM faces WHERE point = ?');
+    const people = new Map();
+    for (const it of faces) {
+      const f = byPoint.get(it.id);
+      if (!f || f.cluster !== it.cluster_id) continue;
+      const p =
+        people.get(f.cluster) ??
+        people
+          .set(f.cluster, {
+            cluster: f.cluster,
+            name: personName(f.cluster),
+            total: db.q('SELECT count(*) AS n FROM faces WHERE cluster = ?').get(f.cluster).n,
+            faces: [],
+          })
+          .get(f.cluster);
+      const out = faceOut(f);
+      if (out)
+        p.faces.push({
+          ...out,
+          suspected: it.suspected,
+          suspectedName: personName(it.suspected),
+          votes: it.other,
+          own: it.own,
+        });
+    }
+    const list = [...people.values()].filter((p) => p.faces.length);
+    for (const p of list) p.overCap = p.faces.length / p.total > 0.5;
+    list.sort((a, b) => b.faces.length - a.faces.length);
+    json(res, { people: list });
+  });
+
+  router.add('POST', `${API}/faces/cleanup/apply`, async (req, res) => {
+    const { move = [], stay = [] } = await readJson(req);
+    const byTarget = Map.groupBy(move, (m) => Number(m.to));
+    for (const [to, items] of byTarget)
+      await assign(
+        items.map((m) => faceById(m.faceid)),
+        to,
+      );
+    for (const id of stay) {
+      const f = faceById(id);
+      verdict.run(f.point, f.cluster ?? 0, 'stay');
+    }
+    json(res, { moved: move.length, kept: stay.length });
+  });
 
   /* ---------------- DAV: /recognize/<uid>/faces/<name>/<faceid>-<basename> ---------------- */
   const facesHref = (...parts) => `${DAV}/recognize/${uid}/${parts.map(encodeURIComponent).join('/')}`;

@@ -55,6 +55,7 @@
             <div v-if="routeHasNative" class="mobile-header-top-gap"></div>
 
             <FilterBar v-if="routeIs.Base || routeIs.Favorites || routeIs.Videos" />
+            <FaceSuggestions v-if="routeIs.Recognize" @load="scrollerManager?.adjust()" />
 
             <!-- Route-specific top matter -->
             <DynamicTopMatter ref="dtm" @load="scrollerManager?.adjust()" />
@@ -138,6 +139,7 @@ import EmptyContent from '@components/top-matter/EmptyContent.vue';
 import TopMatter from '@components/top-matter/TopMatter.vue';
 import DynamicTopMatter from '@components/top-matter/DynamicTopMatter.vue';
 import FilterBar, { FILTER_KEYS } from '@components/FilterBar.vue';
+import FaceSuggestions from '@components/FaceSuggestions.vue';
 import TimelineTopOverlay from '@components/top-matter/TimelineTopOverlay.vue';
 import TimelineSkeleton from '@components/TimelineSkeleton.vue';
 import MobileHeader from '@components/MobileHeader.vue';
