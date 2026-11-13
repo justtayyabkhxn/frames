@@ -86,6 +86,8 @@ export function sendFile(req, res, file, { type, cache = 'private, max-age=86400
     'Accept-Ranges': 'bytes',
     'Cache-Control': cache,
     'Last-Modified': st.mtime.toUTCString(),
+    // Photos are only for Frames' own pages, never embeddable by other sites
+    'Cross-Origin-Resource-Policy': 'same-origin',
     ...(r && { 'Content-Range': `bytes ${start}-${end}/${st.size}` }),
     // Library files are untrusted: never sniff them into HTML/SVG, and sandbox any direct navigation.
     // Scripts are exempt (a worker script's own CSP would block its preview fetches).
@@ -98,5 +100,8 @@ export function sendFile(req, res, file, { type, cache = 'private, max-age=86400
     ...headers,
   });
   if (req.method === 'HEAD' || st.size === 0) return res.end();
-  fs.createReadStream(file, { start, end }).pipe(res);
+  // A file that vanished or got locked after the stat ends this response, not the server
+  fs.createReadStream(file, { start, end })
+    .on('error', () => res.destroy())
+    .pipe(res);
 }

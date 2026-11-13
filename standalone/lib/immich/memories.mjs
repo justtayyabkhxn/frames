@@ -50,8 +50,13 @@ export function memoriesFor(ctx, today = new Date()) {
 }
 
 export function registerMemories(router, ctx, A) {
+  /** The browser's own day (?for=), so evenings west of UTC don't show tomorrow's memories. */
+  const day = (q) => {
+    const d = new Date(q?.get('for') ?? '');
+    return Number.isNaN(d.getTime()) ? new Date(Date.now() - new Date().getTimezoneOffset() * 60000) : d;
+  };
   const list = (q) => {
-    let all = memoriesFor(ctx);
+    let all = memoriesFor(ctx, day(q));
     if (q.get('id')) all = all.filter((m) => m.id === q.get('id'));
     if (q.get('order') === 'asc') all.reverse();
     const size = Number(q.get('size')) || all.length || 1;
@@ -59,7 +64,7 @@ export function registerMemories(router, ctx, A) {
     return all.slice((page - 1) * size, page * size);
   };
   A.get('/memories', (req, _, q) => list(q));
-  A.get('/memories/statistics', () => ({ total: memoriesFor(ctx).length }));
+  A.get('/memories/statistics', (req, _, q) => ({ total: memoriesFor(ctx, day(q)).length }));
   A.get('/memories/:id', (req, { id }) => {
     fromUuid(id, 'memory');
     return memoriesFor(ctx).find((m) => m.id === id) ?? fail(notFound('Memory not found'));

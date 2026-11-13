@@ -135,7 +135,15 @@ export class Library {
     if (!n.path) throw badRequest('Cannot delete the library root');
     // Date, size and kind too, so the Bin can show it by date taken
     const m = this.db.q('SELECT datetaken, epoch, w, h, isvideo, video_duration FROM media WHERE id = ?').get(n.id);
-    const meta = JSON.stringify({ favorite: n.favorite, dir: n.dir, ...m });
+    // Memberships too, so a restore puts the photo back in its albums and tags, with its people
+    const list = (sql) => (n.dir ? [] : this.db.q(sql).all(n.id));
+    const albums = list('SELECT album FROM album_files WHERE fileid = ?').map((r) => r.album);
+    const tags = list('SELECT tag FROM tag_files WHERE fileid = ?').map((r) => r.tag);
+    const hasFaces = this.db.q("SELECT 1 FROM sqlite_master WHERE name = 'faces'").get();
+    const faces = hasFaces
+      ? list('SELECT cluster AS person, x, y, w, h FROM faces WHERE fileid = ? AND cluster > 0')
+      : [];
+    const meta = JSON.stringify({ favorite: n.favorite, archived: n.archived, dir: n.dir, ...m, albums, tags, faces });
     const tid = this.db.nextId('trash');
     const file = `${tid}-${n.name}`;
     // Move first: a failed move must leave no trash row behind
@@ -182,7 +190,21 @@ export class Library {
       return null;
     }
     const id = await this.ctx.indexer.indexPath(rel);
-    if (id && meta.favorite) this.db.q('UPDATE nodes SET favorite = 1 WHERE id = ?').run(id);
+    if (!id) return id;
+    if (meta.favorite) this.db.q('UPDATE nodes SET favorite = 1 WHERE id = ?').run(id);
+    if (meta.archived) this.db.q('UPDATE nodes SET archived = 1 WHERE id = ?').run(id);
+    for (const a of meta.albums ?? [])
+      this.db
+        .q('INSERT OR IGNORE INTO album_files (album, fileid, added) SELECT id, ?, ? FROM albums WHERE id = ?')
+        .run(id, Math.floor(Date.now() / 1000), a);
+    for (const t of meta.tags ?? [])
+      this.db.q('INSERT OR IGNORE INTO tag_files (tag, fileid) SELECT id, ? FROM tags WHERE id = ?').run(id, t);
+    // Faces come back once the AI engine has scanned the restored file (see backup.mjs applyFaceImports)
+    if (meta.faces?.length && this.db.q("SELECT 1 FROM sqlite_master WHERE name = 'face_imports'").get())
+      for (const f of meta.faces)
+        this.db
+          .q('INSERT INTO face_imports (fileid, person, x, y, w, h, status) VALUES (?, ?, ?, ?, ?, ?, NULL)')
+          .run(id, f.person, f.x, f.y, f.w, f.h);
     return id;
   }
 

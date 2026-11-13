@@ -3,6 +3,18 @@ import { fromUuid, toUuid } from './ids.mjs';
 import { ASSET_SELECT, assetFilter, projectionOf, visibilityOf } from './timeline.mjs';
 
 const iso = (sec) => (sec == null ? null : new Date(sec * 1000).toISOString());
+/** exiftool -n wants the hemisphere refs as letters; signed numbers alone would be written mirrored. */
+export const gpsExif = (lat, lon) => ({
+  GPSLatitude: lat,
+  GPSLongitude: lon,
+  GPSLatitudeRef: lat < 0 ? 'S' : 'N',
+  GPSLongitudeRef: lon < 0 ? 'W' : 'E',
+});
+/** Seconds (local time as UTC) -> "YYYY:MM:DD HH:MM:SS". */
+const exifDate = (sec) => new Date(sec * 1000).toISOString().slice(0, 19).replace('T', ' ').replace(/-/g, ':');
+const fail = (e) => {
+  throw e;
+};
 const exposure = (t) => (t == null ? null : t >= 1 ? `${t}` : `1/${Math.round(1 / t)}`);
 
 /** Frames row (ASSET_SELECT) -> Gallery's AssetResponseDto. */
@@ -65,7 +77,8 @@ export function assetDto(ctx, r) {
       exifImageWidth: r.w,
       exifImageHeight: r.h,
       fileSizeInByte: r.size ?? null,
-      orientation: x.Orientation != null ? String(x.Orientation) : null,
+      // Width/height are already as displayed, so no orientation for the client to apply again
+      orientation: null,
       dateTimeOriginal: iso(r.epoch),
       modifyDate: iso(r.mtime),
       timeZone: x.OffsetTimeOriginal ? `UTC${x.OffsetTimeOriginal}` : null,
@@ -96,7 +109,13 @@ export function registerAssets(router, ctx, A) {
   };
 
   /** Apply Gallery's asset update fields to one Frames file. */
+  /** Only photos and videos (never folders or a stale id that now points elsewhere). */
+  const mustMedia = (id) =>
+    db.q('SELECT m.datetaken FROM media m JOIN nodes n ON n.id = m.id WHERE m.id = ? AND m.livevideo = 0').get(id) ??
+    fail(notFound('Photo or video not found'));
+
   async function update(id, b) {
+    const m = mustMedia(id);
     if (b.isFavorite !== undefined) db.q('UPDATE nodes SET favorite = ? WHERE id = ?').run(b.isFavorite ? 1 : 0, id);
     if (b.visibility === 'archive' || b.visibility === 'timeline') ctx.lib.setArchived(id, b.visibility === 'archive');
     else if (b.visibility) throw badRequest(`Visibility ${b.visibility} is not supported`);
@@ -105,13 +124,12 @@ export function registerAssets(router, ctx, A) {
     if (b.description !== undefined) raw.Description = b.description;
     if (b.dateTimeOriginal)
       raw.AllDates = String(b.dateTimeOriginal).replace('T', ' ').replace(/[-]/g, ':').slice(0, 19);
-    if (b.latitude != null && b.longitude != null)
-      Object.assign(raw, {
-        GPSLatitude: b.latitude,
-        GPSLongitude: b.longitude,
-        GPSLatitudeRef: b.latitude,
-        GPSLongitudeRef: b.longitude,
-      });
+    // "Shift dates" from the selection: minutes relative to each photo's own date taken
+    if (Number.isFinite(Number(b.dateTimeRelative)) && b.dateTimeRelative !== null)
+      raw.AllDates = exifDate(m.datetaken + Number(b.dateTimeRelative) * 60);
+    const tz = /[+-]\d{2}:\d{2}/.exec(String(b.timeZone ?? ''))?.[0];
+    if (tz) Object.assign(raw, { OffsetTimeOriginal: tz, OffsetTime: tz });
+    if (b.latitude != null && b.longitude != null) Object.assign(raw, gpsExif(b.latitude, b.longitude));
     if (Object.keys(raw).length) await ctx.setExif(id, raw);
   }
   const ids = (list) => (Array.isArray(list) ? list : []).map((i) => fromUuid(i, 'asset'));
@@ -145,6 +163,7 @@ export function registerAssets(router, ctx, A) {
     for (const id of Array.isArray(b.ids) ? b.ids : []) {
       if (trashed(id)) ctx.trash.purge(id);
       else {
+        mustMedia(fromUuid(id, 'asset'));
         const tid = ctx.lib.trash(fromUuid(id, 'asset'));
         if (b.force) ctx.lib.purge(tid);
       }

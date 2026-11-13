@@ -1,3 +1,4 @@
+import { readJson } from '../http.mjs';
 /** Admin pages for one local user: queues mapped to Frames' indexer and AI engine, server stats, and the rest stubbed. */
 const QUEUES = {
   library: 'index',
@@ -59,8 +60,8 @@ export function registerAdmin(router, ctx, A) {
       ]),
     ),
   );
-  A.put('/jobs/:name', (req, { name }) => {
-    start();
+  A.put('/jobs/:name', async (req, { name }) => {
+    if ((await readJson(req)).command === 'start') start();
     return { jobCounts: stats(QUEUES[name]), queueStatus: { isActive: true, isPaused: false } };
   });
   A.post('/jobs', () => (start(), null));

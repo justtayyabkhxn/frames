@@ -59,20 +59,25 @@ export function assetFilter(ctx, q) {
   for (const key of ['city', 'state', 'country'])
     if (q.get(key))
       add(
-        `n.id IN (SELECT pl.fileid FROM places pl JOIN planet pt ON pt.osm_id = pl.osm_id WHERE pt.name = :q${key})`,
+        `n.id IN (SELECT pl.fileid FROM places pl JOIN planet pt ON pt.osm_id = pl.osm_id WHERE pt.name = :q${key} OR EXISTS (SELECT 1 FROM json_each(coalesce(pt.other_names, '{}')) WHERE value = :q${key}))`,
         { [`q${key}`]: q.get(key) },
       );
   if (q.get('isInAlbum') === 'true') add('n.id IN (SELECT fileid FROM album_files)');
   if (q.get('isNotInAlbum') === 'true') add('n.id NOT IN (SELECT fileid FROM album_files)');
   if (q.get('originalFileName')) add("n.name LIKE '%' || :qname || '%'", { qname: q.get('originalFileName') });
   if (q.get('description'))
-    add("json_extract(m.exif, '$.Description') LIKE '%' || :qdesc || '%'", { qdesc: q.get('description') });
+    add(
+      "coalesce(json_extract(m.exif, '$.Description'), json_extract(m.exif, '$.ImageDescription'), '') LIKE '%' || :qdesc || '%'",
+      {
+        qdesc: q.get('description'),
+      },
+    );
   const from = `FROM media m JOIN nodes n ON n.id = m.id ${f.joins.join(' ')} WHERE ${f.where.join(' AND ')}`;
   return { f, from };
 }
 
 export const visibilityOf = (row) => (row.archived ? 'archive' : 'timeline');
-export const projectionOf = (row) => (row.pano === 2 ? 'EQUIRECTANGULAR' : null);
+export const projectionOf = (row) => (row.pano ? 'EQUIRECTANGULAR' : null);
 
 export function registerTimeline(router, ctx, A) {
   const { db } = ctx;

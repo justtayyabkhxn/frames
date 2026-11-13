@@ -101,9 +101,21 @@ export function registerPeople(router, ctx, A) {
   });
   A.post('/people', async (req) => {
     const b = await readJson(req);
-    const id = F().ensurePerson(String(b.name || '').trim() || `Person ${Date.now()}`);
-    setPerson(id, { ...b, name: undefined });
-    return { ...dto({ id, name: b.name ?? '', hidden: 0, favorite: 0, assets: 0, faces: 0 }) };
+    // Always a new person (Gallery's unmerge/side panel create empty ones); a taken name is left off
+    const id = F().newPersonId();
+    db.q('INSERT INTO people (id) VALUES (?)').run(id);
+    const name = String(b.name ?? '').trim();
+    setPerson(id, { ...b, name: name && !db.q('SELECT 1 FROM people WHERE name = ?').get(name) ? name : undefined });
+    const row = db.q('SELECT * FROM people WHERE id = ?').get(id);
+    return dto({
+      id,
+      name: row.name,
+      hidden: row.hidden,
+      favorite: row.favorite,
+      birthdate: row.birthdate,
+      assets: 0,
+      faces: 0,
+    });
   });
   A.put('/people', async (req) => {
     const { people = [] } = await readJson(req);
@@ -147,7 +159,17 @@ export function registerPeople(router, ctx, A) {
         continue;
       }
       await F().assign(F().facesOf(from), into);
+      // An unnamed person takes over the merged person's name and birthday
+      const old = db.q('SELECT name, birthdate FROM people WHERE id = ?').get(from);
       db.q('DELETE FROM people WHERE id = ?').run(from);
+      if (old?.name || old?.birthdate) {
+        db.q('INSERT INTO people (id) VALUES (?) ON CONFLICT (id) DO NOTHING').run(into);
+        db.q('UPDATE people SET name = coalesce(name, ?), birthdate = coalesce(birthdate, ?) WHERE id = ?').run(
+          old.name,
+          old.birthdate,
+          into,
+        );
+      }
       out.push({ id: other, success: true });
     }
     return out;

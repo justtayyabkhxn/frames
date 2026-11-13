@@ -47,7 +47,7 @@ export function registerBrowse(router, ctx, A) {
     const rows = db
       .q(
         `SELECT ${ASSET_SELECT} FROM media m JOIN nodes n ON n.id = m.id
-          WHERE m.livevideo = 0 AND m.lat IS NOT NULL ORDER BY m.datetaken DESC`,
+          WHERE m.livevideo = 0 AND n.archived = 0 AND m.lat IS NOT NULL ORDER BY m.datetaken DESC`,
       )
       .iterate();
     for (const r of rows) {

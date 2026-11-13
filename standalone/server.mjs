@@ -109,7 +109,13 @@ const MIME = {
 const hasGallery = fs.existsSync(path.join(GALLERY_BUILD, 'index.html'));
 /** Gallery's static web app with SPA fallback; index.html marks the browser signed in (single local user). */
 function serveGallery(req, res, p) {
-  const rel = path.normalize(decodeURIComponent(p)).replace(/^[\/]+/, '');
+  let decoded;
+  try {
+    decoded = decodeURIComponent(p);
+  } catch {
+    throw new HttpError(400, 'Bad path');
+  }
+  const rel = path.normalize(decoded).replace(/^[\/]+/, '');
   let file = path.join(GALLERY_BUILD, rel);
   if (!file.startsWith(GALLERY_BUILD) || !fs.statSync(file, { throwIfNoEntry: false })?.isFile())
     file = path.join(GALLERY_BUILD, 'index.html');
@@ -120,7 +126,9 @@ function serveGallery(req, res, p) {
     ...(html && { 'Set-Cookie': 'immich_is_authenticated=true; Path=/; SameSite=Lax' }),
   });
   if (req.method === 'HEAD') return res.end();
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file)
+    .on('error', () => res.destroy())
+    .pipe(res);
 }
 
 const shell = () => renderShell(ctx);

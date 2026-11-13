@@ -65,7 +65,9 @@ export function registerUtilities(router, ctx, A) {
       const inGroup = new Set(g.files.map((f) => f.fileid));
       const keep = ids(keepAssetIds).filter((n) => inGroup.has(n));
       const trash = ids(trashAssetIds).filter((n) => inGroup.has(n) && !keep.includes(n));
-      if (!keep.length || !trash.length) return { id, success: false, error: 'validation' };
+      if (!keep.length) return { id, success: false, error: 'validation' };
+      // Keeping every copy resolves the group without trashing anything
+      if (!trash.length) return (dups.dismiss([g.key]), { id, success: true });
       const trashed = dups.resolve(keep, trash);
       return trashed.length === trash.length
         ? { id, success: true }

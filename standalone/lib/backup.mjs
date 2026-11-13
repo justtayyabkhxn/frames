@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { badRequest, notFound, readBody, sendFile } from './http.mjs';
+import { gpsExif } from './immich/assets.mjs';
 
 /**
  * Export / import of everything Frames knows that is not inside the photos themselves:
@@ -177,8 +178,7 @@ export async function importData(ctx, data) {
       const m = db.q('SELECT lat, exif FROM media WHERE id = ?').get(id);
       const x = JSON.parse(m?.exif || '{}');
       const raw = {};
-      if (f.lat != null && m?.lat == null)
-        Object.assign(raw, { GPSLatitude: f.lat, GPSLongitude: f.lon, GPSLatitudeRef: f.lat, GPSLongitudeRef: f.lon });
+      if (f.lat != null && m?.lat == null) Object.assign(raw, gpsExif(f.lat, f.lon));
       if (f.rating && !x.Rating) raw.Rating = f.rating;
       if (f.description && !x.Description) raw.Description = f.description;
       if (Object.keys(raw).length) exif.push([id, raw]);
