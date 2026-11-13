@@ -48,6 +48,26 @@ export function assetFilter(ctx, q) {
   if (q.get('takenAfter')) add('m.datetaken >= :qafter', { qafter: Date.parse(q.get('takenAfter')) / 1000 });
   if (q.get('takenBefore')) add('m.datetaken < :qbefore', { qbefore: Date.parse(q.get('takenBefore')) / 1000 });
   if (q.get('withCoordinates') === 'true') add('m.lat IS NOT NULL AND m.lon IS NOT NULL');
+  // Map viewport: west,south,east,north (west > east crosses the antimeridian)
+  const [w, s, e, n] = (q.get('bbox') ?? '').split(',').map(Number);
+  if ([w, s, e, n].every(Number.isFinite))
+    add(`m.lat BETWEEN :qs AND :qn AND ${w <= e ? 'm.lon BETWEEN :qw AND :qe' : '(m.lon >= :qw OR m.lon <= :qe)'}`, {
+      qw: w,
+      qs: s,
+      qe: e,
+      qn: n,
+    });
+  for (const key of ['city', 'state', 'country'])
+    if (q.get(key))
+      add(
+        `n.id IN (SELECT pl.fileid FROM places pl JOIN planet pt ON pt.osm_id = pl.osm_id WHERE pt.name = :q${key})`,
+        { [`q${key}`]: q.get(key) },
+      );
+  if (q.get('isInAlbum') === 'true') add('n.id IN (SELECT fileid FROM album_files)');
+  if (q.get('isNotInAlbum') === 'true') add('n.id NOT IN (SELECT fileid FROM album_files)');
+  if (q.get('originalFileName')) add("n.name LIKE '%' || :qname || '%'", { qname: q.get('originalFileName') });
+  if (q.get('description'))
+    add("json_extract(m.exif, '$.Description') LIKE '%' || :qdesc || '%'", { qdesc: q.get('description') });
   const from = `FROM media m JOIN nodes n ON n.id = m.id ${f.joins.join(' ')} WHERE ${f.where.join(' AND ')}`;
   return { f, from };
 }
