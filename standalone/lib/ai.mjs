@@ -320,7 +320,30 @@ export function registerAi(router, ctx) {
     else throw badRequest('Unknown action');
   }
 
-  ctx.faces = { assign, faceCrop, bestFace, facesOf, ensurePerson, suggestions, actOnSuggestion, faceById, personName };
+  /** Faces that look misfiled (Gallery's vote rule, in lens), each with its current local row; 'stay' faces skipped. */
+  async function audit() {
+    const exclude = db
+      .q("SELECT point FROM face_verdicts WHERE status = 'stay'")
+      .all()
+      .map((r) => r.point);
+    const { faces } = await mustLens().post('/v1/faces/audit', { exclude });
+    const byPoint = db.q('SELECT * FROM faces WHERE point = ?');
+    return faces.map((it) => ({ ...it, face: byPoint.get(it.id) })).filter((it) => it.face?.cluster === it.cluster_id);
+  }
+
+  ctx.faces = {
+    assign,
+    faceCrop,
+    bestFace,
+    facesOf,
+    ensurePerson,
+    suggestions,
+    actOnSuggestion,
+    faceById,
+    personName,
+    audit,
+    newPersonId,
+  };
 
   router.add('GET', `${API}/people/:cluster/suggestions`, async (req, res, { cluster }) => {
     const id = mustCluster(cluster);
@@ -335,16 +358,8 @@ export function registerAi(router, ctx) {
   });
 
   router.add('GET', `${API}/faces/cleanup`, async (req, res) => {
-    const exclude = db
-      .q("SELECT point FROM face_verdicts WHERE status = 'stay'")
-      .all()
-      .map((r) => r.point);
-    const { faces } = await mustLens().post('/v1/faces/audit', { exclude });
-    const byPoint = db.q('SELECT * FROM faces WHERE point = ?');
     const people = new Map();
-    for (const it of faces) {
-      const f = byPoint.get(it.id);
-      if (!f || f.cluster !== it.cluster_id) continue;
+    for (const { face: f, ...it } of await audit()) {
       const p =
         people.get(f.cluster) ??
         people

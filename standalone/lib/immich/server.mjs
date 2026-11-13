@@ -6,6 +6,7 @@ import { toUuid } from './ids.mjs';
 import { registerTimeline } from './timeline.mjs';
 import { registerAssets } from './assets.mjs';
 import { registerPeople } from './people.mjs';
+import { registerFaceRepair } from './face-repair.mjs';
 import { registerBrowse } from './browse.mjs';
 import { registerMemories } from './memories.mjs';
 import { registerAdmin } from './admin.mjs';
@@ -297,6 +298,7 @@ export function registerImmich(router, ctx) {
   registerTimeline(router, ctx, A);
   registerAssets(router, ctx, A);
   registerPeople(router, ctx, A);
+  registerFaceRepair(router, ctx, A);
   registerBrowse(router, ctx, A);
   registerMemories(router, ctx, A);
   registerAdmin(router, ctx, A);
