@@ -193,6 +193,8 @@ export class Indexer {
       if (e.name.startsWith('.') && !(rel === '' && e.name === ARCHIVE)) continue;
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       const childAbs = path.join(abs, e.name);
+      // Frames' own data (thumbnails, caches) can sit inside the library
+      if (e.isDirectory() && path.relative(childAbs, this.ctx.dataDir ?? '') === '') continue;
       if (e.isDirectory()) yield* this.walk(childAbs, childRel);
       else if (e.isFile() && isMedia(childAbs)) {
         const s = await fsp.stat(childAbs).catch(() => null);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isMedia } from './lib/indexer.mjs';
+import { Indexer, isMedia } from './lib/indexer.mjs';
 import { previewKey } from './lib/previews.mjs';
 import { dims, parseRange, takenFrom } from './util.mjs';
 
@@ -39,6 +39,17 @@ assert.equal(isMedia(write('clip.mts', ts(192, 4))), true);
 assert.equal(isMedia(write('clip.m2ts', ts(188))), true);
 assert.equal(isMedia(write('photo.jpg', 'x')), true);
 assert.equal(isMedia(write('notes.txt', 'x')), false);
+
+// The scan skips Frames' own data folder (thumbnails) when it sits inside the library
+fs.mkdirSync(path.join(tmp, 'data', 'previews'), { recursive: true });
+write('data/previews/1-base.jpg', 'x');
+const walked = [];
+for await (const e of new Indexer({ root: tmp, dataDir: path.join(tmp, 'data') }).walk(tmp, '')) walked.push(e.rel);
+assert.ok(walked.includes('photo.jpg'));
+assert.deepEqual(
+  walked.filter((r) => r.startsWith('data')),
+  [],
+);
 fs.rmSync(tmp, { recursive: true, force: true });
 
 // Preview tiers; the viewer asks for x = y = -1, meaning the largest screen preview
