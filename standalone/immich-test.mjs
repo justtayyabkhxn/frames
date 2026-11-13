@@ -8,6 +8,7 @@ import path from 'node:path';
 import { openDb } from './lib/db.mjs';
 import { Router } from './lib/http.mjs';
 import { fromUuid, toUuid } from './lib/immich/ids.mjs';
+import { memoriesFor } from './lib/immich/memories.mjs';
 import { registerImmich } from './lib/immich/server.mjs';
 import { registerAi } from './lib/ai.mjs';
 import { registerApi } from './lib/api.mjs';
@@ -252,5 +253,45 @@ assert.deepEqual(
   (await api('GET', `/api/assets/${toUuid('asset', 2)}`)).people.map((p) => p.name),
   ['Alice'],
 );
+
+// Folders: library folders (named after the library root) and the files directly in one
+db.exec(
+  `INSERT INTO nodes (id, path, parent, name, dir) VALUES (20, 'Trips', 1, 'Trips', 1), (21, 'Trips/Goa', 20, 'Goa', 1)`,
+);
+media(22, 'Trips/Goa/sea.jpg', T('2022-11-13T09:00:00'));
+media(23, 'Trips/plan.jpg', T('2021-11-14T09:00:00'));
+db.exec('UPDATE nodes SET parent = 21 WHERE id = 22; UPDATE nodes SET parent = 20 WHERE id = 23');
+const rootName = path.basename(ctx.root);
+assert.deepEqual(
+  (await api('GET', '/api/view/folder/unique-paths')).sort(),
+  [rootName, `${rootName}/Trips`, `${rootName}/Trips/Goa`].sort(),
+);
+assert.deepEqual(
+  (await api('GET', `/api/view/folder?path=${encodeURIComponent(`${rootName}/Trips/Goa`)}`)).map(
+    (a) => a.originalFileName,
+  ),
+  ['sea.jpg'],
+);
+
+// Explore: one entry per place with a cover photo
+ctx.addressOf = (id) => (id === 22 ? ['Goa', 'India'] : id === 23 ? ['Pune', 'Maharashtra', 'India'] : []);
+db.exec('UPDATE media SET lat = 15, lon = 74 WHERE id IN (22, 23)');
+const explore = await api('GET', '/api/search/explore');
+assert.equal(explore[0].fieldName, 'exifInfo.city');
+assert.deepEqual(explore[0].items.map((i) => i.value).sort(), ['Goa', 'Pune']);
+
+// Memories: "on this day" in earlier years, one memory per year, off when the preference is off
+const today = new Date(Date.UTC(2026, 10, 13));
+const mem = memoriesFor(ctx, today);
+assert.deepEqual(
+  mem.map((m) => [m.type, m.data.year, m.assets.map((x) => x.originalFileName)]),
+  [
+    ['on_this_day', 2022, ['sea.jpg']],
+    ['on_this_day', 2021, ['plan.jpg']],
+  ],
+);
+await api('PUT', '/api/users/me/preferences', { memories: { enabled: false } });
+assert.deepEqual(memoriesFor(ctx, today), []);
+await api('PUT', '/api/users/me/preferences', { memories: { enabled: true } });
 
 console.log('ok');

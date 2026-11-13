@@ -6,6 +6,8 @@ import { toUuid } from './ids.mjs';
 import { registerTimeline } from './timeline.mjs';
 import { registerAssets } from './assets.mjs';
 import { registerPeople } from './people.mjs';
+import { registerBrowse } from './browse.mjs';
+import { registerMemories } from './memories.mjs';
 
 const require = (f) => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), 'utf8'));
 const DEFAULTS = require('./config-defaults.json');
@@ -23,10 +25,10 @@ const MEMORY_TYPES = [
   'themed',
   'person_throwback',
 ];
-/** Gallery's getDefaultPreferences(), except Frames shows People in the sidebar and has ratings on, like its old UI. */
+/** Gallery's getDefaultPreferences(), except Frames shows People and Folders in the sidebar and has ratings on, like its old UI. */
 const PREFERENCES = {
   albums: { defaultAssetOrder: 'desc' },
-  folders: { enabled: false, sidebarWeb: false },
+  folders: { enabled: true, sidebarWeb: true },
   memories: {
     enabled: true,
     duration: 5,
@@ -258,5 +260,7 @@ export function registerImmich(router, ctx) {
   registerTimeline(router, ctx, A);
   registerAssets(router, ctx, A);
   registerPeople(router, ctx, A);
+  registerBrowse(router, ctx, A);
+  registerMemories(router, ctx, A);
   return A;
 }

@@ -88,6 +88,7 @@ const SIZES = { thumbnail: 250, preview: 1440, fullsize: 4096 };
 export function registerAssets(router, ctx, A) {
   const { db } = ctx;
   const row = (id) => db.q(`SELECT ${ASSET_SELECT} FROM media m JOIN nodes n ON n.id = m.id WHERE n.id = ?`).get(id);
+  ctx.assetDtoFromRow = (r) => assetDto(ctx, r);
   ctx.assetDto = (id) => {
     const r = row(id);
     if (!r) throw notFound('Asset not found');
