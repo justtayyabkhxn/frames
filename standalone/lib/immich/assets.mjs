@@ -146,7 +146,6 @@ export function registerAssets(router, ctx, A) {
   // Gallery features Frames does not have (yet): OCR, stacks, spaces, per-asset album list until albums land
   A.get('/assets/:id/ocr', () => []);
   A.post('/assets/spaces', () => []);
-  A.get('/albums', () => []);
   const node = (id) =>
     db.q('SELECT n.*, m.isvideo FROM nodes n JOIN media m ON m.id = n.id WHERE n.id = ?').get(fromUuid(id, 'asset'));
   const mustNode = (id) => {
