@@ -246,6 +246,10 @@ export class Indexer {
         .map((id) => db.q('SELECT * FROM nodes WHERE id = ?').get(id))
         .filter(Boolean);
       const meta = await this.readMeta(nodes.map((n) => ctx.abs(n.path)));
+      // Only a re-index (changed file) has stale thumbnails; a first index keeps ones made on demand meanwhile
+      const reindexed = new Set(
+        nodes.filter((n) => db.q('SELECT 1 FROM media WHERE id = ?').get(n.id)).map((n) => n.id),
+      );
       const liveids = [];
       db.tx(() => {
         for (const n of nodes) {
@@ -262,8 +266,13 @@ export class Indexer {
       await Promise.all(
         nodes.map((n) =>
           this.thumbs(async () => {
-            ctx.previews.remove(n.id);
-            await ctx.previews.generate(n.id, ctx.abs(n.path), mimeOf(n.name)?.startsWith('video/'));
+            // One file's thumbnails failing (locked, unreadable) must not stop the rest; they are made on demand later
+            try {
+              if (reindexed.has(n.id)) ctx.previews.remove(n.id);
+              await ctx.previews.generate(n.id, ctx.abs(n.path), mimeOf(n.name)?.startsWith('video/'));
+            } catch (e) {
+              console.warn(`Thumbnails for ${n.path}: ${e.message}`);
+            }
             onDone(n);
           }),
         ),

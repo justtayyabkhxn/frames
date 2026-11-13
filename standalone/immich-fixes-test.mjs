@@ -135,4 +135,30 @@ sendFile({ headers: {}, method: 'GET' }, res, gone, { type: 'image/jpeg' });
 fs.rmSync(gone);
 await new Promise((r) => setTimeout(r, 50));
 assert.ok(destroyed);
+
+// Indexing: one photo whose thumbnails fail (e.g. Windows "permission denied" on a file the browser has open)
+// must not stop the rest; first-time indexing never deletes thumbnails made on demand meanwhile.
+{
+  const { Indexer } = await import('./lib/indexer.mjs');
+  const h = setup();
+  const ix = new Indexer(h.ctx);
+  h.ctx.abs = (rel) => path.join(h.tmp, rel);
+  ix.readMeta = async (paths) => new Map(paths.map((p) => [path.resolve(p), { MIMEType: 'image/jpeg' }]));
+  const removed = [];
+  h.ctx.previews = {
+    remove: (id) => removed.push(id),
+    generate: async (id) => {
+      if (id === ids[1]) throw Object.assign(new Error('EPERM, Permission denied'), { code: 'EPERM' });
+    },
+  };
+  const ids = ['x/a.jpg', 'x/b.jpg', 'x/c.jpg'].map((rel) => ix.ensureNode(rel, { dir: false, size: 1, mtime: 1 }));
+  let done = 0;
+  await ix.indexIds(ids, () => done++);
+  assert.equal(h.db.q(`SELECT count(*) AS n FROM media WHERE id IN (${ids})`).get().n, 3);
+  assert.equal(done, 3);
+  assert.deepEqual(removed, []);
+  // A changed photo does drop its old thumbnails
+  await ix.indexIds([ids[0]]);
+  assert.deepEqual(removed, [ids[0]]);
+}
 console.log('ok');

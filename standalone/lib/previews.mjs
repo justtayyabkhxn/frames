@@ -53,7 +53,11 @@ export class Previews {
   remove(id) {
     const d = path.join(this.dir, String(id).slice(-2));
     if (!fs.existsSync(d)) return;
-    for (const f of fs.readdirSync(d)) if (f.startsWith(`${id}-`)) fs.rmSync(path.join(d, f), { force: true });
+    for (const f of fs.readdirSync(d))
+      if (f.startsWith(`${id}-`))
+        try {
+          fs.rmSync(path.join(d, f), { force: true });
+        } catch {} // open elsewhere (Windows won't delete it): skipped, and overwritten by the next generate
   }
 
   /** ffmpeg args to read one frame of `src` (a bit into videos, avoiding black first frames). */
