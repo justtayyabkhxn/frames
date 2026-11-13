@@ -1,0 +1,560 @@
+import { AssetTypeEnum } from '@immich/sdk';
+import { buildFilterContext, clearFilters, createFilterState, getActiveFilterCount } from '../filter-panel';
+
+describe('FilterState utilities', () => {
+  it('should create default state', () => {
+    const state = createFilterState();
+    expect(state.personIds).toEqual([]);
+    expect(state.tagIds).toEqual([]);
+    expect(state.mediaType).toBe('all');
+    expect(state.sortOrder).toBe('desc');
+    expect(state.city).toBeUndefined();
+    expect(state.rating).toBeUndefined();
+  });
+
+  it('should create default state with selectedYear and selectedMonth undefined', () => {
+    const state = createFilterState();
+    expect(state.selectedYear).toBeUndefined();
+    expect(state.selectedMonth).toBeUndefined();
+  });
+
+  it('should create default state with custom dates undefined', () => {
+    const state = createFilterState();
+    expect(state.dateAfter).toBeUndefined();
+    expect(state.dateBefore).toBeUndefined();
+  });
+
+  it('should allow setting selectedYear and selectedMonth', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    state.selectedMonth = 8;
+    expect(state.selectedYear).toBe(2023);
+    expect(state.selectedMonth).toBe(8);
+  });
+
+  it('should count active filters', () => {
+    const state = createFilterState();
+    expect(getActiveFilterCount(state)).toBe(0);
+
+    state.personIds = ['p1'];
+    expect(getActiveFilterCount(state)).toBe(1);
+
+    state.city = 'Munich';
+    expect(getActiveFilterCount(state)).toBe(2);
+
+    state.rating = 3;
+    expect(getActiveFilterCount(state)).toBe(3);
+  });
+
+  it('should count has-no-album as an active filter', () => {
+    const state = { ...createFilterState(), isNotInAlbum: true };
+
+    expect(getActiveFilterCount(state)).toBe(1);
+  });
+
+  it('should count has-album as an active filter', () => {
+    const state = { ...createFilterState(), isInAlbum: true };
+
+    expect(getActiveFilterCount(state)).toBe(1);
+  });
+
+  it('should count selectedYear as an active filter', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    expect(getActiveFilterCount(state)).toBe(1);
+  });
+
+  it('should count selectedMonth as an active filter alongside selectedYear', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    state.selectedMonth = 8;
+    expect(getActiveFilterCount(state)).toBe(1); // year+month counts as one temporal filter
+
+    // Other filters should still count normally
+    state.personIds = ['p1'];
+    expect(getActiveFilterCount(state)).toBe(2);
+  });
+
+  it('should count custom date range as one active temporal filter', () => {
+    const state = createFilterState();
+    state.dateAfter = '2024-01-01';
+    expect(getActiveFilterCount(state)).toBe(1);
+
+    state.dateBefore = '2024-12-31';
+    expect(getActiveFilterCount(state)).toBe(1);
+
+    state.personIds = ['p1'];
+    expect(getActiveFilterCount(state)).toBe(2);
+  });
+
+  it('should not count empty custom date strings as active temporal filters', () => {
+    const state = createFilterState();
+    state.dateAfter = '';
+    state.dateBefore = '';
+    expect(getActiveFilterCount(state)).toBe(0);
+  });
+
+  it('should not double-count country when city is set', () => {
+    const state = createFilterState();
+    state.country = 'Germany';
+    state.city = 'Munich';
+    // country + city should count as 1, not 2
+    expect(getActiveFilterCount(state)).toBe(1);
+  });
+
+  it('should count a model-only camera filter (no make) as one active filter', () => {
+    const state = createFilterState();
+    state.model = 'iPhone 17 Pro Max';
+    // A model-only camera value (some EXIF has a model but no make) is still applied by
+    // every surface as ?model=; if it is not counted the badge shows "0 filters" and
+    // Clear-all hides, leaving an invisible, unremovable filter.
+    expect(getActiveFilterCount(state)).toBe(1);
+  });
+
+  it('should count make and model together as a single camera filter', () => {
+    const state = createFilterState();
+    state.make = 'Canon';
+    state.model = 'EOS R5';
+    // make+model are ONE dimension — they must never double-count.
+    expect(getActiveFilterCount(state)).toBe(1);
+  });
+
+  it('should clear filters but preserve sortOrder', () => {
+    const state = createFilterState();
+    state.personIds = ['p1'];
+    state.city = 'Munich';
+    state.rating = 3;
+    state.sortOrder = 'asc';
+
+    const cleared = clearFilters(state);
+    expect(cleared.personIds).toEqual([]);
+    expect(cleared.city).toBeUndefined();
+    expect(cleared.rating).toBeUndefined();
+    expect(cleared.sortOrder).toBe('asc'); // preserved!
+    expect(cleared.mediaType).toBe('all');
+  });
+
+  it('should clear has-no-album while preserving sortOrder', () => {
+    const state = { ...createFilterState(), isNotInAlbum: true, sortOrder: 'asc' as const };
+
+    const cleared = clearFilters(state);
+
+    expect(cleared.isNotInAlbum).toBeUndefined();
+    expect(cleared.sortOrder).toBe('asc');
+  });
+
+  it('should clear has-album while preserving sortOrder', () => {
+    const state = { ...createFilterState(), isInAlbum: true, sortOrder: 'asc' as const };
+
+    const cleared = clearFilters(state);
+
+    expect(cleared.isInAlbum).toBeUndefined();
+    expect(cleared.sortOrder).toBe('asc');
+  });
+
+  it('should preserve relevance sortOrder on clearFilters', () => {
+    const state = createFilterState();
+    state.sortOrder = 'relevance';
+    const cleared = clearFilters(state);
+    expect(cleared.sortOrder).toBe('relevance');
+  });
+
+  it('should clear selectedYear and selectedMonth on clearFilters', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    state.selectedMonth = 8;
+    state.personIds = ['p1'];
+
+    const cleared = clearFilters(state);
+    expect(cleared.selectedYear).toBeUndefined();
+    expect(cleared.selectedMonth).toBeUndefined();
+    expect(cleared.personIds).toEqual([]);
+  });
+
+  it('should clear custom dates on clearFilters', () => {
+    const state = createFilterState();
+    state.dateAfter = '2024-01-01';
+    state.dateBefore = '2024-12-31';
+    state.selectedYear = 2023;
+    state.selectedMonth = 8;
+
+    const cleared = clearFilters(state);
+    expect(cleared.dateAfter).toBeUndefined();
+    expect(cleared.dateBefore).toBeUndefined();
+    expect(cleared.selectedYear).toBeUndefined();
+    expect(cleared.selectedMonth).toBeUndefined();
+  });
+
+  it('should count description, filename, and ocr text filters as active', () => {
+    const state = createFilterState();
+    state.description = 'beach';
+    expect(getActiveFilterCount(state)).toBe(1);
+
+    state.originalFileName = 'IMG';
+    expect(getActiveFilterCount(state)).toBe(2);
+
+    state.ocr = 'invoice';
+    expect(getActiveFilterCount(state)).toBe(3);
+  });
+
+  it('should not count whitespace-only or empty text filters as active', () => {
+    const state = createFilterState();
+    state.description = ' '.repeat(3);
+    state.originalFileName = '';
+    state.ocr = undefined;
+    expect(getActiveFilterCount(state)).toBe(0);
+  });
+
+  it('should clear text filters on clearFilters', () => {
+    const state = { ...createFilterState(), description: 'beach', originalFileName: 'IMG', ocr: 'invoice' };
+
+    const cleared = clearFilters(state);
+    expect(cleared.description).toBeUndefined();
+    expect(cleared.originalFileName).toBeUndefined();
+    expect(cleared.ocr).toBeUndefined();
+  });
+
+  it('counts each new dimension as one active filter', () => {
+    const filters = { ...createFilterState(), lensModel: 'RF24-70mm', albumId: 'a1', ownerId: 'u1' };
+
+    expect(getActiveFilterCount(filters)).toBe(3);
+  });
+
+  it('counts city, state and country together as a single location filter', () => {
+    const location = { ...createFilterState(), city: 'Berlin', state: 'State of Berlin', country: 'Germany' };
+    expect(getActiveFilterCount(location)).toBe(1);
+
+    // …and a state without a city is still just one location filter, not two
+    const noCity = { ...createFilterState(), state: 'Hamburg', country: 'Germany' };
+    expect(getActiveFilterCount(noCity)).toBe(1);
+  });
+
+  it('clearFilters clears the four new dimensions', () => {
+    const filters = {
+      ...createFilterState(),
+      lensModel: 'RF24-70mm',
+      state: 'Hamburg',
+      albumId: 'a1',
+      ownerId: 'u1',
+    };
+
+    expect(clearFilters(filters)).toMatchObject({
+      lensModel: undefined,
+      state: undefined,
+      albumId: undefined,
+      ownerId: undefined,
+    });
+  });
+});
+
+describe('buildFilterContext', () => {
+  it('should return undefined when no year is selected', () => {
+    const state = createFilterState();
+    expect(buildFilterContext(state)).toBeUndefined();
+  });
+
+  it('should return year range when only year is selected', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    const ctx = buildFilterContext(state);
+    expect(ctx).toEqual({
+      takenAfter: '2023-01-01T00:00:00.000Z',
+      takenBefore: '2024-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('should return month range when year and month are selected', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    state.selectedMonth = 6;
+    const ctx = buildFilterContext(state);
+    expect(ctx).toEqual({
+      takenAfter: '2023-06-01T00:00:00.000Z',
+      takenBefore: '2023-07-01T00:00:00.000Z',
+    });
+  });
+
+  it('should include active filters for dependent suggestions', () => {
+    const state = createFilterState();
+    state.personIds = ['person-1'];
+    state.tagIds = ['tag-1'];
+    state.rating = 4;
+    state.isFavorite = true;
+    const stateWithAlbums = { ...state, isNotInAlbum: true };
+
+    expect(buildFilterContext(stateWithAlbums)).toEqual({
+      personIds: ['person-1'],
+      tagIds: ['tag-1'],
+      rating: 4,
+      isFavorite: true,
+      isNotInAlbum: true,
+    });
+  });
+
+  it('should exclude has-no-album from dependent suggestion context when requested', () => {
+    const state = { ...createFilterState(), isNotInAlbum: true, rating: 4 };
+
+    expect(buildFilterContext(state, ['isNotInAlbum'])).toEqual({ rating: 4 });
+  });
+
+  it('should include has-album in dependent suggestion context', () => {
+    const state = { ...createFilterState(), isInAlbum: true, rating: 4 };
+
+    expect(buildFilterContext(state)).toEqual({ rating: 4, isInAlbum: true });
+  });
+
+  it('should exclude has-album from dependent suggestion context when requested', () => {
+    const state = { ...createFilterState(), isInAlbum: true, rating: 4 };
+
+    expect(buildFilterContext(state, ['isInAlbum'])).toEqual({ rating: 4 });
+  });
+
+  it('should exclude requested filters from dependent suggestion context', () => {
+    const state = createFilterState();
+    state.personIds = ['person-1'];
+    state.tagIds = ['tag-1'];
+
+    expect(buildFilterContext(state, ['personIds'])).toEqual({
+      tagIds: ['tag-1'],
+    });
+  });
+
+  it('should handle December correctly (rolls over to next year)', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    state.selectedMonth = 12;
+    const ctx = buildFilterContext(state);
+    expect(ctx).toEqual({
+      takenAfter: '2023-12-01T00:00:00.000Z',
+      takenBefore: '2024-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('should handle January correctly', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    state.selectedMonth = 1;
+    const ctx = buildFilterContext(state);
+    expect(ctx).toEqual({
+      takenAfter: '2023-01-01T00:00:00.000Z',
+      takenBefore: '2023-02-01T00:00:00.000Z',
+    });
+  });
+
+  it('should use UTC dates (no timezone offset)', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    state.selectedMonth = 8;
+    const ctx = buildFilterContext(state)!;
+    expect(ctx.takenAfter).toContain('T00:00:00.000Z');
+    expect(ctx.takenBefore).toContain('T00:00:00.000Z');
+  });
+
+  it('should build bounded custom date context with exclusive end date', () => {
+    const state = createFilterState();
+    state.dateAfter = '2024-01-01';
+    state.dateBefore = '2024-12-31';
+    expect(buildFilterContext(state)).toEqual({
+      takenAfter: '2024-01-01T00:00:00.000Z',
+      takenBefore: '2025-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('should build from-only custom date context', () => {
+    const state = createFilterState();
+    state.dateAfter = '2024-01-01';
+    expect(buildFilterContext(state)).toEqual({
+      takenAfter: '2024-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('should not build context for empty custom date strings', () => {
+    const state = createFilterState();
+    state.dateAfter = '';
+    state.dateBefore = '';
+    expect(buildFilterContext(state)).toBeUndefined();
+  });
+
+  it('should build to-only custom date context with exclusive end date', () => {
+    const state = createFilterState();
+    state.dateBefore = '2024-12-31';
+    expect(buildFilterContext(state)).toEqual({
+      takenBefore: '2025-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('should ignore invalid custom date strings', () => {
+    const state = createFilterState();
+    state.dateAfter = 'not-a-date';
+    state.dateBefore = '2024-02-31';
+    expect(buildFilterContext(state)).toBeUndefined();
+  });
+
+  it('should build from-only context when to date is invalid', () => {
+    const state = createFilterState();
+    state.dateAfter = '2024-01-01';
+    state.dateBefore = '2024-02-31';
+    expect(buildFilterContext(state)).toEqual({
+      takenAfter: '2024-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('should build to-only context when from date is malformed', () => {
+    const state = createFilterState();
+    state.dateAfter = '01/01/2024';
+    state.dateBefore = '2024-12-31';
+    expect(buildFilterContext(state)).toEqual({
+      takenBefore: '2025-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('should prefer custom date context over year and month context', () => {
+    const state = createFilterState();
+    state.selectedYear = 2023;
+    state.selectedMonth = 8;
+    state.dateAfter = '2024-01-01';
+    expect(buildFilterContext(state)).toEqual({
+      takenAfter: '2024-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('should include country and city', () => {
+    const state = { ...createFilterState(), country: 'Germany', city: 'Berlin' };
+    expect(buildFilterContext(state)).toEqual({ country: 'Germany', city: 'Berlin' });
+  });
+
+  it('should include make and model', () => {
+    const state = { ...createFilterState(), make: 'Canon', model: 'Canon EOS R5' };
+    expect(buildFilterContext(state)).toEqual({ make: 'Canon', model: 'Canon EOS R5' });
+  });
+
+  it('should map mediaType image and video to the SDK enum', () => {
+    const imageState = { ...createFilterState(), mediaType: 'image' as const };
+    expect(buildFilterContext(imageState)).toEqual({ mediaType: AssetTypeEnum.Image });
+
+    const videoState = { ...createFilterState(), mediaType: 'video' as const };
+    expect(buildFilterContext(videoState)).toEqual({ mediaType: AssetTypeEnum.Video });
+  });
+
+  it('should omit mediaType when set to all', () => {
+    const state = { ...createFilterState(), mediaType: 'all' as const, rating: 4 };
+    expect(buildFilterContext(state)).toEqual({ rating: 4 });
+  });
+
+  it('should exclude country and city for the location context but keep the rest', () => {
+    const state = {
+      ...createFilterState(),
+      country: 'Germany',
+      city: 'Berlin',
+      make: 'Canon',
+      model: 'Canon EOS R5',
+      mediaType: 'image' as const,
+      tagIds: ['t1'],
+    };
+
+    expect(buildFilterContext(state, ['country', 'city'])).toEqual({
+      make: 'Canon',
+      model: 'Canon EOS R5',
+      mediaType: AssetTypeEnum.Image,
+      tagIds: ['t1'],
+    });
+  });
+
+  it('should exclude make and model for the camera context but keep the rest', () => {
+    const state = {
+      ...createFilterState(),
+      country: 'Germany',
+      city: 'Berlin',
+      make: 'Canon',
+      model: 'Canon EOS R5',
+      mediaType: 'image' as const,
+      tagIds: ['t1'],
+    };
+
+    expect(buildFilterContext(state, ['make', 'model'])).toEqual({
+      country: 'Germany',
+      city: 'Berlin',
+      mediaType: AssetTypeEnum.Image,
+      tagIds: ['t1'],
+    });
+  });
+
+  it('should include the state, lens and contributor narrowings', () => {
+    const state = {
+      ...createFilterState(),
+      state: 'Bavaria',
+      lensModel: 'RF24-105mm F4 L IS USM',
+      ownerId: 'u1',
+    };
+
+    expect(buildFilterContext(state)).toEqual({
+      state: 'Bavaria',
+      lensModel: 'RF24-105mm F4 L IS USM',
+      ownerId: 'u1',
+    });
+  });
+
+  it('should exclude the whole location group for the location context but keep the lens and contributor', () => {
+    const state = {
+      ...createFilterState(),
+      country: 'Germany',
+      state: 'Bavaria',
+      city: 'Munich',
+      lensModel: 'RF24-105mm F4 L IS USM',
+      ownerId: 'u1',
+    };
+
+    // country / state / city are one filter that any location click replaces wholesale, so a city
+    // list must not be narrowed by the state the click is about to clear.
+    expect(buildFilterContext(state, ['country', 'state', 'city'])).toEqual({
+      lensModel: 'RF24-105mm F4 L IS USM',
+      ownerId: 'u1',
+    });
+  });
+
+  it('should keep the lens, state and contributor for the camera context', () => {
+    const state = {
+      ...createFilterState(),
+      make: 'Canon',
+      model: 'Canon EOS R6',
+      lensModel: 'RF24-105mm F4 L IS USM',
+      state: 'Bavaria',
+      ownerId: 'u1',
+    };
+
+    // Unlike the location group, a make/model click leaves the lens chip in place, so the model
+    // list may narrow by it.
+    expect(buildFilterContext(state, ['make', 'model'])).toEqual({
+      lensModel: 'RF24-105mm F4 L IS USM',
+      state: 'Bavaria',
+      ownerId: 'u1',
+    });
+  });
+
+  it('should never carry the album filter or the free-text filters into a suggestion request', () => {
+    const state = {
+      ...createFilterState(),
+      albumId: 'a1',
+      description: 'birthday cake',
+      originalFileName: 'IMG_1234.jpg',
+      ocr: 'happy birthday',
+      rating: 4,
+    };
+
+    // `albumId` on the suggestion endpoints is a SCOPE that widens ownership to album participants
+    // and is mutually exclusive with spaceId / withSharedSpaces — spreading it would 400 the
+    // request. The three free-text filters are unindexable ILIKE / trigram predicates typed
+    // per keystroke, not facet values. Exact match so adding either one here has to be deliberate.
+    expect(buildFilterContext(state)).toEqual({ rating: 4 });
+  });
+
+  it('should return undefined when only mediaType is all and nothing else is set', () => {
+    const state = createFilterState();
+    expect(buildFilterContext(state)).toBeUndefined();
+  });
+
+  it('should return a defined context when only a country is set', () => {
+    const state = { ...createFilterState(), country: 'Germany' };
+    expect(buildFilterContext(state)).toEqual({ country: 'Germany' });
+  });
+});

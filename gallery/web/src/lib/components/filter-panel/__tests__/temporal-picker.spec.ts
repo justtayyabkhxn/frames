@@ -1,0 +1,385 @@
+import { init, register, waitLocale } from 'svelte-i18n';
+import { describe, expect, it, vi } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { userEvent } from 'vitest/browser';
+import TemporalPicker from '../temporal-picker.svelte';
+import { aggregateYears, getMonthsForYear } from '../temporal-utils';
+
+beforeAll(async () => {
+  register('en-US', () => import('#i18n/en.json'));
+  await init({ fallbackLocale: 'en-US' });
+  await waitLocale('en-US');
+});
+
+describe('temporal-utils', () => {
+  const buckets = [
+    { timeBucket: '2020-01-01', count: 100 },
+    { timeBucket: '2020-06-01', count: 200 },
+    { timeBucket: '2020-08-01', count: 400 },
+    { timeBucket: '2021-03-01', count: 150 },
+    { timeBucket: '2021-07-01', count: 50 },
+  ];
+
+  it('should aggregate monthly buckets into year counts', () => {
+    const years = aggregateYears(buckets);
+    expect(years).toHaveLength(2);
+    expect(years[0]).toEqual({ year: 2020, count: 700, volumePercent: 100 });
+    expect(years[1]).toEqual({ year: 2021, count: 200, volumePercent: 29 });
+  });
+
+  it('should calculate relative volume (max year = 100%)', () => {
+    const years = aggregateYears(buckets);
+    expect(years[0].volumePercent).toBe(100);
+    expect(years[1].volumePercent).toBeLessThan(100);
+  });
+
+  it('should return all 12 months for a specific year', () => {
+    const months = getMonthsForYear(buckets, 2020);
+    expect(months).toHaveLength(12);
+    expect(months[0]).toEqual({ month: 1, label: 'Jan', count: 100 });
+    expect(months[5]).toEqual({ month: 6, label: 'Jun', count: 200 });
+    expect(months[7]).toEqual({ month: 8, label: 'Aug', count: 400 });
+    expect(months[1]).toEqual({ month: 2, label: 'Feb', count: 0 });
+  });
+
+  it('should sum day-granularity buckets that fall within the same month', () => {
+    // The photos timeline feeds day-granularity buckets (many per month).
+    // getMonthsForYear must accumulate them, not overwrite — otherwise month
+    // totals collapse to a single day's count while year totals stay correct.
+    const dayBuckets = [
+      { timeBucket: '2024-01-05', count: 10 },
+      { timeBucket: '2024-01-12', count: 7 },
+      { timeBucket: '2024-01-20', count: 3 },
+      { timeBucket: '2024-03-02', count: 8 },
+      { timeBucket: '2023-01-15', count: 999 },
+    ];
+    const months = getMonthsForYear(dayBuckets, 2024);
+    expect(months[0]).toEqual({ month: 1, label: 'Jan', count: 20 });
+    expect(months[2]).toEqual({ month: 3, label: 'Mar', count: 8 });
+    expect(months[1]).toEqual({ month: 2, label: 'Feb', count: 0 });
+  });
+
+  it('should keep month totals consistent with the year total for day buckets', () => {
+    const dayBuckets = [
+      { timeBucket: '2024-06-01', count: 5 },
+      { timeBucket: '2024-06-15', count: 25 },
+      { timeBucket: '2024-06-30', count: 8 },
+    ];
+    const [year2024] = aggregateYears(dayBuckets);
+    const months = getMonthsForYear(dayBuckets, 2024);
+    const monthTotal = months.reduce((sum, m) => sum + m.count, 0);
+    expect(monthTotal).toBe(year2024.count);
+    expect(year2024.count).toBe(38);
+  });
+
+  it('should handle empty buckets', () => {
+    const years = aggregateYears([]);
+    expect(years).toHaveLength(0);
+  });
+
+  it('should handle single bucket', () => {
+    const years = aggregateYears([{ timeBucket: '2023-05-01', count: 42 }]);
+    expect(years).toHaveLength(1);
+    expect(years[0]).toEqual({ year: 2023, count: 42, volumePercent: 100 });
+  });
+});
+
+describe('TemporalPicker component', () => {
+  const buckets = [
+    { timeBucket: '2022-01-01', count: 50 },
+    { timeBucket: '2023-06-01', count: 100 },
+    { timeBucket: '2023-08-01', count: 200 },
+  ];
+
+  it('should show year grid when no year is selected', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets });
+    await expect.element(screen.getByTestId('year-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('month-grid').query()).toBeNull();
+  });
+
+  it('should render custom range inputs above year grid', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets });
+
+    const customRange = screen.getByTestId('custom-date-range').element();
+    const yearGrid = screen.getByTestId('year-grid').element();
+
+    expect(customRange.compareDocumentPosition(yearGrid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('should emit from-only custom range', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, onCustomRangeChange: spy });
+
+    await userEvent.fill(screen.getByTestId('custom-date-from-input'), '2024-01-01');
+
+    expect(spy).toHaveBeenCalledWith('2024-01-01', undefined);
+  });
+
+  it('should emit to-only custom range', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, onCustomRangeChange: spy });
+
+    await userEvent.fill(screen.getByTestId('custom-date-to-input'), '2024-12-31');
+
+    expect(spy).toHaveBeenCalledWith(undefined, '2024-12-31');
+  });
+
+  it('should populate custom range values from props', async () => {
+    const screen = await render(TemporalPicker, {
+      timeBuckets: buckets,
+      dateAfter: '2024-01-01',
+      dateBefore: '2024-12-31',
+    });
+
+    await expect.element(screen.getByTestId('custom-date-from-input')).toHaveValue('2024-01-01');
+    await expect.element(screen.getByTestId('custom-date-to-input')).toHaveValue('2024-12-31');
+  });
+
+  it('should not emit inverted custom ranges and should show an inline error', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, {
+      timeBuckets: buckets,
+      dateAfter: '2024-12-31',
+      onCustomRangeChange: spy,
+    });
+
+    await userEvent.fill(screen.getByTestId('custom-date-to-input'), '2024-01-01');
+
+    expect(spy).not.toHaveBeenCalled();
+    await expect.element(screen.getByText('From date must be on or before To date')).toBeInTheDocument();
+  });
+
+  it('should not emit malformed custom dates and should show an inline error', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, onCustomRangeChange: spy });
+
+    await userEvent.fill(screen.getByTestId('custom-date-from-input'), '2024-1-1');
+
+    expect(spy).not.toHaveBeenCalled();
+    await expect.element(screen.getByText('Enter a valid From date')).toBeInTheDocument();
+  });
+
+  it('should not emit impossible custom dates and should show an inline error', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, onCustomRangeChange: spy });
+
+    await userEvent.fill(screen.getByTestId('custom-date-to-input'), '2024-02-31');
+
+    expect(spy).not.toHaveBeenCalled();
+    await expect.element(screen.getByText('Enter a valid To date')).toBeInTheDocument();
+  });
+
+  it('should emit remaining valid open-ended range when clearing an invalid field', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, {
+      timeBuckets: buckets,
+      dateBefore: '2024-12-31',
+      onCustomRangeChange: spy,
+    });
+
+    await userEvent.fill(screen.getByTestId('custom-date-from-input'), '2024-1-1');
+    expect(spy).not.toHaveBeenCalled();
+
+    await userEvent.fill(screen.getByTestId('custom-date-from-input'), '');
+
+    expect(spy).toHaveBeenCalledWith(undefined, '2024-12-31');
+  });
+
+  it('should render custom range controls as numeric text inputs with date-only attributes', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets });
+
+    for (const testId of ['custom-date-from-input', 'custom-date-to-input']) {
+      const input = screen.getByTestId(testId);
+      await expect.element(input).toHaveAttribute('type', 'text');
+      await expect.element(input).toHaveAttribute('inputmode', 'numeric');
+      await expect.element(input).toHaveAttribute('autocomplete', 'off');
+      await expect.element(input).toHaveAttribute('placeholder', 'YYYY-MM-DD');
+      await expect.element(input).toHaveAttribute('pattern', String.raw`\d{4}-\d{2}-\d{2}`);
+    }
+  });
+
+  it('should clear invalid custom range state before selecting a year', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, onYearSelect: vi.fn() });
+
+    await userEvent.fill(screen.getByTestId('custom-date-from-input'), '2024-1-1');
+    await expect.element(screen.getByText('Enter a valid From date')).toBeInTheDocument();
+
+    await screen.getByTestId('year-btn-2023').click();
+
+    await expect.element(screen.getByTestId('custom-date-from-input')).toHaveValue('');
+    await expect.element(screen.getByTestId('custom-date-to-input')).toHaveValue('');
+    expect(screen.getByText('Enter a valid From date').query()).toBeNull();
+  });
+
+  it('should clear invalid custom range state before selecting a month', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023, onMonthSelect: vi.fn() });
+
+    await userEvent.fill(screen.getByTestId('custom-date-to-input'), '2024-2-31');
+    await expect.element(screen.getByText('Enter a valid To date')).toBeInTheDocument();
+
+    await screen.getByTestId('month-btn-6').click();
+
+    await expect.element(screen.getByTestId('custom-date-from-input')).toHaveValue('');
+    await expect.element(screen.getByTestId('custom-date-to-input')).toHaveValue('');
+    expect(screen.getByText('Enter a valid To date').query()).toBeNull();
+  });
+
+  it('should clear stale validation error when props rerender to a valid range', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets });
+
+    await userEvent.fill(screen.getByTestId('custom-date-from-input'), '2024-1-1');
+    await expect.element(screen.getByText('Enter a valid From date')).toBeInTheDocument();
+
+    await screen.rerender({ timeBuckets: buckets, dateAfter: '2024-01-01', dateBefore: '2024-12-31' });
+
+    await expect.element(screen.getByTestId('custom-date-from-input')).toHaveValue('2024-01-01');
+    await expect.element(screen.getByTestId('custom-date-to-input')).toHaveValue('2024-12-31');
+    expect(screen.getByText('Enter a valid From date').query()).toBeNull();
+  });
+
+  it('should clear stale validation error when props rerender to an empty range', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets });
+
+    await userEvent.fill(screen.getByTestId('custom-date-to-input'), '2024-2-31');
+    await expect.element(screen.getByText('Enter a valid To date')).toBeInTheDocument();
+
+    await screen.rerender({ timeBuckets: buckets });
+
+    await expect.element(screen.getByTestId('custom-date-from-input')).toHaveValue('');
+    await expect.element(screen.getByTestId('custom-date-to-input')).toHaveValue('');
+    expect(screen.getByText('Enter a valid To date').query()).toBeNull();
+  });
+
+  it('should associate from validation errors with the from input', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets });
+
+    await userEvent.fill(screen.getByTestId('custom-date-from-input'), '2024-1-1');
+
+    const fromInput = screen.getByTestId('custom-date-from-input');
+    const toInput = screen.getByTestId('custom-date-to-input');
+    const error = screen.getByText('Enter a valid From date');
+
+    await expect.element(fromInput).toHaveAttribute('aria-invalid', 'true');
+    await expect.element(fromInput).toHaveAttribute('aria-describedby', 'custom-date-range-error');
+    await expect.element(toInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect.element(error).toHaveAttribute('id', 'custom-date-range-error');
+    await expect.element(error).toHaveAttribute('role', 'alert');
+  });
+
+  it('should associate to validation errors with the to input', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets });
+
+    await userEvent.fill(screen.getByTestId('custom-date-to-input'), '2024-2-31');
+
+    const fromInput = screen.getByTestId('custom-date-from-input');
+    const toInput = screen.getByTestId('custom-date-to-input');
+    const error = screen.getByText('Enter a valid To date');
+
+    await expect.element(fromInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect.element(toInput).toHaveAttribute('aria-invalid', 'true');
+    await expect.element(toInput).toHaveAttribute('aria-describedby', 'custom-date-range-error');
+    await expect.element(error).toHaveAttribute('id', 'custom-date-range-error');
+    await expect.element(error).toHaveAttribute('role', 'alert');
+  });
+
+  it('should associate inverted range errors with both custom date inputs', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, dateAfter: '2024-12-31' });
+
+    await userEvent.fill(screen.getByTestId('custom-date-to-input'), '2024-01-01');
+
+    const fromInput = screen.getByTestId('custom-date-from-input');
+    const toInput = screen.getByTestId('custom-date-to-input');
+    const error = screen.getByText('From date must be on or before To date');
+
+    await expect.element(fromInput).toHaveAttribute('aria-invalid', 'true');
+    await expect.element(fromInput).toHaveAttribute('aria-describedby', 'custom-date-range-error');
+    await expect.element(toInput).toHaveAttribute('aria-invalid', 'true');
+    await expect.element(toInput).toHaveAttribute('aria-describedby', 'custom-date-range-error');
+    await expect.element(error).toHaveAttribute('id', 'custom-date-range-error');
+    await expect.element(error).toHaveAttribute('role', 'alert');
+  });
+
+  it('should show month grid when selectedYear is set via prop', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023 });
+    await expect.element(screen.getByTestId('month-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('year-grid').query()).toBeNull();
+  });
+
+  it('should highlight the selected year with active styling', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023 });
+    // When selectedYear=2023 is set, the breadcrumb shows the year
+    const breadcrumb = screen.getByTestId('temporal-breadcrumb-all');
+    await expect.element(breadcrumb).toBeInTheDocument();
+  });
+
+  it('should highlight the selected month with active styling', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023, selectedMonth: 6 });
+    const monthBtn = screen.getByTestId('month-btn-6').element();
+    expect(monthBtn.className).toContain('bg-immich-primary');
+  });
+
+  it('should call onYearSelect with the year when clicking an unselected year', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, onYearSelect: spy });
+    await screen.getByTestId('year-btn-2023').click();
+    expect(spy).toHaveBeenCalledWith(2023);
+  });
+
+  it('should call onYearSelect with undefined when clicking the already-selected year', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023, onYearSelect: spy });
+    // The year grid isn't shown when selectedYear is set, but the breadcrumb year is shown.
+    // Click "All" breadcrumb to deselect.
+    await screen.getByTestId('temporal-breadcrumb-all').click();
+    expect(spy).toHaveBeenCalledWith(undefined);
+  });
+
+  it('should call onMonthSelect with the month when clicking an unselected month', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023, onMonthSelect: spy });
+    await screen.getByTestId('month-btn-6').click();
+    expect(spy).toHaveBeenCalledWith(2023, 6);
+  });
+
+  it('should call onMonthSelect with undefined when clicking the already-selected month', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, {
+      timeBuckets: buckets,
+      selectedYear: 2023,
+      selectedMonth: 6,
+      onMonthSelect: spy,
+    });
+    await screen.getByTestId('month-btn-6').click();
+    expect(spy).toHaveBeenCalledWith(2023, undefined);
+  });
+
+  it('should not call onMonthSelect for months with zero count', async () => {
+    const spy = vi.fn();
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023, onMonthSelect: spy });
+    // February has zero photos
+    await screen.getByTestId('month-btn-2').click();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('should show breadcrumb with month name when selectedMonth is set', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023, selectedMonth: 6 });
+    const breadcrumb = screen.getByTestId('temporal-breadcrumb-month').element();
+    expect(breadcrumb.textContent).toContain('Jun');
+  });
+
+  it('lays out the year grid in three columns with year buttons as direct grid children', async () => {
+    const screen = await render(TemporalPicker, { timeBuckets: buckets });
+    const grid = screen.getByTestId('year-grid').element();
+    expect(grid.className).toContain('grid-cols-3');
+    // The old flex-wrap `basis-[...]` classes are gone; buttons are direct grid items.
+    expect(grid.querySelectorAll(':scope > [data-testid^="year-btn-"]').length).toBe(2);
+  });
+
+  it('guards the year and month chips against reduced motion', async () => {
+    const yearView = await render(TemporalPicker, { timeBuckets: buckets });
+    expect(yearView.getByTestId('year-btn-2022').element().className).toContain('motion-reduce:transition-none');
+
+    const monthView = await render(TemporalPicker, { timeBuckets: buckets, selectedYear: 2023 });
+    expect(monthView.getByTestId('month-btn-6').element().className).toContain('motion-reduce:transition-none');
+  });
+});

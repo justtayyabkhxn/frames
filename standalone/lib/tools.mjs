@@ -6,6 +6,8 @@ import path from 'node:path';
 
 export const APP_ROOT = path.resolve(import.meta.dirname, '..', '..');
 export const TOOLS = path.join(APP_ROOT, 'tools');
+/** Gallery's web app, built by standalone/build-gallery.mjs; served at / */
+export const GALLERY_BUILD = path.join(APP_ROOT, 'gallery', 'web', 'build');
 
 const ET_VER = '13.63';
 const ET_SHA256 = '7a4bff4b1d6ee15adef882837847f76c0ed23228d294feed285939b6c9b293bd';

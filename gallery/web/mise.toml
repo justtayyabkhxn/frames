@@ -1,0 +1,87 @@
+[tasks.install]
+run = "pnpm install --filter immich-web --frozen-lockfile"
+
+[tasks.build]
+run = "pnpm run build"
+
+[tasks."build-stats"]
+run = "pnpm run build:stats"
+
+[tasks.preview]
+run = "pnpm run preview"
+
+[tasks.start]
+run = [
+  { task = ":install" },
+  { task = "//:sdk:install" },
+  { task = "//:sdk:build" },
+  "pnpm run dev",
+]
+
+[tasks."start-demo"]
+env.IMMICH_SERVER_URL = "https://demo.immich.app"
+run = { task = ":start" }
+
+[tasks.test]
+depends = [":playwright-install"]
+run = "pnpm run test"
+
+[tasks.format]
+run = "pnpm run format"
+
+[tasks."format-fix"]
+run = "pnpm run format:fix"
+
+[tasks.lint]
+run = "pnpm run lint"
+
+[tasks."lint-fix"]
+run = "pnpm run lint:fix"
+
+[tasks.check-typescript]
+run = "pnpm run check:typescript"
+
+[tasks."check-svelte"]
+run = "pnpm run check:svelte"
+
+[tasks.check]
+run = { tasks = [":check-typescript", ":check-svelte"] }
+
+[tasks.ci-unit]
+run = [
+  { task = "//:sdk:install" },
+  { task = "//:sdk:build" },
+  { task = ":install" },
+  { task = ":playwright-install" },
+  { task = ":format" },
+  { task = ":check" },
+  { task = ":test --run" },
+]
+
+[tasks.checklist]
+run = [
+  { task = ":ci-unit" },
+  { task = ":lint" },
+]
+
+[tasks."playwright-install"]
+run = "pnpm exec playwright install chromium"
+
+[tasks."test-medium"]
+depends = [":playwright-install", ":build"]
+run = "pnpm run test:medium"
+
+[tasks."test-medium-ui"]
+depends = [":playwright-install"]
+env = { PLAYWRIGHT_DEV_SERVER = "1" }
+run = "pnpm run test:medium:ui"
+
+[tasks."ci-medium"]
+run = [
+  { task = "//:sdk:install" },
+  { task = "//:sdk:build" },
+  { task = ":install" },
+  { task = ":playwright-install" },
+  { task = ":build" },
+  "pnpm run test:medium",
+]

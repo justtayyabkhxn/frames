@@ -1,0 +1,391 @@
+<script lang="ts">
+  import { shortcut } from '#lib/actions/shortcut.ts';
+  import ImageThumbnail from '#lib/components/assets/thumbnail/ImageThumbnail.svelte';
+  import type { FaceEditorSpace } from '#lib/gallery/asset-viewer/space-face-editor.ts';
+  import { assetViewerManager } from '#lib/managers/asset-viewer-manager.svelte.ts';
+  import FaceCreateTagModal from '#lib/modals/CreateFaceModal.svelte';
+  import { executeMutation } from '#lib/queries/client.ts';
+  import { createFaceMutation } from '#lib/queries/face.query.ts';
+  import { faceManager } from '#lib/stores/face.svelte.ts';
+  import { getPeopleThumbnailUrl } from '#lib/utils.ts';
+  import { getNaturalSize } from '#lib/utils/container-utils.ts';
+  import {
+    computeFaceCroppedCoordinates,
+    computeImageContentMetrics,
+    computeSelectorPosition,
+  } from '#lib/utils/face-box-drag.ts';
+  import { handleError } from '#lib/utils/handle-error.ts';
+  import { normalizeSearchString } from '#lib/utils/string-utils.ts';
+  import { getAllPeople, type PersonResponseDto } from '@immich/sdk';
+  import { Button, Input, modalManager, toastManager } from '@immich/ui';
+  import { Canvas, InteractiveFabricObject, Rect } from 'fabric';
+  import { clamp } from 'lodash-es';
+  import { onDestroy, onMount, tick } from 'svelte';
+  import { t } from 'svelte-i18n';
+
+  type Props = {
+    htmlElement: HTMLImageElement | HTMLVideoElement;
+    containerWidth: number;
+    containerHeight: number;
+    assetId: string;
+    spaceFaces?: FaceEditorSpace; // Gallery: a space editor tags the space's people (FaceEditorPanel)
+  };
+
+  let { htmlElement, containerWidth, containerHeight, assetId, spaceFaces }: Props = $props();
+
+  let canvasEl: HTMLCanvasElement | undefined = $state();
+  let canvas: Canvas | undefined = $state();
+  let faceRect: Rect | undefined = $state();
+  let faceSelectorEl: HTMLDivElement | undefined = $state();
+  let scrollableListEl: HTMLDivElement | undefined = $state();
+  let searchInputEl: HTMLInputElement | null = $state(null);
+  let page = $state(1);
+  let candidates = $state<PersonResponseDto[]>([]);
+
+  let searchTerm = $state('');
+  let faceBoxPosition = $state({ left: 0, top: 0, width: 0, height: 0 });
+
+  let filteredCandidates = $derived(
+    searchTerm
+      ? candidates.filter((person) => normalizeSearchString(person.name).includes(normalizeSearchString(searchTerm)))
+      : candidates,
+  );
+
+  const configureControlStyle = () => {
+    InteractiveFabricObject.ownDefaults = {
+      ...InteractiveFabricObject.ownDefaults,
+      cornerStyle: 'circle',
+      cornerColor: 'rgb(153,166,251)',
+      cornerSize: 10,
+      padding: 8,
+      transparentCorners: false,
+      lockRotation: true,
+      hasBorders: true,
+    };
+  };
+
+  const setupCanvas = () => {
+    if (!canvasEl || !htmlElement) {
+      return;
+    }
+
+    canvas = new Canvas(canvasEl);
+    configureControlStyle();
+
+    // eslint-disable-next-line tscompat/tscompat
+    faceRect = new Rect({
+      fill: 'rgba(66,80,175,0.25)',
+      stroke: 'rgb(66,80,175)',
+      strokeWidth: 2,
+      strokeUniform: true,
+      width: 112,
+      height: 112,
+      objectCaching: true,
+      rx: 8,
+      ry: 8,
+    });
+
+    canvas.add(faceRect);
+    canvas.setActiveObject(faceRect);
+    setDefaultFaceRectanglePosition(faceRect);
+  };
+
+  onMount(async () => {
+    setupCanvas();
+    await getPeople();
+    await tick();
+    searchInputEl?.focus();
+  });
+
+  const imageContentMetrics = $derived(computeImageContentMetrics(htmlElement, containerWidth, containerHeight));
+
+  const setDefaultFaceRectanglePosition = (faceRect: Rect) => {
+    const { offsetX, offsetY } = imageContentMetrics;
+
+    faceRect.set({
+      top: offsetY + 200,
+      left: offsetX + 200,
+    });
+
+    faceRect.setCoords();
+    positionFaceSelector();
+  };
+
+  $effect(() => {
+    if (!canvas) {
+      return;
+    }
+
+    canvas.setDimensions({
+      width: containerWidth,
+      height: containerHeight,
+    });
+
+    if (!faceRect) {
+      return;
+    }
+
+    if (!isFaceRectIntersectingCanvas(faceRect, canvas)) {
+      setDefaultFaceRectanglePosition(faceRect);
+    }
+  });
+
+  const isFaceRectIntersectingCanvas = (faceRect: Rect, canvas: Canvas) => {
+    const faceBox = faceRect.getBoundingRect();
+    return !(
+      0 > faceBox.left + faceBox.width ||
+      0 > faceBox.top + faceBox.height ||
+      canvas.width < faceBox.left ||
+      canvas.height < faceBox.top
+    );
+  };
+
+  const onClose = () => {
+    assetViewerManager.closeFaceEditMode();
+  };
+
+  const getPeople = async () => {
+    if (spaceFaces) {
+      candidates = await spaceFaces.loadPeople();
+      return;
+    }
+    const { hasNextPage, people, total } = await getAllPeople({ page, size: 1000, withHidden: false });
+
+    if (candidates.length === total) {
+      return;
+    }
+
+    candidates = [...candidates, ...people];
+
+    if (hasNextPage) {
+      page++;
+    }
+  };
+
+  const MAX_LIST_HEIGHT = 250;
+
+  const positionFaceSelector = () => {
+    if (!faceRect || !faceSelectorEl || !scrollableListEl) {
+      return;
+    }
+
+    const gap = 15;
+    const padding = faceRect.padding ?? 0;
+    const rawBox = faceRect.getBoundingRect();
+    const faceBox = {
+      left: rawBox.left - padding,
+      top: rawBox.top - padding,
+      width: rawBox.width + padding * 2,
+      height: rawBox.height + padding * 2,
+    };
+    const selectorWidth = faceSelectorEl.offsetWidth;
+    const chromeHeight = faceSelectorEl.offsetHeight - scrollableListEl.offsetHeight;
+    const listHeight = Math.min(MAX_LIST_HEIGHT, containerHeight - gap * 2 - chromeHeight);
+    const selectorHeight = listHeight + chromeHeight;
+
+    const bestPosition = computeSelectorPosition({
+      faceBox,
+      selectorWidth,
+      selectorHeight,
+      containerWidth,
+      containerHeight,
+      gap,
+    });
+
+    faceSelectorEl.style.top = `${bestPosition.top}px`;
+    faceSelectorEl.style.left = `${bestPosition.left}px`;
+    scrollableListEl.style.height = `${listHeight}px`;
+    faceBoxPosition = { left: faceBox.left, top: faceBox.top, width: faceBox.width, height: faceBox.height };
+  };
+
+  $effect(() => {
+    const rect = faceRect;
+    const cvs = canvas;
+    if (rect && cvs) {
+      rect.on('moving', positionFaceSelector);
+      rect.on('scaling', positionFaceSelector);
+      cvs.on('object:modified', () => searchInputEl?.focus());
+      return () => {
+        rect.off('moving', positionFaceSelector);
+        rect.off('scaling', positionFaceSelector);
+        cvs.off('object:modified', () => searchInputEl?.focus());
+      };
+    }
+  });
+
+  const getFaceCroppedCoordinates = () => {
+    if (!faceRect || !htmlElement) {
+      return;
+    }
+
+    return computeFaceCroppedCoordinates(faceRect.getBoundingRect(), htmlElement, containerWidth, containerHeight);
+  };
+
+  type FaceCoordinates = NonNullable<ReturnType<typeof getFaceCroppedCoordinates>>;
+
+  const getFacePreviewUrl = (data: FaceCoordinates) => {
+    if (!htmlElement) {
+      return;
+    }
+
+    const natural = getNaturalSize(htmlElement);
+    if (natural.width <= 0 || natural.height <= 0) {
+      return;
+    }
+
+    const x = clamp(data.x, 0, natural.width - 1);
+    const y = clamp(data.y, 0, natural.height - 1);
+    const width = clamp(data.width, 1, natural.width - x);
+    const height = clamp(data.height, 1, natural.height - y);
+
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+
+    try {
+      context.drawImage(htmlElement, x, y, width, height, 0, 0, width, height);
+      return canvas.toDataURL('image/png');
+    } catch {
+      return;
+    }
+  };
+
+  const tagFace = async (person: PersonResponseDto) => {
+    const data = getFaceCroppedCoordinates();
+    if (!data) {
+      toastManager.warning($t('error_tag_face_bounding_box'));
+      return;
+    }
+
+    if (spaceFaces) {
+      try {
+        await spaceFaces.tag(person, data);
+      } catch (error) {
+        handleError(error, 'Error tagging face');
+      }
+      onClose();
+      return;
+    }
+
+    const isConfirmed = await modalManager.showDialog({
+      prompt: person.name ? $t('confirm_tag_face', { values: { name: person.name } }) : $t('confirm_tag_face_unnamed'),
+    });
+
+    if (!isConfirmed) {
+      return;
+    }
+
+    const onSuccess = async () => {
+      await assetViewerManager.setAssetId(assetId);
+      faceManager.clear();
+    };
+
+    await executeMutation(createFaceMutation, [{ assetFaceCreateDto: { assetId, personId: person.id, ...data } }], {
+      onSuccess: () => void onSuccess(),
+      onSettled: onClose,
+    });
+  };
+
+  const showCreateFaceModal = async () => {
+    try {
+      const data = getFaceCroppedCoordinates();
+      if (!data) {
+        return;
+      }
+
+      const created = spaceFaces
+        ? await spaceFaces.create(data)
+        : await modalManager.show(FaceCreateTagModal, { assetId, ...data, previewUrl: getFacePreviewUrl(data) });
+      if (!created) {
+        return;
+      }
+
+      onClose();
+    } catch (error) {
+      handleError(error, 'Error creating and tagging face');
+    }
+  };
+
+  onDestroy(() => {
+    onClose();
+  });
+</script>
+
+<svelte:document use:shortcut={{ shortcut: { key: 'Escape' }, onShortcut: onClose, ignoreInputFields: false }} />
+
+<div
+  data-testid="face-editor-data"
+  class="absolute inset-s-0 top-0 z-5 size-full overflow-hidden"
+  data-overlay-interactive
+  data-face-left={faceBoxPosition.left}
+  data-face-top={faceBoxPosition.top}
+  data-face-width={faceBoxPosition.width}
+  data-face-height={faceBoxPosition.height}
+>
+  <canvas
+    bind:this={canvasEl}
+    id={spaceFaces ? 'space-face-editor' : 'face-editor'}
+    data-testid="face-editor"
+    class="absolute inset-s-0 top-0"
+  ></canvas>
+
+  <div
+    data-testid="face-selector"
+    bind:this={faceSelectorEl}
+    class="absolute inset-s-[calc(50%-125px)] top-[calc(50%-250px)] w-62.5 max-w-62.5 rounded-xl border border-gray-200 bg-white px-2 py-4 backdrop-blur-sm transition-[top,left] duration-200 ease-out dark:border-gray-800 dark:bg-immich-dark-gray dark:text-immich-dark-fg"
+  >
+    <p class="text-center text-sm">{$t('select_person_to_tag')}</p>
+
+    <div class="relative my-3">
+      <Input placeholder={$t('search_people')} bind:value={searchTerm} bind:ref={searchInputEl} size="tiny" />
+    </div>
+
+    <div bind:this={scrollableListEl} class="mt-2 h-62.5 overflow-y-auto">
+      {#if filteredCandidates.length > 0}
+        <div class="mt-2 rounded-lg">
+          {#each filteredCandidates as person (person.id)}
+            <button
+              onclick={() => tagFace(person)}
+              type="button"
+              class="flex w-full place-items-center gap-2 rounded-lg py-2 ps-1 pe-4 hover:bg-immich-primary/25"
+            >
+              <ImageThumbnail
+                curve
+                shadow
+                url={spaceFaces?.thumbnailUrl(person) ?? getPeopleThumbnailUrl(person)}
+                altText={person.name}
+                title={person.name}
+                widthStyle="30px"
+                heightStyle="30px"
+              />
+              <p class="text-sm">
+                {person.name}
+              </p>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <div class="flex items-center justify-center py-4">
+          <p class="text-sm text-gray-500">{$t('no_people_found')}</p>
+        </div>
+      {/if}
+    </div>
+
+    <Button size="small" fullWidth onclick={showCreateFaceModal} variant="outline" class="mt-2">
+      {$t('create_person')}
+    </Button>
+
+    <Button size="small" fullWidth onclick={onClose} color="danger" class="mt-2">
+      {$t('cancel')}
+    </Button>
+  </div>
+</div>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html class="dark">
+  <head>
+    <!-- (used for SSR) -->
+    <!-- metadata:tags -->
+
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <link rel="icon" type="image/x-icon" sizes="32x32" href="/favicon.ico" />
+    <link rel="icon" type="image/svg+xml" sizes="any" href="/icon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180.png" />
+    <link rel="preload" as="font" type="font/ttf" href="%app.font%" crossorigin="anonymous" />
+    <link rel="preload" as="font" type="font/ttf" href="%app.monofont%" crossorigin="anonymous" />
+
+    <script>
+      try {
+        const preference = JSON.parse(localStorage.getItem('immich-ui-theme'));
+        const prefersDark = globalThis.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (preference === 'light' || (preference !== 'dark' && !prefersDark)) {
+          document.documentElement.classList.remove('dark');
+          document.documentElement.classList.add('light');
+        }
+      } catch {
+        // noop
+      }
+    </script>
+
+    %sveltekit.head%
+
+    <style>
+      /* prevent FOUC */
+      html {
+        height: 100%;
+        width: 100%;
+      }
+
+      html.dark {
+        background-color: black;
+      }
+
+      html.light {
+        background-color: white;
+      }
+
+      body,
+      html {
+        margin: 0;
+        padding: 0;
+      }
+
+      @keyframes delayedVisibility {
+        to {
+          visibility: visible;
+        }
+      }
+
+      @keyframes loadspin {
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      #stencil {
+        --stencil-width: 150px;
+        display: flex;
+        width: var(--stencil-width);
+        margin-left: auto;
+        margin-right: auto;
+        margin-top: calc(50vh - var(--stencil-width) / 2);
+        margin-bottom: 100vh;
+        place-items: center;
+        justify-content: center;
+        overflow: hidden;
+        visibility: hidden;
+        animation:
+          0s linear 0.3s forwards delayedVisibility,
+          loadspin 8s linear infinite;
+      }
+    </style>
+    <link rel="stylesheet" href="/custom.css" />
+  </head>
+
+  <noscript style="position: absolute; top: 0px; z-index: 1000; color: black; background-color: white">
+    To use Immich, you must enable JavaScript or use a JavaScript compatible browser.
+  </noscript>
+
+  <body class="bg-light text-dark">
+    <div id="stencil">
+      <img src="/gallery-loader.svg" alt="Loading" style="width: 80px; height: 80px" />
+    </div>
+    <div>%sveltekit.body%</div>
+  </body>
+</html>

@@ -1,0 +1,669 @@
+import { reactiveProps } from '#lib/gallery/__mocks__/reactive-props.svelte.ts';
+import type { TimelineGrouping } from '#lib/managers/timeline-manager/types.ts';
+import { createRawSnippet, tick } from 'svelte';
+import { expect } from 'vitest';
+import { cleanup, render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+import Timeline from './Timeline.svelte';
+
+const testState = vi.hoisted(() => ({
+  representativeBucket: {
+    grouping: 'year' as const,
+    timeBucket: '2015-01-01',
+    viewId: 'year:2015-01-01',
+    date: { year: 2015 },
+    count: 1,
+    top: 0,
+    height: 296,
+    isLoaded: true,
+    representativeAssetId: null,
+    representativeThumbhash: null,
+    representativeRatio: null,
+  } as {
+    grouping: 'year' | 'month' | 'day';
+    timeBucket: string;
+    viewId: string;
+    date: { year: number; month?: number; day?: number };
+    count: number;
+    top: number;
+    height: number;
+    isLoaded: boolean;
+    representativeAssetId: string | null;
+    representativeThumbhash: string | null;
+    representativeRatio: number | null;
+  },
+  grouping: 'day' as 'year' | 'month' | 'day',
+  maxMd: false,
+  pointerCoarse: false,
+  isViewing: false,
+  assetCount: 1,
+  months: [] as unknown[],
+  /** A `$state` holder for the months, for tests that replace them after the first render. */
+  liveMonths: undefined as { months: unknown[] } | undefined,
+  keepStaleGroupingOnUpdate: false,
+  viewportHeight: 600,
+  viewportWidth: 390,
+  hasScrollableElement: true,
+  scrollCalls: [] as number[],
+  scrollTop: 0,
+  maxScroll: 1,
+  scrollToUpdatesAfterCalls: 1,
+  domHeight: 296,
+  renderOffset: 0,
+}));
+
+vi.mock('$app/navigation', async () => ({
+  ...(await import('#test/unit/mocks/app-navigation.ts')),
+  afterNavigate: vi.fn(),
+  beforeNavigate: vi.fn(),
+}));
+
+vi.mock('$app/state', async () => ({
+  ...(await import('#test/unit/mocks/app-state.svelte.ts')),
+  page: {
+    url: new URL('https://gallery.test/photos'),
+    route: { id: '/(user)/photos' },
+  },
+}));
+
+vi.mock('#lib/components/timeline/actions/TimelineKeyboardActions.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/Scrubber.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/elements/HotModuleReload.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/elements/Portal.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/managers/asset-viewer-manager.svelte.js', () => ({
+  assetViewerManager: {
+    get asset() {
+      return undefined;
+    },
+    get isViewing() {
+      return testState.isViewing;
+    },
+    gridScrollTarget: undefined,
+  },
+}));
+
+vi.mock('#lib/stores/media-query-manager.svelte.js', () => ({
+  mediaQueryManager: {
+    get maxMd() {
+      return testState.maxMd;
+    },
+    get pointerCoarse() {
+      return testState.pointerCoarse;
+    },
+  },
+}));
+
+vi.mock('#lib/managers/timeline-manager/timeline-manager.svelte.js', () => ({
+  TimelineManager: class TimelineManagerMock {
+    grouping = testState.grouping;
+    get months() {
+      return testState.liveMonths ? testState.liveMonths.months : testState.months;
+    }
+    timelineBuckets = [testState.representativeBucket];
+    visibleWindow = { top: 0, bottom: 600 };
+    isInitialized = true;
+    assetCount = testState.assetCount;
+    topSectionHeight = 0;
+    bodySectionHeight = 296;
+    bottomSectionHeight = 0;
+    totalViewerHeight = 296;
+    get domHeight() {
+      return testState.domHeight;
+    }
+    get renderOffset() {
+      return testState.renderOffset;
+    }
+    get viewportHeight() {
+      return testState.viewportHeight;
+    }
+    set viewportHeight(value: number) {
+      if (value !== 0) {
+        testState.viewportHeight = value;
+      }
+    }
+    get viewportWidth() {
+      return testState.viewportWidth;
+    }
+    set viewportWidth(value: number) {
+      if (value !== 0) {
+        testState.viewportWidth = value;
+      }
+    }
+    get hasEmptyViewport() {
+      return testState.viewportHeight === 0 || testState.viewportWidth === 0;
+    }
+    showAssetOwners = false;
+    albumAssets = new Set<string>();
+    suspendTransitions = false;
+    limitedScroll = false;
+    get maxScroll() {
+      return testState.maxScroll;
+    }
+    maxScrollPercent = 1;
+    get scrollTop() {
+      return testState.scrollTop;
+    }
+    get scrollableElement() {
+      return testState.hasScrollableElement ? ({} as HTMLElement) : undefined;
+    }
+    set scrollableElement(value: HTMLElement | undefined) {
+      testState.hasScrollableElement = Boolean(value);
+    }
+    scrolling = false;
+    destroy = vi.fn();
+    updateOptions = vi.fn((options?: { grouping?: 'year' | 'month' | 'day' }) => {
+      if (!testState.keepStaleGroupingOnUpdate) {
+        this.grouping = options?.grouping ?? 'day';
+      }
+    });
+    setLayoutOptions = vi.fn();
+    updateSlidingWindow = vi.fn();
+    scrollTo = vi.fn((top: number) => {
+      testState.scrollCalls.push(top);
+      if (testState.scrollCalls.length >= testState.scrollToUpdatesAfterCalls) {
+        testState.scrollTop = top;
+      }
+    });
+    bucketLayout = { loadCovers: vi.fn(() => Promise.resolve()) };
+    loadTimelineMonth = vi.fn();
+    getTimelineMonthByAssetId = vi.fn();
+    findTimelineMonthForAsset = vi.fn();
+    retrieveRange = vi.fn(() => Promise.resolve([]));
+    getRandomAsset = vi.fn();
+  },
+}));
+
+function assetInteraction(overrides: Partial<{ selectionActive: boolean }> = {}) {
+  return {
+    selectionActive: false,
+    selectedGroup: new Set<string>(),
+    assets: [],
+    candidates: [],
+    hasSelectedAsset: () => false,
+    hasSelectionCandidate: () => false,
+    addGroupToMultiselectGroup: vi.fn(),
+    removeGroupFromMultiselectGroup: vi.fn(),
+    addAssetToMultiselectGroup: vi.fn(),
+    removeAssetFromMultiselectGroup: vi.fn(),
+    selectAsset: vi.fn(),
+    clearCandidates: vi.fn(),
+    clear: vi.fn(),
+    setAssetSelectionStart: vi.fn(),
+    setAssetSelectionCandidates: vi.fn(),
+    ...overrides,
+  } as never;
+}
+
+function renderTimeline(props: Record<string, unknown> = {}) {
+  return render(Timeline, {
+    enableRouting: false,
+    options: { grouping: testState.grouping },
+    grouping: testState.grouping,
+    assetInteraction: assetInteraction(),
+    onTimelineBucketActivate: () => {},
+    ...props,
+  });
+}
+
+describe('Timeline representative grouping integration', () => {
+  beforeEach(() => {
+    testState.grouping = 'day';
+    testState.maxMd = false;
+    testState.pointerCoarse = false;
+    testState.isViewing = false;
+    testState.assetCount = 1;
+    testState.months = [];
+    testState.keepStaleGroupingOnUpdate = false;
+    testState.viewportHeight = 600;
+    testState.viewportWidth = 390;
+    testState.hasScrollableElement = true;
+    testState.scrollCalls = [];
+    testState.scrollTop = 0;
+    testState.maxScroll = 1;
+    testState.scrollToUpdatesAfterCalls = 1;
+    testState.domHeight = 296;
+    testState.renderOffset = 0;
+    testState.representativeBucket = {
+      grouping: 'year',
+      timeBucket: '2015-01-01',
+      viewId: 'year:2015-01-01',
+      date: { year: 2015 },
+      count: 1,
+      top: 0,
+      height: 296,
+      isLoaded: true,
+      representativeAssetId: null,
+      representativeThumbhash: null,
+      representativeRatio: null,
+    };
+  });
+
+  it('renders representative buckets instead of month groups in year mode', async () => {
+    testState.grouping = 'year';
+
+    await renderTimeline({ onGroupingChange: () => {} });
+
+    await expect.element(page.getByTestId('timeline-representative-buckets')).toHaveAttribute('data-grouping', 'year');
+    await expect.element(page.getByRole('button', { name: 'timeline_overview_card_semantics' })).toBeInTheDocument();
+  });
+
+  it('shows the mobile grouping control only when a handler exists and overlays are inactive', async () => {
+    testState.grouping = 'month';
+    testState.maxMd = true;
+
+    await renderTimeline({ onGroupingChange: () => {} });
+
+    await expect.element(page.getByTestId('timeline-mobile-grouping-control-shell')).toBeInTheDocument();
+
+    cleanup();
+    await renderTimeline({ assetInteraction: assetInteraction({ selectionActive: true }), onGroupingChange: () => {} });
+    expect(page.getByTestId('timeline-mobile-grouping-control-shell').query()).toBeNull();
+
+    cleanup();
+    testState.isViewing = true;
+    await renderTimeline({ onGroupingChange: () => {} });
+    expect(page.getByTestId('timeline-mobile-grouping-control-shell').query()).toBeNull();
+
+    cleanup();
+    testState.isViewing = false;
+    await renderTimeline();
+    expect(page.getByTestId('timeline-mobile-grouping-control-shell').query()).toBeNull();
+  });
+
+  it('keeps the mobile grouping control in sync with the timeline manager grouping', async () => {
+    testState.grouping = 'day';
+    testState.maxMd = true;
+
+    await renderTimeline({
+      options: { grouping: 'month' },
+      grouping: 'day',
+      onGroupingChange: () => {},
+    });
+
+    await expect.element(page.getByTestId('timeline-representative-buckets')).toHaveAttribute('data-grouping', 'month');
+    await expect.element(page.getByTestId('timeline-grouping-month')).toHaveAttribute('aria-pressed', 'true');
+    await expect.element(page.getByTestId('timeline-grouping-day')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('waits for the manager grouping to match options before resolving a temporal anchor', async () => {
+    const onTemporalAnchorResolved = vi.fn();
+    testState.grouping = 'month';
+    testState.keepStaleGroupingOnUpdate = true;
+    testState.representativeBucket = {
+      grouping: 'month',
+      timeBucket: '2015-08-01',
+      viewId: 'month:2015-08-01',
+      date: { year: 2015, month: 8 },
+      count: 1,
+      top: 240,
+      height: 296,
+      isLoaded: true,
+      representativeAssetId: null,
+      representativeThumbhash: null,
+      representativeRatio: null,
+    };
+
+    await renderTimeline({
+      options: { grouping: 'day' },
+      grouping: 'day',
+      temporalAnchor: { year: 2015, month: 8 },
+      onTemporalAnchorResolved,
+    });
+
+    expect(onTemporalAnchorResolved).not.toHaveBeenCalled();
+  });
+
+  it('waits for viewport geometry before resolving a day-mode temporal anchor', async () => {
+    const onTemporalAnchorResolved = vi.fn();
+    testState.grouping = 'day';
+    testState.viewportHeight = 0;
+    testState.viewportWidth = 0;
+    testState.months = [{ yearMonth: { year: 2015, month: 8 }, top: 0 }] as unknown[];
+
+    await renderTimeline({
+      options: { grouping: 'day' },
+      grouping: 'day',
+      temporalAnchor: { year: 2015, month: 8 },
+      onTemporalAnchorResolved,
+    });
+
+    expect(onTemporalAnchorResolved).not.toHaveBeenCalled();
+  });
+
+  it('waits for the scroll container before resolving a day-mode temporal anchor', async () => {
+    const onTemporalAnchorResolved = vi.fn();
+    testState.grouping = 'day';
+    testState.hasScrollableElement = false;
+    testState.months = [{ yearMonth: { year: 2015, month: 8 }, top: 480 }] as unknown[];
+
+    await renderTimeline({
+      options: { grouping: 'day' },
+      grouping: 'day',
+      temporalAnchor: { year: 2015, month: 8 },
+      onTemporalAnchorResolved,
+    });
+
+    expect(onTemporalAnchorResolved).not.toHaveBeenCalled();
+  });
+
+  it('retries a day-mode temporal anchor until the scroll position reaches the target', async () => {
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => {
+          testState.viewportHeight = 600;
+          testState.viewportWidth = 390;
+          callback(performance.now());
+        }, 0) as unknown as number,
+    );
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id));
+
+    try {
+      const onTemporalAnchorResolved = vi.fn();
+      testState.grouping = 'day';
+      testState.maxScroll = 2000;
+      testState.scrollToUpdatesAfterCalls = 2;
+      testState.months = [{ yearMonth: { year: 2015, month: 8 }, top: 1200, height: 240 }] as unknown[];
+
+      await renderTimeline({
+        options: { grouping: 'day' },
+        grouping: 'day',
+        temporalAnchor: { year: 2015, month: 8 },
+        onTemporalAnchorResolved,
+      });
+
+      await vi.waitFor(() => expect(onTemporalAnchorResolved).toHaveBeenCalledOnce());
+      expect(testState.scrollCalls).toEqual([1200, 1200]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not run the routing scroll-to-top fallback while a temporal anchor is pending', async () => {
+    testState.grouping = 'day';
+    testState.months = [];
+
+    await renderTimeline({
+      enableRouting: true,
+      options: { grouping: 'day' },
+      grouping: 'day',
+      temporalAnchor: { year: 2015, month: 8 },
+    });
+
+    await tick();
+
+    expect(testState.scrollCalls).not.toContain(0);
+  });
+
+  it('uses the All label in the mobile grouping control on coarse-pointer web devices', async () => {
+    const changes: TimelineGrouping[] = [];
+    testState.grouping = 'day';
+    testState.maxMd = false;
+    testState.pointerCoarse = true;
+
+    await renderTimeline({
+      onGroupingChange: (grouping: TimelineGrouping) => {
+        changes.push(grouping);
+      },
+    });
+
+    const shell = page.getByTestId('timeline-mobile-grouping-control-shell');
+    await expect.element(shell).toBeInTheDocument();
+    await expect
+      .element(shell.getByRole('button', { name: 'timeline_grouping_all' }))
+      .toHaveAttribute('aria-pressed', 'true');
+    await expect.element(shell.getByTestId('timeline-grouping-day')).toHaveTextContent('timeline_grouping_all');
+
+    await shell.getByRole('button', { name: 'timeline_grouping_years' }).click();
+
+    expect(changes).toEqual(['year']);
+  });
+
+  it('renders the empty snippet when the initialized timeline has zero assets', async () => {
+    testState.assetCount = 0;
+    testState.months = [
+      {
+        viewId: 'month:2015-01',
+        isInOrNearViewport: false,
+        isLoaded: false,
+        top: 0,
+        height: 100,
+        title: 'January 2015',
+      },
+    ];
+
+    await renderTimeline({
+      empty: createRawSnippet(() => ({ render: () => '<div>No assets found</div>' })),
+    });
+
+    await expect.element(page.getByText('No assets found')).toBeInTheDocument();
+  });
+});
+
+describe('Timeline scroll-space scaling', () => {
+  beforeEach(() => {
+    testState.grouping = 'day';
+    testState.assetCount = 1;
+    testState.viewportHeight = 600;
+    testState.viewportWidth = 390;
+    testState.domHeight = 296;
+    testState.renderOffset = 0;
+    testState.months = [];
+  });
+
+  it('sizes the virtual timeline to domHeight, not totalViewerHeight', async () => {
+    testState.domHeight = 200; // < totalViewerHeight (296)
+    const { container } = await renderTimeline();
+    const virtual = container.querySelector('#virtual-timeline') as HTMLElement;
+    await expect.element(page.elementLocator(virtual)).toHaveStyle({ height: '200px' });
+  });
+
+  it('offsets the month skeleton transform by renderOffset', async () => {
+    testState.renderOffset = 50;
+    testState.months = [
+      {
+        viewId: 'month:2015-01',
+        isInOrNearViewport: false,
+        isLoaded: false,
+        top: 1200,
+        height: 240,
+        title: 'Jan 2015',
+      },
+    ];
+    await renderTimeline();
+    // assert on the raw inline style so CSS normalization (e.g. `0`→`0px`) can't cause a false negative;
+    // the template emits exactly `translate3d(0,${top + renderOffset}px,0)`
+    const skeleton = page.getByTestId('timeline-month-skeleton').element();
+    expect(skeleton.getAttribute('style')).toMatch(/translate3d\(\s*0(?:px)?\s*,\s*1250px\s*,\s*0(?:px)?\s*\)/);
+  });
+
+  it('offsets the lead-out spacer transform by renderOffset', async () => {
+    // topSectionHeight 0 + bodySectionHeight 296 + renderOffset 50 = 346
+    testState.renderOffset = 50;
+    const { getByTestId } = await renderTimeline();
+    expect(getByTestId('timeline-leadout').element().getAttribute('style')).toMatch(
+      /translate3d\(\s*0(?:px)?\s*,\s*346px\s*,\s*0(?:px)?\s*\)/,
+    );
+  });
+
+  it('offsets the lead-in/top section transform by renderOffset so it stays flush with the first month', async () => {
+    // The top section renders at logical position 0, so its DOM position must be `0 + renderOffset`.
+    // Without this, an above-cap library (renderOffset != 0) draws the first month over the still-visible
+    // lead-in as it scrolls, because months use `top + renderOffset` and the top section did not.
+    testState.renderOffset = 50;
+    const { getByTestId } = await renderTimeline();
+    expect(getByTestId('timeline-top-section').element().getAttribute('style')).toMatch(
+      /translate3d\(\s*0(?:px)?\s*,\s*50px\s*,\s*0(?:px)?\s*\)/,
+    );
+  });
+});
+
+describe('Timeline top section stacking', () => {
+  beforeEach(() => {
+    testState.grouping = 'day';
+    testState.assetCount = 1;
+    testState.viewportHeight = 600;
+    testState.viewportWidth = 390;
+    testState.domHeight = 296;
+    testState.renderOffset = 0;
+    testState.months = [];
+  });
+
+  // The top section and every month layer are transform-positioned siblings, so each one is its own
+  // stacking context with `z-index: auto` — painting order then falls back to DOM order and the month
+  // layers cover whatever the top section overflows downwards. Header overlays that hang below the
+  // section (the person page's name-suggestion dropdown, #878) were painted under the day-title row
+  // and swallowed its clicks. A `z-index` on the top section is the only lift that works: an overlay's
+  // own z-index is trapped inside this section's stacking context.
+  it('paints the top section above the month layers so overflowing header overlays stay clickable', async () => {
+    testState.months = [
+      {
+        viewId: 'month:2015-01',
+        isInOrNearViewport: false,
+        isLoaded: false,
+        top: 0,
+        height: 240,
+        title: 'Jan 2015',
+      },
+    ];
+
+    const { getByTestId } = await renderTimeline();
+
+    expect(Number((getByTestId('timeline-top-section').element() as HTMLElement).style.zIndex)).toBeGreaterThan(0);
+  });
+
+  it('leaves the month layers at the default stacking level', async () => {
+    // The lift above only holds while months stay at `z-index: auto`. If a month layer ever gains its
+    // own z-index, the top section's has to be re-derived against it rather than silently losing.
+    testState.months = [
+      {
+        viewId: 'month:2015-01',
+        isInOrNearViewport: false,
+        isLoaded: false,
+        top: 0,
+        height: 240,
+        title: 'Jan 2015',
+      },
+    ];
+
+    const { getByTestId } = await renderTimeline();
+
+    expect((getByTestId('timeline-month-skeleton').element() as HTMLElement).style.zIndex).toBe('');
+  });
+});
+
+describe('Timeline month reload', () => {
+  const skeletonMonth = () => ({
+    viewId: '2015-1',
+    isInOrNearViewport: false,
+    isLoaded: false,
+    top: 0,
+    height: 240,
+    title: 'Jan 2015',
+  });
+
+  beforeEach(() => {
+    testState.grouping = 'day';
+    testState.assetCount = 1;
+    testState.viewportHeight = 600;
+    testState.viewportWidth = 390;
+    testState.domHeight = 296;
+    testState.renderOffset = 0;
+    testState.months = [];
+  });
+
+  afterEach(() => {
+    testState.liveMonths = undefined;
+  });
+
+  // A reload rebuilds every month object, with the same year-month keys as before. Rapid filter changes left
+  // stale month DOM mounted (overlapping the new results) while the old nodes were reused under those keys,
+  // so a reload must remount the month layers rather than patch them.
+  it('remounts the month DOM when a reload rebuilds the months under the same keys', async () => {
+    const live = reactiveProps({ months: [skeletonMonth()] });
+    testState.liveMonths = live;
+    await renderTimeline();
+    const before = page.getByTestId('timeline-month-skeleton').element();
+
+    live.months = [skeletonMonth()];
+    await tick();
+
+    const after = page.getByTestId('timeline-month-skeleton').element();
+    expect(after).not.toBe(before);
+    expect(before.isConnected).toBe(false);
+  });
+
+  it('keeps the month DOM while the same month object updates within a load', async () => {
+    const live = reactiveProps({ months: [skeletonMonth()] });
+    testState.liveMonths = live;
+    await renderTimeline();
+    const before = page.getByTestId('timeline-month-skeleton').element();
+
+    live.months[0].height = 300;
+    await tick();
+
+    const after = page.getByTestId('timeline-month-skeleton').element();
+    expect(after).toBe(before);
+    await expect.element(page.elementLocator(after)).toHaveStyle({ height: '300px' });
+  });
+});
+
+describe('Timeline remount under a bound manager', () => {
+  beforeEach(() => {
+    testState.grouping = 'day';
+    testState.assetCount = 1;
+    testState.months = [];
+  });
+
+  // FilteredTimeline remounts the timeline to reload it (#1041). The parent's bound manager already holds the new
+  // instance's manager when the old instance is torn down, so the old one must destroy its own manager, not the
+  // bound one: destroying the bound one emptied the remounted timeline until the page was left.
+  it('destroys only the manager the unmounted instance created', async () => {
+    const { default: Host } = await import('#lib/gallery/__mocks__/timeline-remount.host.stub.svelte');
+    const managers: { destroy: ReturnType<typeof vi.fn> }[] = [];
+    const props = reactiveProps({
+      showOld: true,
+      showNew: false,
+      timelineProps: {
+        enableRouting: false,
+        options: { grouping: testState.grouping },
+        grouping: testState.grouping,
+        assetInteraction: assetInteraction(),
+        onTimelineBucketActivate: () => {},
+      } as never,
+      onManager: (manager: unknown) => {
+        if (!managers.includes(manager as never)) {
+          managers.push(manager as never);
+        }
+      },
+    });
+    await render(Host, props);
+    await tick();
+
+    props.showNew = true;
+    await tick();
+    props.showOld = false;
+    await tick();
+
+    expect(managers).toHaveLength(2);
+    const [first, second] = managers;
+    expect(first.destroy).toHaveBeenCalledTimes(1);
+    expect(second.destroy).not.toHaveBeenCalled();
+  });
+});

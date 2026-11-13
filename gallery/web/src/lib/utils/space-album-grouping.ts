@@ -1,0 +1,234 @@
+import { AlbumSortBy, SortOrder } from '#lib/stores/preferences.store.ts';
+import {
+  SpaceAlbumGroupBy,
+  spaceAlbumViewSettings,
+  type SpaceAlbumViewSettings,
+} from '#lib/stores/space-album-view-settings.store.ts';
+import { stringToSortOrder } from '#lib/utils/album-utils.ts';
+import { sortSpaceAlbums } from '#lib/utils/space-album-sort.ts';
+import type { SharedSpaceLinkedAlbumDto } from '@immich/sdk';
+import { groupBy } from 'lodash-es';
+import { get } from 'svelte/store';
+
+/**
+----------------------
+Space Album Grouping
+----------------------
+*/
+
+export interface SpaceAlbumGroup {
+  id: string;
+  name: string;
+  albums: SharedSpaceLinkedAlbumDto[];
+}
+
+export interface SpaceAlbumGroupOptionMetadata {
+  id: SpaceAlbumGroupBy;
+  defaultOrder: SortOrder;
+  isDisabled: () => boolean;
+}
+
+export const spaceGroupOptionsMetadata: SpaceAlbumGroupOptionMetadata[] = [
+  {
+    id: SpaceAlbumGroupBy.None,
+    defaultOrder: SortOrder.Asc,
+    isDisabled: () => false,
+  },
+  {
+    id: SpaceAlbumGroupBy.Year,
+    defaultOrder: SortOrder.Desc,
+    isDisabled() {
+      // Recently linked is deliberately NOT here, even though it is an
+      // album-metadata date like the two that are. It is the default sort, so
+      // disabling Year for it would put the most useful grouping out of reach
+      // until the user changed sort. Year buckets by photo year and orders
+      // within each bucket by the active sort, which reads fine as "2024
+      // albums, most recently linked first".
+      const disabledWithSortOptions: string[] = [AlbumSortBy.DateCreated, AlbumSortBy.DateModified];
+      return disabledWithSortOptions.includes(get(spaceAlbumViewSettings).sortBy);
+    },
+  },
+  {
+    id: SpaceAlbumGroupBy.LinkedBy,
+    defaultOrder: SortOrder.Asc,
+    isDisabled: () => false,
+  },
+  {
+    id: SpaceAlbumGroupBy.Owner,
+    defaultOrder: SortOrder.Asc,
+    isDisabled: () => false,
+  },
+];
+
+export const findSpaceGroupOptionMetadata = (groupByValue: string) => {
+  // Default is no grouping
+  const defaultGroupOption = spaceGroupOptionsMetadata[0];
+  return spaceGroupOptionsMetadata.find(({ id }) => groupByValue === id) ?? defaultGroupOption;
+};
+
+export const getSelectedSpaceAlbumGroupOption = (settings: SpaceAlbumViewSettings): SpaceAlbumGroupBy => {
+  const defaultGroupOption = SpaceAlbumGroupBy.None;
+  const albumGroupOption = (settings.groupBy as SpaceAlbumGroupBy) ?? defaultGroupOption;
+
+  if (findSpaceGroupOptionMetadata(albumGroupOption).isDisabled()) {
+    return defaultGroupOption;
+  }
+  return albumGroupOption;
+};
+
+/**
+-----------------------------------------------
+Build Space Album Groups (pure — no store reads)
+-----------------------------------------------
+*/
+
+export interface SpaceAlbumGroupingCtx {
+  ungrouped: string;
+  unknownYear: string;
+  unassigned: string;
+  currentUserId: string;
+  members: Array<{ userId: string; name: string }>;
+  myAlbums?: string;
+}
+
+export const buildSpaceAlbumGroups = (
+  albums: SharedSpaceLinkedAlbumDto[],
+  settings: SpaceAlbumViewSettings,
+  ctx: SpaceAlbumGroupingCtx,
+): SpaceAlbumGroup[] => {
+  const selectedGroupBy = getSelectedSpaceAlbumGroupOption(settings);
+  const order = stringToSortOrder(settings.groupOrder);
+
+  let groups: SpaceAlbumGroup[];
+
+  switch (selectedGroupBy) {
+    case SpaceAlbumGroupBy.None: {
+      groups = [{ id: ctx.ungrouped, name: ctx.ungrouped, albums }];
+      break;
+    }
+
+    case SpaceAlbumGroupBy.Year: {
+      const useStartDate = settings.sortBy === AlbumSortBy.OldestPhoto;
+
+      const groupedByYear = groupBy(albums, (album) => {
+        const date = useStartDate ? album.startDate : album.endDate;
+        return date ? String(new Date(date).getFullYear()) : ctx.unknownYear;
+      });
+
+      const sortSign = order === SortOrder.Desc ? -1 : 1;
+      const sortedByYear = Object.entries(groupedByYear).sort(([a], [b]) => {
+        // Unknown-year always last
+        if (a === ctx.unknownYear) {
+          return 1;
+        }
+        return b === ctx.unknownYear ? -1 : (Number.parseInt(a) - Number.parseInt(b)) * sortSign;
+      });
+
+      groups = sortedByYear.map(([year, yearAlbums]) => ({
+        id: year,
+        name: year,
+        albums: yearAlbums,
+      }));
+      break;
+    }
+
+    case SpaceAlbumGroupBy.LinkedBy: {
+      const UNASSIGNED_KEY = '__unassigned__';
+
+      const groupedByLinker = groupBy(albums, (album) => {
+        if (!album.addedById) {
+          return UNASSIGNED_KEY;
+        }
+        const member = ctx.members.find((m) => m.userId === album.addedById);
+        return member ? member.userId : UNASSIGNED_KEY;
+      });
+
+      const sortSign = order === SortOrder.Desc ? -1 : 1;
+      const sortedByLinker = Object.entries(groupedByLinker).sort(([keyA], [keyB]) => {
+        // Unassigned always last
+        if (keyA === UNASSIGNED_KEY) {
+          return 1;
+        }
+        if (keyB === UNASSIGNED_KEY) {
+          return -1;
+        }
+        {
+          const nameA = ctx.members.find((m) => m.userId === keyA)?.name ?? '';
+          const nameB = ctx.members.find((m) => m.userId === keyB)?.name ?? '';
+          return nameA.localeCompare(nameB) * sortSign;
+        }
+      });
+
+      groups = sortedByLinker.map(([key, keyAlbums]) => ({
+        id: key === UNASSIGNED_KEY ? ctx.unassigned : key,
+        name:
+          key === UNASSIGNED_KEY ? ctx.unassigned : (ctx.members.find((m) => m.userId === key)?.name ?? ctx.unassigned),
+        albums: keyAlbums,
+      }));
+      break;
+    }
+
+    case SpaceAlbumGroupBy.Owner: {
+      const UNASSIGNED_KEY = '__unassigned__';
+
+      // ownerId is not currently exposed on SharedSpaceLinkedAlbumDto (albumUsers was stripped
+      // in Slice 7 to prevent PII leakage). Group by ownerId when it becomes available;
+      // fall back to UNASSIGNED_KEY so the grouping is safe and crash-free today.
+      const groupedByOwner = groupBy(albums, (album) => {
+        const ownerId = (album as unknown as { ownerId?: string }).ownerId;
+        return ownerId ?? UNASSIGNED_KEY;
+      });
+
+      const sortSign = order === SortOrder.Desc ? -1 : 1;
+      const sortedByOwner = Object.entries(groupedByOwner).sort(([ownerIdA], [ownerIdB]) => {
+        // Unassigned always last
+        if (ownerIdA === UNASSIGNED_KEY) {
+          return 1;
+        }
+        if (ownerIdB === UNASSIGNED_KEY) {
+          return -1;
+        }
+        // Current user pinned first (before sort direction applies)
+        if (ownerIdA === ctx.currentUserId) {
+          return -sortSign;
+        }
+        if (ownerIdB === ctx.currentUserId) {
+          return sortSign;
+        }
+        {
+          const ownerAName = ctx.members.find((m) => m.userId === ownerIdA)?.name ?? '';
+          const ownerBName = ctx.members.find((m) => m.userId === ownerIdB)?.name ?? '';
+          return ownerAName.localeCompare(ownerBName) * sortSign;
+        }
+      });
+
+      groups = sortedByOwner.map(([ownerId, ownerAlbums]) => {
+        if (ownerId === UNASSIGNED_KEY) {
+          return { id: ctx.unassigned, name: ctx.unassigned, albums: ownerAlbums };
+        }
+        const memberName = ctx.members.find((m) => m.userId === ownerId)?.name;
+        const ownerName =
+          ownerId === ctx.currentUserId
+            ? (ctx.myAlbums ?? memberName ?? ctx.unassigned)
+            : (memberName ?? ctx.unassigned);
+        return { id: ownerId, name: ownerName, albums: ownerAlbums };
+      });
+      break;
+    }
+
+    default: {
+      groups = [{ id: ctx.ungrouped, name: ctx.ungrouped, albums }];
+      break;
+    }
+  }
+
+  // Re-sort each group's albums by the current sort settings
+  for (const group of groups) {
+    group.albums = sortSpaceAlbums(group.albums, {
+      sortBy: settings.sortBy,
+      orderBy: settings.sortOrder,
+    });
+  }
+
+  return groups;
+};

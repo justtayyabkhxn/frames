@@ -1,0 +1,698 @@
+import { cropFacesFromAsset } from '#lib/gallery/stores/preferences.store.ts';
+import { factory } from '#test/unit/factories.ts';
+import { renderWithTooltips } from '#test/unit/helpers.ts';
+import { AssetTypeEnum, type AssetResponseDto, type PersonResponseDto } from '@immich/sdk';
+import { tick } from 'svelte';
+import { get } from 'svelte/store';
+import { expect } from 'vitest';
+import { page } from 'vitest/browser';
+import DetailPanelPeople from './DetailPanelPeople.svelte';
+
+const { authManagerMock, faceManagerMock, zoomImageToBase64Mock } = vi.hoisted(() => ({
+  authManagerMock: {
+    authenticated: true,
+    user: { id: 'viewer-1' },
+    isSharedLink: false,
+    params: {},
+    preferences: { tags: { enabled: true } },
+  },
+  faceManagerMock: {
+    data: [] as unknown[],
+    facesByPersonId: new Map<string, unknown[]>(),
+    people: [] as PersonResponseDto[],
+  },
+  zoomImageToBase64Mock: vi.fn(),
+}));
+
+vi.mock('#lib/stores/face.svelte.js', () => ({ faceManager: faceManagerMock }));
+
+vi.mock('#lib/utils/people-utils.js', () => ({ zoomImageToBase64: zoomImageToBase64Mock }));
+
+vi.mock('$app/navigation', async () => ({
+  ...(await import('#test/unit/mocks/app-navigation.ts')),
+  goto: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('#lib/managers/auth-manager.svelte.js', () => ({ authManager: authManagerMock }));
+
+vi.mock('#lib/managers/asset-viewer-manager.svelte.js', () => ({
+  assetViewerManager: {
+    clearHighlightedFaces: vi.fn(),
+    highlightedFaces: [],
+    imgRef: undefined,
+    isShowingHiddenPeople: false,
+    openEditFacesPanel: vi.fn(),
+    setHighlightedFaces: vi.fn(),
+    toggleFaceEditMode: vi.fn(),
+    toggleHiddenPeople: vi.fn(),
+  },
+}));
+
+const person = (name: string, overrides: Partial<PersonResponseDto> = {}): PersonResponseDto =>
+  ({
+    id: `person-${name}`,
+    name,
+    birthDate: null,
+    thumbnailPath: '',
+    isHidden: false,
+    isFavorite: false,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }) as unknown as PersonResponseDto;
+
+// `assetFactory` randomises `type` (see web/src/test-data/factories/asset-factory.ts), and
+// `zoomImageToBase64` takes a different code path for Image vs Video. An unpinned type is a
+// latent flake, so every asset built here pins it.
+const asset = (overrides: Partial<AssetResponseDto> = {}) =>
+  factory.asset({ id: 'asset-1', ownerId: 'owner-1', type: AssetTypeEnum.Image, ...overrides });
+
+const renderPanel = (props: {
+  isOwner: boolean;
+  canEditSpacePeople?: boolean;
+  spaceId?: string;
+  people?: PersonResponseDto[];
+  sharedLink?: boolean;
+  assetType?: AssetTypeEnum;
+}) => {
+  authManagerMock.isSharedLink = props.sharedLink ?? false;
+  return renderWithTooltips(DetailPanelPeople, {
+    asset: asset({
+      ...(props.people && { people: props.people }),
+      ...(props.assetType && { type: props.assetType }),
+    }),
+    isOwner: props.isOwner,
+    canEditSpacePeople: props.canEditSpacePeople,
+    previousRoute: '/photos',
+    spaceId: props.spaceId,
+  });
+};
+
+// renderWithTooltips casts away the TestWrapper indirection, so rerender must be fed the
+// wrapper's own prop shape — passing the component's props directly silently does nothing.
+const rerenderPanel = async (
+  result: { rerender: (props: never) => Promise<void> },
+  props: { isOwner: boolean; spaceId?: string; assetId: string },
+) => {
+  await result.rerender({
+    component: DetailPanelPeople,
+    componentProps: {
+      asset: asset({ id: props.assetId }),
+      isOwner: props.isOwner,
+      previousRoute: '/photos',
+      spaceId: props.spaceId,
+    },
+  } as never);
+};
+
+// A person as the server sends it inside a shared space: the id stays the GLOBAL person id
+// (AssetService.applySpacePeople only *adds* spacePersonId), which is why faceManager's
+// facesByPersonId lookup still matches for space members.
+// eslint-disable-next-line unicorn/no-unnecessary-parameters
+const spacePerson = (name: string, spacePersonId: string): PersonResponseDto =>
+  ({ ...person(name), spacePersonId }) as unknown as PersonResponseDto;
+
+// eslint-disable-next-line unicorn/no-unnecessary-parameters
+const givePersonAFace = (personId: string, faceId = 'face-1') => {
+  faceManagerMock.facesByPersonId = new Map<string, unknown[]>([[personId, [{ id: faceId }]]]);
+  faceManagerMock.data = [{ id: faceId }];
+};
+
+const CROP_DATA_URL = 'data:image/png;base64,iVBORw0KGgo=';
+
+// The {#await} block renders its PENDING branch first, which shows the same fallback URL the
+// failure case shows. Without flushing to the :then branch, a test meaning to assert the
+// resolved state silently asserts the pending state and can never fail.
+const settleCrop = async () => {
+  await vi.waitFor(() => expect(zoomImageToBase64Mock).toHaveBeenCalled());
+  await tick();
+  await tick();
+};
+
+// NOTE on what these tests do and do NOT prove.
+//
+// These exercise the component's gate and avatar resolution given a people list. They mock
+// `faceManager`, so they prove client logic only — never the server contract.
+//
+// History: before #818 the server redacted identity from non-owners on both sources, so the
+// People section was empty for a shared-album recipient no matter what the client did. That is
+// fixed — `mapFaces` (server/src/dtos/person.dto.ts) now maps `person` for anyone with
+// Permission.AssetRead, and `AssetService.get` filters only hidden people for a non-owner with
+// no space. The server side is pinned by real-database tests:
+// server/test/medium/specs/services/person.service.spec.ts and .../asset.service.spec.ts.
+//
+// Avatar-URL reachability is NOT symmetric across viewers, and that asymmetry is load-bearing
+// for the crop-vs-profile-face setting: /people/{id}/thumbnail is guarded by
+// Permission.PersonRead, which server/src/utils/access.ts resolves as owner ∪ shared-space
+// member. A viewer who is neither (album share, partner share) has no representative face to
+// fall back to, which is why they stay on the asset crop unconditionally.
+describe('DetailPanelPeople', () => {
+  beforeEach(() => {
+    // Real localStorage-backed store: a flip in one test leaks into every later test (and into
+    // preferences.store.spec.ts) unless it is reset here.
+    cropFacesFromAsset.set(true);
+    faceManagerMock.people = [];
+    faceManagerMock.data = [];
+    faceManagerMock.facesByPersonId = new Map();
+    // vite.config.ts sets no clearMocks/restoreMocks, so this shared hoisted mock keeps its call
+    // history across tests in this file. settleCrop() waits on that history, so it must be cleared
+    // or every crop assertion after the first one asserts the pending branch by mistake.
+    zoomImageToBase64Mock.mockReset();
+    zoomImageToBase64Mock.mockResolvedValue(undefined);
+  });
+
+  it('renders people for a non-owner when the client is given any (gate no longer requires ownership)', async () => {
+    faceManagerMock.people = [person('Alice')];
+
+    await renderPanel({ isOwner: false });
+
+    await expect.element(page.getByTestId('detail-panel-people')).toBeInTheDocument();
+    await expect.element(page.getByText('Alice')).toBeInTheDocument();
+  });
+
+  it('renders nothing for a non-owner when handed an empty people list', async () => {
+    // Pre-#818 this was the production shape for a shared-album recipient. It no longer is; the
+    // test is kept because the empty-list gate itself still matters.
+    faceManagerMock.people = [];
+    faceManagerMock.data = [{ id: 'face-1' }];
+
+    await renderPanel({ isOwner: false });
+
+    await expect.element(page.getByTestId('detail-panel-people')).not.toBeInTheDocument();
+  });
+
+  it('never requests the owner-only person thumbnail for a non-owner', async () => {
+    faceManagerMock.people = [person('Alice')];
+
+    const { container } = await renderPanel({ isOwner: false });
+
+    // /people/{id}/thumbnail is owner-gated AND is cropped from the person's feature photo — a
+    // DIFFERENT asset the viewer may have no right to see. Requesting it would 404 at best and
+    // leak a crop of an unshared photo at worst.
+    expect(container.querySelector('img')?.getAttribute('src')).not.toContain('/people/');
+  });
+
+  it('requests the person thumbnail for the owner', async () => {
+    faceManagerMock.people = [person('Alice')];
+
+    const { container } = await renderPanel({ isOwner: true });
+
+    expect(container.querySelector('img')?.getAttribute('src')).toContain('/people/');
+  });
+
+  it('does not link a non-owner to the owner-only person page', async () => {
+    faceManagerMock.people = [person('Alice')];
+
+    await renderPanel({ isOwner: false });
+
+    await expect.element(page.getByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('links the owner to the person page', async () => {
+    faceManagerMock.people = [person('Alice')];
+
+    await renderPanel({ isOwner: true });
+
+    await expect.element(page.getByRole('link')).toBeInTheDocument();
+  });
+
+  it('hides the section on a shared link even when people are present', async () => {
+    faceManagerMock.people = [person('Alice')];
+
+    await renderPanel({ isOwner: false, sharedLink: true });
+
+    await expect.element(page.getByTestId('detail-panel-people')).not.toBeInTheDocument();
+  });
+
+  it('hides the section on a shared link even for the owner', async () => {
+    faceManagerMock.people = [person('Alice')];
+
+    await renderPanel({ isOwner: true, sharedLink: true });
+
+    await expect.element(page.getByTestId('detail-panel-people')).not.toBeInTheDocument();
+  });
+
+  it('offers no face editing controls to a non-owner', async () => {
+    faceManagerMock.people = [person('Alice')];
+    faceManagerMock.data = [{ id: 'face-1' }];
+
+    await renderPanel({ isOwner: false });
+
+    expect(page.getByRole('button').elements()).toHaveLength(0);
+  });
+
+  it('offers face editing controls to the owner', async () => {
+    faceManagerMock.people = [person('Alice')];
+    faceManagerMock.data = [{ id: 'face-1' }];
+
+    await renderPanel({ isOwner: true });
+
+    expect(page.getByRole('button').elements().length).toBeGreaterThan(0);
+  });
+
+  it('still renders the section for an owner whose asset has no people', async () => {
+    await renderPanel({ isOwner: true });
+
+    await expect.element(page.getByTestId('detail-panel-people')).toBeInTheDocument();
+  });
+
+  it('hides the section from a non-owner when there are no people', async () => {
+    await renderPanel({ isOwner: false });
+
+    await expect.element(page.getByTestId('detail-panel-people')).not.toBeInTheDocument();
+  });
+
+  it('shows space-linked people to a space member from the asset payload', async () => {
+    faceManagerMock.people = [person('Should Not Appear')];
+
+    await renderPanel({ isOwner: false, spaceId: 'space-1', people: [person('Bob')] });
+
+    await expect.element(page.getByText('Bob')).toBeInTheDocument();
+    await expect.element(page.getByText('Should Not Appear')).not.toBeInTheDocument();
+  });
+
+  describe('avatar source (pins current behaviour)', () => {
+    it('shows the face cropped from this asset when the crop resolves', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      zoomImageToBase64Mock.mockResolvedValue(CROP_DATA_URL);
+
+      const { container } = await renderPanel({ isOwner: true });
+      await settleCrop();
+
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(CROP_DATA_URL);
+    });
+
+    it('falls back to the person thumbnail when the crop resolves to null', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      zoomImageToBase64Mock.mockResolvedValue(null);
+
+      const { container } = await renderPanel({ isOwner: true });
+      await settleCrop();
+
+      expect(zoomImageToBase64Mock).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('img')?.getAttribute('src')).toContain('/people/');
+    });
+
+    it('uses the person thumbnail and never crops when the person has no face in this asset', async () => {
+      faceManagerMock.people = [person('Alice')];
+      faceManagerMock.facesByPersonId = new Map();
+
+      const { container } = await renderPanel({ isOwner: true });
+      await tick();
+
+      expect(zoomImageToBase64Mock).not.toHaveBeenCalled();
+      expect(container.querySelector('img')?.getAttribute('src')).toContain('/people/');
+    });
+
+    it('falls back to the space person thumbnail for a space member', async () => {
+      const bob = spacePerson('Bob', 'space-person-1');
+      givePersonAFace('person-Bob');
+      zoomImageToBase64Mock.mockResolvedValue(null);
+
+      const { container } = await renderPanel({ isOwner: false, spaceId: 'space-1', people: [bob] });
+      await settleCrop();
+
+      expect(container.querySelector('img')?.getAttribute('src')).toContain(
+        '/shared-spaces/space-1/people/space-person-1/thumbnail',
+      );
+    });
+
+    it('falls back to the asset thumbnail for a viewer with no space context', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      zoomImageToBase64Mock.mockResolvedValue(null);
+
+      const { container } = await renderPanel({ isOwner: false });
+      await settleCrop();
+
+      const src = container.querySelector('img')?.getAttribute('src');
+      // /people/{id}/thumbnail is unreachable for this viewer — see the spec's RBAC note.
+      expect(src).not.toContain('/people/');
+      expect(src).not.toContain('/shared-spaces/');
+      expect(src).toContain('/assets/asset-1/');
+    });
+
+    it('uses the owner person thumbnail for the owner even inside a space', async () => {
+      // The owner reads faceManager.people, and mapPerson never emits spacePersonId — so the space
+      // arm cannot fire for the owner even with a spaceId prop present.
+      faceManagerMock.people = [person('Alice')];
+      faceManagerMock.facesByPersonId = new Map();
+
+      const { container } = await renderPanel({ isOwner: true, spaceId: 'space-1' });
+      await tick();
+
+      const src = container.querySelector('img')?.getAttribute('src');
+      expect(src).toContain('/people/');
+      expect(src).not.toContain('/shared-spaces/');
+    });
+
+    it('never synthesises a space thumbnail URL when the space person id is missing', async () => {
+      // The server filters these out, but the client must degrade rather than request
+      // /shared-spaces/space-1/people/undefined/thumbnail.
+      const bob = person('Bob');
+      faceManagerMock.facesByPersonId = new Map();
+
+      const { container } = await renderPanel({ isOwner: false, spaceId: 'space-1', people: [bob] });
+      await tick();
+
+      const src = container.querySelector('img')?.getAttribute('src');
+      expect(src).not.toContain('/shared-spaces/');
+      expect(src).not.toContain('undefined');
+      expect(src).toContain('/assets/asset-1/');
+    });
+
+    it('renders an avatar for a person with no name', async () => {
+      // Untagged faces are the common case and render alt="" — which strips the img role, so this
+      // must be asserted structurally, never through getByRole('img') or getByText.
+      faceManagerMock.people = [person('')];
+      faceManagerMock.facesByPersonId = new Map();
+
+      const { container } = await renderPanel({ isOwner: true });
+      await tick();
+
+      const img = container.querySelector('img');
+      expect(img).not.toBeNull();
+      expect(img?.getAttribute('src')).toContain('/people/');
+    });
+  });
+
+  describe('avatar source setting', () => {
+    it('shows the profile face and never computes a crop when the setting is off', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      zoomImageToBase64Mock.mockResolvedValue(CROP_DATA_URL);
+      cropFacesFromAsset.set(false);
+
+      const { container } = await renderPanel({ isOwner: true });
+      await tick();
+
+      // Not merely "not displayed" — not attempted. The crop decodes the full-size image and runs
+      // a canvas draw per person, so skipping it is the performance half of this feature.
+      expect(zoomImageToBase64Mock).not.toHaveBeenCalled();
+      expect(container.querySelector('img')?.getAttribute('src')).toContain('/people/');
+    });
+
+    it('still crops when the setting is on', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      zoomImageToBase64Mock.mockResolvedValue(CROP_DATA_URL);
+      cropFacesFromAsset.set(true);
+
+      const { container } = await renderPanel({ isOwner: true });
+      await settleCrop();
+
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(CROP_DATA_URL);
+    });
+
+    it('shows the space profile face to a space member when the setting is off', async () => {
+      const bob = spacePerson('Bob', 'space-person-1');
+      givePersonAFace('person-Bob');
+      cropFacesFromAsset.set(false);
+
+      const { container } = await renderPanel({ isOwner: false, spaceId: 'space-1', people: [bob] });
+      await tick();
+
+      expect(zoomImageToBase64Mock).not.toHaveBeenCalled();
+      expect(container.querySelector('img')?.getAttribute('src')).toContain(
+        '/shared-spaces/space-1/people/space-person-1/thumbnail',
+      );
+    });
+
+    it('KEEPS cropping for a viewer with no reachable profile face even when the setting is off', async () => {
+      // The regression guard. Turning the setting off must not give an album/partner viewer the
+      // whole photo as every person's avatar — they have no profile face to switch to.
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      zoomImageToBase64Mock.mockResolvedValue(CROP_DATA_URL);
+      cropFacesFromAsset.set(false);
+
+      const { container } = await renderPanel({ isOwner: false });
+      await settleCrop();
+
+      expect(zoomImageToBase64Mock).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(CROP_DATA_URL);
+    });
+
+    it('uses the owner profile face for the owner inside a space when the setting is off', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      cropFacesFromAsset.set(false);
+
+      const { container } = await renderPanel({ isOwner: true, spaceId: 'space-1' });
+      await tick();
+
+      // The "not called" assertion is what makes this a driver rather than a passenger: without
+      // it the URL assertion passes even before the fix, because the pending crop branch already
+      // renders this same fallback.
+      expect(zoomImageToBase64Mock).not.toHaveBeenCalled();
+      const src = container.querySelector('img')?.getAttribute('src');
+      expect(src).toContain('/people/');
+      expect(src).not.toContain('/shared-spaces/');
+    });
+
+    it('does not fetch video media for a crop nobody will see when the setting is off', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      cropFacesFromAsset.set(false);
+
+      await renderPanel({ isOwner: true, assetType: AssetTypeEnum.Video });
+      await tick();
+
+      expect(zoomImageToBase64Mock).not.toHaveBeenCalled();
+    });
+
+    it('updates the rendered avatar when the setting is flipped on a live panel', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      zoomImageToBase64Mock.mockResolvedValue(CROP_DATA_URL);
+
+      const { container } = await renderPanel({ isOwner: true });
+      await settleCrop();
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(CROP_DATA_URL);
+
+      cropFacesFromAsset.set(false);
+      await tick();
+
+      // Same container, no re-render call: the change must propagate through reactivity alone.
+      expect(container.querySelector('img')?.getAttribute('src')).toContain('/people/');
+    });
+
+    it('keeps hidden-people filtering, links and age rendering intact when the setting is off', async () => {
+      const alice = person('Alice');
+      const hidden = { ...person('Hidden'), isHidden: true } as PersonResponseDto;
+      faceManagerMock.people = [alice, hidden];
+      faceManagerMock.facesByPersonId = new Map();
+      cropFacesFromAsset.set(false);
+
+      await renderPanel({ isOwner: true });
+      await tick();
+
+      await expect.element(page.getByText('Alice')).toBeInTheDocument();
+      await expect.element(page.getByText('Hidden')).not.toBeInTheDocument();
+      await expect.element(page.getByRole('link')).toBeInTheDocument();
+    });
+
+    it('resolves the fallback against the new asset after navigating to the next photo', async () => {
+      // The {#await} lives inside an {#each} keyed on person.id, so a person present on both photos
+      // keeps their DOM node across the switch. The avatar inputs must still be recomputed.
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+      zoomImageToBase64Mock.mockResolvedValue(null);
+
+      const result = await renderPanel({ isOwner: false });
+      const { container } = result;
+      await settleCrop();
+      expect(container.querySelector('img')?.getAttribute('src')).toContain('/assets/asset-1/');
+
+      await rerenderPanel(result as never, { isOwner: false, assetId: 'asset-2' });
+      await tick();
+
+      expect(container.querySelector('img')?.getAttribute('src')).toContain('/assets/asset-2/');
+    });
+  });
+
+  describe('in-panel avatar source toggle', () => {
+    // The test harness's svelte-i18n instance (src/test-data/setup.ts) has no dictionaries
+    // registered, so $t() resolves to the raw key rather than translated English text — the same
+    // convention already used throughout this suite (e.g. `name: 'use_inherited_thumbnail'` in
+    // RepresentativeFacePickerModal.spec.ts, `name: 'link'` / `'save'` elsewhere).
+    const toggle = () => page.getByRole('button', { name: /show_profile_faces|show_faces_from_photo/ }).query();
+
+    it('offers the owner a toggle that flips the store and relabels itself', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+
+      await renderPanel({ isOwner: true });
+      await tick();
+
+      await page.getByRole('button', { name: 'show_profile_faces' }).click();
+
+      expect(get(cropFacesFromAsset)).toBe(false);
+      await expect.element(page.getByRole('button', { name: 'show_faces_from_photo' })).toBeInTheDocument();
+    });
+
+    it('offers the toggle to a space member who is not the owner', async () => {
+      const bob = spacePerson('Bob', 'space-person-1');
+      givePersonAFace('person-Bob');
+
+      await renderPanel({ isOwner: false, spaceId: 'space-1', people: [bob] });
+      await tick();
+
+      // Proves the button sits OUTSIDE the {#if isOwner} gate.
+      expect(toggle()).toBeInTheDocument();
+    });
+
+    it('hides the toggle from a viewer with no reachable profile face', async () => {
+      faceManagerMock.people = [person('Alice')];
+      givePersonAFace('person-Alice');
+
+      await renderPanel({ isOwner: false });
+      await tick();
+
+      // Nothing to switch to — a control that cannot change anything must not be offered.
+      expect(toggle()).not.toBeInTheDocument();
+    });
+
+    it('hides the toggle when the asset has no people, keeping the add-face affordance', async () => {
+      faceManagerMock.people = [];
+      faceManagerMock.data = [];
+      faceManagerMock.facesByPersonId = new Map();
+
+      await renderPanel({ isOwner: true });
+      await tick();
+
+      expect(toggle()).not.toBeInTheDocument();
+      await expect.element(page.getByRole('button', { name: 'tag_people' })).toBeInTheDocument();
+    });
+  });
+
+  // Slice 7 (pet recognition): a pet in a photo should read as a pet in the asset viewer, mirroring
+  // the paw-badge treatment already shipped on the People-page tile (person-tile.svelte:68-75).
+  it('renders the paw badge titled with the species for a pet', async () => {
+    faceManagerMock.people = [person('Mochi', { type: 'pet', species: 'dog' })];
+
+    await renderPanel({ isOwner: true });
+
+    // svelte-i18n's `dev` fallback locale (global test setup) renders an unmatched key literally,
+    // so a resolved translation key ('species_dog') proves the species went through
+    // pet-species.ts's map rather than being used raw — see R8.2 below for the full a11y contract.
+    await expect.element(page.getByTestId('pet-badge')).toHaveAttribute('title', 'species_dog');
+  });
+
+  // R8.1 (review-fixes F13): the badge markup is shared by both people sources — closes the
+  // audited gap that only the owner/faceManager path had badge coverage, not the space-viewer
+  // asset.people path a non-owner space member actually renders through.
+  it('renders the accessible paw badge via the space-viewer asset.people data path', async () => {
+    faceManagerMock.people = [person('Should Not Appear')];
+
+    await renderPanel({ isOwner: false, spaceId: 'space-1', people: [person('Rex', { type: 'pet', species: 'dog' })] });
+
+    const badge = page.getByTestId('pet-badge').element();
+    expect(badge).toHaveAttribute('role', 'img');
+    expect(badge).toHaveAttribute('aria-label', 'species_dog');
+  });
+
+  // R8.2 (review-fixes F13): badge a11y + i18n — role, aria-label, and a translated species
+  // tooltip, with a raw-value fallback for a species pet-species.ts doesn't map.
+  it('gives the badge an aria-label with the translated species tooltip', async () => {
+    faceManagerMock.people = [person('Mochi', { type: 'pet', species: 'dog' })];
+
+    await renderPanel({ isOwner: true });
+
+    const badge = page.getByTestId('pet-badge').element();
+    expect(badge).toHaveAttribute('role', 'img');
+    expect(badge).toHaveAttribute('aria-label', 'species_dog');
+  });
+
+  it('falls back to the raw species value in the badge tooltip for an unrecognized species', async () => {
+    faceManagerMock.people = [person('Bandit', { type: 'pet', species: 'axolotl' })];
+
+    await renderPanel({ isOwner: true });
+
+    const badge = page.getByTestId('pet-badge').element();
+    expect(badge).toHaveAttribute('aria-label', 'axolotl');
+    expect(badge).toHaveAttribute('title', 'axolotl');
+  });
+
+  it('renders no paw badge for a human person', async () => {
+    faceManagerMock.people = [person('Alice', { type: 'person' })];
+
+    await renderPanel({ isOwner: true });
+
+    await expect.element(page.getByTestId('pet-badge')).not.toBeInTheDocument();
+  });
+
+  it('renders a person with an undefined type as a human, not a pet (older payloads)', async () => {
+    faceManagerMock.people = [person('Alice')];
+
+    await renderPanel({ isOwner: true });
+
+    await expect.element(page.getByTestId('pet-badge')).not.toBeInTheDocument();
+  });
+
+  // A `role="img"` with no accessible name is a WCAG 1.1.1 failure, and species is genuinely absent
+  // on some surfaces — a space person carries `type` but no `species` — so the badge falls back to a
+  // generic "pet" label rather than going unnamed.
+  it('falls back to the generic pet label for a pet with no recorded species', async () => {
+    faceManagerMock.people = [person('Mochi', { type: 'pet', species: null })];
+
+    await renderPanel({ isOwner: true });
+
+    const badge = page.getByTestId('pet-badge').element();
+    expect(badge).toHaveAttribute('aria-label', 'pet');
+    expect(badge).toHaveAttribute('title', 'pet');
+  });
+
+  it('falls back to the generic pet label for a space person, which carries no species', async () => {
+    await renderPanel({ isOwner: false, spaceId: 'space-1', people: [person('Rex', { type: 'pet' })] });
+
+    const badge = page.getByTestId('pet-badge').element();
+    expect(badge).toHaveAttribute('role', 'img');
+    expect(badge).toHaveAttribute('aria-label', 'pet');
+  });
+
+  // Slice 8, Task 1 — `canEditSpacePeople` is a SIBLING of `isOwner`, never a widening of it (#734
+  // precedent for DetailPanelTags' `canEdit`). F-28/F-29 are the security half: written with
+  // queryBy + .toBeNull(), and each gives the section a non-empty people list so the assertion
+  // proves the AFFORDANCE gate specifically, not merely that the whole section stayed hidden.
+  describe('canEditSpacePeople (space editor affordances)', () => {
+    it('F-27: shows the tag-people affordance to a space editor on a member photo', async () => {
+      await renderPanel({ isOwner: false, canEditSpacePeople: true, spaceId: 'space-1', people: [] });
+
+      await expect.element(page.getByRole('button', { name: 'tag_people' })).toBeInTheDocument();
+    });
+
+    it('F-28: hides the affordance when there is no space context, even with people present', async () => {
+      faceManagerMock.people = [person('Alice')];
+
+      await renderPanel({ isOwner: false, canEditSpacePeople: false, spaceId: undefined });
+
+      expect(page.getByRole('button', { name: 'tag_people' }).query()).toBeNull();
+    });
+
+    it('F-29: hides the affordance from a space viewer, even with people present', async () => {
+      const bob = spacePerson('Bob', 'space-person-1');
+
+      await renderPanel({ isOwner: false, canEditSpacePeople: false, spaceId: 'space-1', people: [bob] });
+
+      expect(page.getByRole('button', { name: 'tag_people' }).query()).toBeNull();
+    });
+
+    it('F-30: the owner path is unchanged — owner still sees their own affordance', async () => {
+      await renderPanel({ isOwner: true, canEditSpacePeople: false });
+
+      await expect.element(page.getByRole('button', { name: 'tag_people' })).toBeInTheDocument();
+    });
+
+    it('keeps the hidden-people toggle gated on isOwner alone, never on canEditSpacePeople', async () => {
+      const bob = spacePerson('Bob', 'space-person-1');
+      const hiddenBob = { ...bob, isHidden: true } as unknown as PersonResponseDto;
+
+      await renderPanel({ isOwner: false, canEditSpacePeople: true, spaceId: 'space-1', people: [hiddenBob] });
+
+      // A space editor has no business toggling the owner's hidden people; the server refuses it.
+      expect(page.getByRole('button', { name: 'show_hidden_people' }).query()).toBeNull();
+    });
+  });
+});

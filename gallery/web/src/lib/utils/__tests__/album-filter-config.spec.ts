@@ -1,0 +1,320 @@
+import { createFilterState } from '#lib/components/filter-panel/filter-panel.ts';
+import { buildAlbumAssetPickerFilterConfig, buildAlbumDetailFilterConfig } from '#lib/utils/album-filter-config.ts';
+import { AssetTypeEnum, Type, getFilterSuggestions, getSearchSuggestions } from '@immich/sdk';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@immich/sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@immich/sdk')>();
+  return {
+    ...actual,
+    getFilterSuggestions: vi.fn().mockResolvedValue({
+      countries: ['Germany'],
+      cameraMakes: ['Sony'],
+      tags: [{ id: 'tag-1', value: 'Vacation' }],
+      people: [{ id: 'person-1', name: 'Alice' }],
+      ratings: [5],
+      mediaTypes: ['IMAGE'],
+      hasUnnamedPeople: false,
+      hasFavorites: true,
+      hasAssetsInAlbum: true,
+      hasAssetsNotInAlbum: false,
+    }),
+    getSearchSuggestions: vi.fn().mockResolvedValue(['Berlin']),
+  };
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('buildAlbumDetailFilterConfig', () => {
+  it('keeps the album filter sections in plan order', () => {
+    const config = buildAlbumDetailFilterConfig('album-1');
+    // 'albums' is deliberately absent: the server drops isInAlbum/isNotInAlbum when scoped to a
+    // single album, so the controls would do nothing. See filter-section-parity.spec.ts.
+    expect(config.sections).toEqual([
+      'timeline',
+      'people',
+      'location',
+      'camera',
+      'tags',
+      'rating',
+      'media',
+      'favorites',
+      'text',
+    ]);
+  });
+
+  it('passes albumId to filter suggestions, maps suggestions, and scopes dependent providers', async () => {
+    vi.mocked(getFilterSuggestions).mockResolvedValueOnce({
+      countries: ['Germany'],
+      cameraMakes: ['Sony'],
+      tags: [{ id: 'tag-1', value: 'Vacation' }],
+      people: [{ id: 'person-1', name: 'Alice' }],
+      ratings: [5],
+      mediaTypes: ['IMAGE'],
+      hasUnnamedPeople: true,
+    } as never);
+
+    const config = buildAlbumDetailFilterConfig('album-1');
+    const filters = {
+      ...createFilterState(),
+      personIds: ['person-1'],
+      tagIds: ['tag-1'],
+      mediaType: 'image' as const,
+    };
+
+    const result = await config.suggestionsProvider!(filters);
+    await config.providers!.cities!('Germany', { takenAfter: '2024-01-01T00:00:00.000Z' });
+    await config.providers!.cameraModels!('Sony', { takenBefore: '2024-12-31T00:00:00.000Z' });
+
+    expect(result.tags).toEqual([{ id: 'tag-1', name: 'Vacation' }]);
+    expect(result.people).toEqual([
+      expect.objectContaining({
+        id: 'person-1',
+        name: 'Alice',
+        thumbnailUrl: expect.stringContaining('/people/person-1/thumbnail'),
+      }),
+    ]);
+    expect(result.hasUnnamedPeople).toBe(true);
+
+    expect(getFilterSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        albumId: 'album-1',
+        personIds: ['person-1'],
+        tagIds: ['tag-1'],
+        mediaType: AssetTypeEnum.Image,
+      }),
+    );
+    expect(getSearchSuggestions).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ albumId: 'album-1', country: 'Germany' }),
+    );
+    expect(getSearchSuggestions).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ albumId: 'album-1', make: 'Sony' }),
+    );
+  });
+
+  it('uses shared-space person thumbnails for album people suggestions with a space primary profile', async () => {
+    vi.mocked(getFilterSuggestions).mockResolvedValueOnce({
+      countries: [],
+      cameraMakes: [],
+      tags: [],
+      people: [
+        {
+          id: 'space-person:space-person-1',
+          name: 'Space Person',
+          primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-1' },
+        },
+      ],
+      ratings: [],
+      mediaTypes: [],
+      hasUnnamedPeople: false,
+    } as never);
+
+    const config = buildAlbumDetailFilterConfig('album-1');
+    const result = await config.suggestionsProvider!(createFilterState());
+
+    expect(result.people).toEqual([
+      expect.objectContaining({
+        id: 'space-person:space-person-1',
+        thumbnailUrl: '/api/shared-spaces/space-1/people/space-person-1/thumbnail',
+      }),
+    ]);
+  });
+
+  it('maps album people suggestions by scoped filter id', async () => {
+    vi.mocked(getFilterSuggestions).mockResolvedValueOnce({
+      countries: [],
+      cameraMakes: [],
+      tags: [],
+      people: [
+        {
+          id: 'identity-group-1',
+          filterId: 'person:person-1',
+          name: 'Alice',
+          primaryProfile: { type: Type.UserPerson, id: 'person-1' },
+        },
+      ],
+      ratings: [],
+      mediaTypes: [],
+      hasUnnamedPeople: false,
+    } as never);
+
+    const config = buildAlbumDetailFilterConfig('album-1');
+    const result = await config.suggestionsProvider!(createFilterState());
+
+    expect(result.people[0]).toEqual(
+      expect.objectContaining({
+        id: 'person:person-1',
+        name: 'Alice',
+      }),
+    );
+  });
+
+  it('passes custom dates to album detail filter suggestions', async () => {
+    const config = buildAlbumDetailFilterConfig('album-1');
+    await config.suggestionsProvider!({
+      ...createFilterState(),
+      dateAfter: '2024-01-01',
+      dateBefore: '2024-12-31',
+    });
+
+    expect(getFilterSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        albumId: 'album-1',
+        takenAfter: '2024-01-01T00:00:00.000Z',
+        takenBefore: '2025-01-01T00:00:00.000Z',
+      }),
+    );
+  });
+
+  it('passes isFavorite to album detail filter suggestions', async () => {
+    const config = buildAlbumDetailFilterConfig('album-1');
+    await config.suggestionsProvider!({ ...createFilterState(), isFavorite: true });
+
+    expect(getFilterSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({ albumId: 'album-1', isFavorite: true }),
+    );
+  });
+
+  it('forwards the #910 availability facets', async () => {
+    const result = await buildAlbumDetailFilterConfig('album-1').suggestionsProvider!(createFilterState());
+
+    expect(result.hasFavorites).toBe(true);
+    expect(result.hasAssetsInAlbum).toBe(true);
+    expect(result.hasAssetsNotInAlbum).toBe(false);
+  });
+
+  it('offers a browse-mode baseline computed with no filters, scoped to the album (#910)', async () => {
+    const config = buildAlbumDetailFilterConfig('album-1');
+    vi.mocked(getFilterSuggestions).mockClear();
+
+    const baseline = await config.baselineProvider!();
+
+    expect(baseline).toBeDefined();
+    expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ albumId: 'album-1' }));
+    expect(getFilterSuggestions).not.toHaveBeenCalledWith(expect.objectContaining({ rating: expect.anything() }));
+  });
+});
+
+describe('buildAlbumAssetPickerFilterConfig', () => {
+  it('keeps the picker filter sections in plan order', () => {
+    const config = buildAlbumAssetPickerFilterConfig();
+    // The picker is not album-scoped server-side, so it gets the full set including 'albums'.
+    expect(config.sections).toEqual([
+      'timeline',
+      'people',
+      'location',
+      'camera',
+      'tags',
+      'rating',
+      'media',
+      'favorites',
+      'albums',
+      'text',
+    ]);
+  });
+
+  it('does not send albumId or withSharedSpaces', async () => {
+    const config = buildAlbumAssetPickerFilterConfig();
+
+    await config.suggestionsProvider!(createFilterState());
+    await config.providers!.cities!('Germany');
+
+    const filterRequest = vi.mocked(getFilterSuggestions).mock.calls[0][0];
+    const cityRequest = vi.mocked(getSearchSuggestions).mock.calls[0][0];
+
+    expect(filterRequest).not.toHaveProperty('albumId');
+    expect(filterRequest).not.toHaveProperty('withSharedSpaces');
+    expect(cityRequest).not.toHaveProperty('albumId');
+    expect(cityRequest).not.toHaveProperty('withSharedSpaces');
+  });
+
+  it('passes custom dates to album asset picker filter suggestions', async () => {
+    const config = buildAlbumAssetPickerFilterConfig();
+    await config.suggestionsProvider!({
+      ...createFilterState(),
+      dateBefore: '2024-12-31',
+    });
+
+    expect(getFilterSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        takenBefore: '2025-01-01T00:00:00.000Z',
+      }),
+    );
+  });
+
+  it('passes isFavorite to album asset picker filter suggestions', async () => {
+    const config = buildAlbumAssetPickerFilterConfig();
+    await config.suggestionsProvider!({ ...createFilterState(), isFavorite: true });
+
+    expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ isFavorite: true }));
+  });
+
+  it('narrows album suggestions by state, lens and contributor', async () => {
+    const config = buildAlbumDetailFilterConfig('album-1');
+    await config.suggestionsProvider!({
+      ...createFilterState(),
+      state: 'Bavaria',
+      lensModel: 'RF24-105mm F4 L IS USM',
+      ownerId: 'owner-1',
+    });
+
+    expect(getFilterSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        albumId: 'album-1',
+        state: 'Bavaria',
+        lensModel: 'RF24-105mm F4 L IS USM',
+        ownerId: 'owner-1',
+      }),
+    );
+  });
+
+  it('never lets a panel album filter clobber the album scope of a suggestion request', async () => {
+    // On the album detail surface `albumId` in the request IS the scope; the panel's own album
+    // filter must not be spread on top of it (the albums section is not even rendered here).
+    const config = buildAlbumDetailFilterConfig('album-1');
+    await config.suggestionsProvider!({
+      ...createFilterState(),
+      albumId: '11111111-1111-4111-8111-111111111111',
+    });
+
+    expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ albumId: 'album-1' }));
+  });
+
+  it('forwards isInAlbum and isNotInAlbum to filter suggestions (#910)', async () => {
+    const config = buildAlbumAssetPickerFilterConfig();
+
+    await config.suggestionsProvider!({ ...createFilterState(), isInAlbum: true });
+    const isInAlbumRequest = vi.mocked(getFilterSuggestions).mock.calls.at(-1)?.[0];
+    expect(isInAlbumRequest?.isInAlbum).toBe(true);
+    expect(isInAlbumRequest?.isNotInAlbum).toBeUndefined();
+
+    await config.suggestionsProvider!({ ...createFilterState(), isNotInAlbum: true });
+    const isNotInAlbumRequest = vi.mocked(getFilterSuggestions).mock.calls.at(-1)?.[0];
+    expect(isNotInAlbumRequest?.isNotInAlbum).toBe(true);
+    expect(isNotInAlbumRequest?.isInAlbum).toBeUndefined();
+
+    // An explicit `false` means "only assets that ARE/aren't in an album", not "don't filter" —
+    // it must not be forwarded as `false`, only `true` or omitted.
+    await config.suggestionsProvider!({ ...createFilterState(), isInAlbum: false, isNotInAlbum: false });
+    const bothFalseRequest = vi.mocked(getFilterSuggestions).mock.calls.at(-1)?.[0];
+    expect(bothFalseRequest?.isInAlbum).toBeUndefined();
+    expect(bothFalseRequest?.isNotInAlbum).toBeUndefined();
+  });
+
+  it('offers a browse-mode baseline computed with no filters, unscoped (#910)', async () => {
+    const config = buildAlbumAssetPickerFilterConfig();
+    vi.mocked(getFilterSuggestions).mockClear();
+
+    const baseline = await config.baselineProvider!();
+
+    expect(baseline).toBeDefined();
+    const call = vi.mocked(getFilterSuggestions).mock.calls.at(-1)?.[0];
+    expect(call).not.toHaveProperty('albumId');
+    expect(call).not.toHaveProperty('withSharedSpaces');
+    expect(call).not.toHaveProperty('rating');
+  });
+});

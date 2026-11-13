@@ -1,0 +1,273 @@
+<script lang="ts">
+  import { t } from 'svelte-i18n';
+  import { get } from 'svelte/store';
+  import { aggregateYears, getMonthsForYear } from './temporal-utils';
+
+  const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const CUSTOM_RANGE_ERROR_ID = 'custom-date-range-error';
+
+  interface Props {
+    timeBuckets: Array<{ timeBucket: string; count: number }>;
+    dateAfter?: string;
+    dateBefore?: string;
+    selectedYear?: number;
+    selectedMonth?: number;
+    onCustomRangeChange?: (dateAfter?: string, dateBefore?: string) => void;
+    onYearSelect?: (year: number | undefined) => void;
+    onMonthSelect?: (year: number, month: number | undefined) => void;
+  }
+
+  let {
+    timeBuckets,
+    // eslint-disable-next-line unicorn/prefer-default-parameters
+    dateAfter,
+    // eslint-disable-next-line unicorn/prefer-default-parameters
+    dateBefore,
+    selectedYear,
+    selectedMonth,
+    onCustomRangeChange,
+    onYearSelect,
+    onMonthSelect,
+  }: Props = $props();
+
+  let years = $derived(aggregateYears(timeBuckets));
+  let months = $derived(selectedYear === undefined ? [] : getMonthsForYear(timeBuckets, selectedYear));
+  let fromValue = $state('');
+  let toValue = $state('');
+  let customRangeError = $state<string | undefined>();
+  let customRangeErrorTarget = $state<'from' | 'to' | 'range' | undefined>();
+
+  $effect(() => {
+    fromValue = dateAfter ?? '';
+    toValue = dateBefore ?? '';
+    clearCustomRangeError();
+  });
+
+  function parseDateOnly(value: string): { valid: true; value?: string } | { valid: false } {
+    if (value === '') {
+      return { valid: true };
+    }
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) {
+      return { valid: false };
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+      return { valid: false };
+    }
+
+    return { valid: true, value };
+  }
+
+  function clearCustomRangeError() {
+    customRangeError = undefined;
+    customRangeErrorTarget = undefined;
+  }
+
+  function clearCustomRangeState() {
+    fromValue = '';
+    toValue = '';
+    clearCustomRangeError();
+  }
+
+  function validateAndEmitCustomRange() {
+    const parsedFrom = parseDateOnly(fromValue);
+    if (!parsedFrom.valid) {
+      customRangeError = get(t)('filter_invalid_from_date');
+      customRangeErrorTarget = 'from';
+      return;
+    }
+
+    const parsedTo = parseDateOnly(toValue);
+    if (!parsedTo.valid) {
+      customRangeError = get(t)('filter_invalid_to_date');
+      customRangeErrorTarget = 'to';
+      return;
+    }
+
+    if (parsedFrom.value && parsedTo.value && parsedFrom.value > parsedTo.value) {
+      customRangeError = get(t)('filter_from_after_to_error');
+      customRangeErrorTarget = 'range';
+      return;
+    }
+
+    clearCustomRangeError();
+    onCustomRangeChange?.(parsedFrom.value, parsedTo.value);
+  }
+
+  function handleYearClick(year: number, count: number) {
+    if (count === 0) {
+      return;
+    }
+    clearCustomRangeState();
+    onYearSelect?.(year);
+  }
+
+  function handleMonthClick(year: number, month: number, count: number) {
+    if (count === 0) {
+      return;
+    }
+    clearCustomRangeState();
+    if (selectedMonth === month) {
+      // Toggle off: deselect month
+      onMonthSelect?.(year, undefined);
+    } else {
+      onMonthSelect?.(year, month);
+    }
+  }
+
+  function handleBackToAll() {
+    clearCustomRangeState();
+    onYearSelect?.(undefined);
+  }
+</script>
+
+<div data-testid="temporal-picker">
+  <div class="mb-4 space-y-2" data-testid="custom-date-range">
+    <div class="grid grid-cols-2 gap-2.5">
+      <label class="flex flex-col gap-1.5 text-[11px] leading-none font-medium text-gray-600 dark:text-gray-300">
+        <span class="px-0.5">{$t('filter_from')}</span>
+        <input
+          bind:value={fromValue}
+          oninput={validateAndEmitCustomRange}
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          placeholder="YYYY-MM-DD"
+          pattern={String.raw`\d{4}-\d{2}-\d{2}`}
+          aria-invalid={customRangeErrorTarget === 'from' || customRangeErrorTarget === 'range' ? 'true' : undefined}
+          aria-describedby={customRangeErrorTarget === 'from' || customRangeErrorTarget === 'range'
+            ? CUSTOM_RANGE_ERROR_ID
+            : undefined}
+          class="h-8 w-full rounded-lg border border-gray-200 bg-white px-2.5 text-xs text-gray-700 transition-colors outline-none placeholder:text-gray-400 focus:border-immich-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:focus:border-immich-dark-primary"
+          data-testid="custom-date-from-input"
+        />
+      </label>
+      <label class="flex flex-col gap-1.5 text-[11px] leading-none font-medium text-gray-600 dark:text-gray-300">
+        <span class="px-0.5">{$t('filter_to')}</span>
+        <input
+          bind:value={toValue}
+          oninput={validateAndEmitCustomRange}
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          placeholder="YYYY-MM-DD"
+          pattern={String.raw`\d{4}-\d{2}-\d{2}`}
+          aria-invalid={customRangeErrorTarget === 'to' || customRangeErrorTarget === 'range' ? 'true' : undefined}
+          aria-describedby={customRangeErrorTarget === 'to' || customRangeErrorTarget === 'range'
+            ? CUSTOM_RANGE_ERROR_ID
+            : undefined}
+          class="h-8 w-full rounded-lg border border-gray-200 bg-white px-2.5 text-xs text-gray-700 transition-colors outline-none placeholder:text-gray-400 focus:border-immich-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:focus:border-immich-dark-primary"
+          data-testid="custom-date-to-input"
+        />
+      </label>
+    </div>
+    {#if customRangeError}
+      <p id={CUSTOM_RANGE_ERROR_ID} role="alert" class="text-xs text-red-600 dark:text-red-400">{customRangeError}</p>
+    {/if}
+  </div>
+
+  {#if selectedYear !== undefined}
+    <!-- Breadcrumb -->
+    <div class="mb-2 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-300">
+      <button
+        type="button"
+        class="font-medium text-immich-primary hover:underline dark:text-immich-dark-primary"
+        onclick={handleBackToAll}
+        data-testid="temporal-breadcrumb-all"
+      >
+        {$t('all')}
+      </button>
+      <span class="opacity-50">/</span>
+      <span class="font-semibold">{selectedYear}</span>
+      {#if selectedMonth !== undefined}
+        <span class="opacity-50">/</span>
+        <span data-testid="temporal-breadcrumb-month" class="font-semibold">{MONTH_LABELS[selectedMonth - 1]}</span>
+      {/if}
+    </div>
+
+    <!-- Month grid: 4-column CSS grid -->
+    <div class="grid grid-cols-4 gap-1.5" data-testid="month-grid">
+      {#each months as m (m.month)}
+        {const maxMonthCount = $derived(Math.max(...months.map((mo) => mo.count), 1))}
+        {const monthVolume = $derived(Math.round((m.count / maxMonthCount) * 100))}
+        {const isSelected = $derived(selectedMonth === m.month)}
+        <button
+          type="button"
+          class="flex flex-col items-center rounded-xl border p-2 transition-all duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none
+            {isSelected
+            ? 'border-immich-primary bg-immich-primary text-white dark:border-immich-dark-primary dark:bg-immich-dark-primary'
+            : m.count === 0
+              ? 'cursor-default border-gray-200 opacity-30 dark:border-gray-700'
+              : 'cursor-pointer border-gray-200 hover:border-immich-primary hover:bg-immich-primary/5 dark:border-gray-700 dark:hover:border-immich-dark-primary dark:hover:bg-immich-dark-primary/5'}"
+          onclick={() => handleMonthClick(selectedYear!, m.month, m.count)}
+          data-testid="month-btn-{m.month}"
+          data-no-hover-grow
+        >
+          <span class="text-xs font-semibold">{m.label}</span>
+          <span class="text-xs {isSelected ? 'text-white/80' : 'text-gray-400 dark:text-gray-500'}">{m.count}</span>
+          <div
+            class="mt-1 h-[3px] w-full overflow-hidden rounded-sm {isSelected
+              ? 'bg-white/30'
+              : 'bg-gray-200 dark:bg-gray-700'}"
+          >
+            <div
+              class="h-full rounded-sm transition-[width] duration-300 {isSelected
+                ? 'bg-white'
+                : 'bg-immich-primary dark:bg-immich-dark-primary'}"
+              style="width: {m.count === 0 ? 0 : monthVolume}%"
+            ></div>
+          </div>
+        </button>
+      {/each}
+    </div>
+  {:else}
+    <!-- Year grid: 3-column grid -->
+    <div class="grid grid-cols-3 gap-1.5" data-testid="year-grid">
+      {#each years as y (y.year)}
+        <button
+          type="button"
+          class="year-chip flex flex-col items-center rounded-xl border px-2 py-1.5 transition-all duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none
+            {y.count === 0
+            ? 'cursor-default border-gray-200 opacity-30 dark:border-gray-700'
+            : 'cursor-pointer border-gray-200 hover:border-immich-primary hover:bg-immich-primary/5 dark:border-gray-700 dark:hover:border-immich-dark-primary dark:hover:bg-immich-dark-primary/5'}"
+          onclick={() => handleYearClick(y.year, y.count)}
+          data-testid="year-btn-{y.year}"
+          data-no-hover-grow
+        >
+          <span class="text-xs/tight font-semibold tabular-nums">{y.year}</span>
+          <span class="text-xs/tight text-gray-400 tabular-nums opacity-60 dark:text-gray-500">{y.count}</span>
+          <div class="mt-1 h-[3px] w-full overflow-hidden rounded-sm bg-gray-200 dark:bg-gray-700">
+            <div
+              class="year-bar h-full origin-left rounded-sm bg-immich-primary transition-[width] duration-300 dark:bg-immich-dark-primary"
+              style="width: {y.volumePercent}%"
+            ></div>
+          </div>
+        </button>
+      {/each}
+    </div>
+  {/if}
+</div>
+
+<style>
+  .year-bar {
+    animation: year-bar-grow 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes year-bar-grow {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .year-bar {
+      animation: none;
+    }
+  }
+</style>

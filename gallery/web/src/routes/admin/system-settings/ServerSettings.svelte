@@ -1,0 +1,62 @@
+<script lang="ts">
+  import SettingInputField from '#lib/components/shared-components/settings/SettingInputField.svelte';
+  import SettingSwitch from '#lib/components/shared-components/settings/SettingSwitch.svelte';
+  import SettingButtonsRow from '#lib/components/shared-components/settings/SystemConfigButtonRow.svelte';
+  import { SettingInputFieldType } from '#lib/constants.ts';
+  import SpaceMemberManagementSettings from '#lib/gallery/components/admin/space-member-management-settings.svelte';
+  import { featureFlagsManager } from '#lib/managers/feature-flags-manager.svelte.ts';
+  import { createPreloadedQuery } from '#lib/queries/client.ts';
+  import { getAdminConfigQuery } from '#lib/queries/config-admin.query.ts';
+  import { cloneDeep } from 'lodash-es';
+  import { t } from 'svelte-i18n';
+  import { fade } from 'svelte/transition';
+
+  const query = createPreloadedQuery(getAdminConfigQuery);
+  const config = $derived(query.data);
+
+  const disabled = $derived(featureFlagsManager.value.configFile);
+  let configToEdit = $state(cloneDeep(config));
+</script>
+
+<div>
+  <div in:fade={{ duration: 500 }}>
+    <form autocomplete="off" onsubmit={(event) => event.preventDefault()}>
+      <div class="ms-4 mt-4">
+        <SettingInputField
+          inputType={SettingInputFieldType.TEXT}
+          label={$t('admin.server_external_domain_settings')}
+          description={$t('admin.server_external_domain_settings_description')}
+          bind:value={configToEdit.server.externalDomain}
+          isEdited={configToEdit.server.externalDomain !== config.server.externalDomain}
+        />
+
+        <SettingInputField
+          inputType={SettingInputFieldType.TEXT}
+          label={$t('admin.server_welcome_message')}
+          description={$t('admin.server_welcome_message_description')}
+          bind:value={configToEdit.server.loginPageMessage}
+          isEdited={configToEdit.server.loginPageMessage !== config.server.loginPageMessage}
+        />
+
+        <SettingSwitch
+          title={$t('admin.server_public_users')}
+          subtitle={$t('admin.server_public_users_description')}
+          {disabled}
+          bind:checked={configToEdit.server.publicUsers}
+        />
+
+        <SettingSwitch
+          title={$t('admin.server_merge_people_across_owners')}
+          subtitle={$t('admin.server_merge_people_across_owners_description')}
+          {disabled}
+          bind:checked={configToEdit.server.mergePeopleAcrossOwners}
+        />
+
+        <SpaceMemberManagementSettings bind:server={configToEdit.server} {disabled} />
+        <div class="ms-4">
+          <SettingButtonsRow bind:configToEdit keys={['server']} {disabled} />
+        </div>
+      </div>
+    </form>
+  </div>
+</div>

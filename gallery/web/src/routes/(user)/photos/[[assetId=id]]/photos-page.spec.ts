@@ -1,0 +1,1483 @@
+import TestWrapper from '#lib/components/TestWrapper.svelte';
+import type { FilterState } from '#lib/components/filter-panel/filter-panel.ts';
+import { reactivePageMock as mockPage } from '#lib/gallery/__mocks__/reactive-page.mock.svelte.ts';
+import { sdkMock } from '#lib/gallery/__mocks__/sdk.mock.ts';
+import { eventManager } from '#lib/managers/event-manager.svelte.ts';
+import { lang } from '#lib/stores/preferences.store.ts';
+import { buildPhotosTimelineOptions } from '#lib/utils/photos-filter-options.ts';
+import { storeTypedSearchNames } from '#lib/utils/typed-search/typed-search-name-cache.ts';
+import { factory } from '#test/unit/factories.ts';
+import { AssetTypeEnum } from '@immich/sdk';
+import { tick, type Component } from 'svelte';
+import { SvelteURL } from 'svelte/reactivity';
+import { expect } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page, userEvent } from 'vitest/browser';
+import { goto } from '$app/navigation';
+import { resetTimelineMountSeq } from '../../albums/[albumId=id]/[[photos=photos]]/[[assetId=id]]/mock-timeline-mount';
+import PhotosPage from './+page.svelte';
+
+const {
+  mockAssetMultiSelectManager,
+  mockAuthManager,
+  mockMemoryManager,
+  mockRegisterSelectionContext,
+  mockRegisterSearchablePageFilters,
+  mockOpenSearchPalette,
+} = vi.hoisted(() => ({
+  mockAssetMultiSelectManager: {
+    selectionActive: false,
+    assets: [],
+    clear: vi.fn(),
+    isAllUserOwned: true,
+  },
+  mockAuthManager: {
+    preferences: { memories: { enabled: false } },
+    user: { id: 'cccccccc-cccc-4ccc-cccc-cccccccccccc' },
+  },
+  mockMemoryManager: {
+    memories: [] as unknown[],
+    // The page scopes the timeline lane to today via upstream's manager filters (immich-28675).
+    setFilters: vi.fn(),
+  },
+  mockRegisterSelectionContext: vi.fn(),
+  mockRegisterSearchablePageFilters: vi.fn(() => vi.fn()),
+  mockOpenSearchPalette: vi.fn(),
+}));
+
+vi.mock('$app/navigation', async () => ({
+  ...(await import('#test/unit/mocks/app-navigation.ts')),
+  goto: vi.fn().mockResolvedValue(undefined),
+}));
+// The mock module and the spec import the SAME singleton, so assigning mockPage.url in a test is
+// what the page's $effect sees. A plain vi.hoisted object registers no signal for a Svelte 5
+// `$effect` reading `page.url.search` — without this reactive stand-in, a test that changes the URL
+// after render (back/forward, or the `?at=` write from closing the asset viewer) would assert
+// against a page that never re-hydrated, and would pass whether or not the bug is present.
+vi.mock('$app/state', async () => {
+  const { reactivePageMock } = await import('#lib/gallery/__mocks__/reactive-page.mock.svelte.ts');
+  return { page: reactivePageMock, navigating: { to: null } };
+});
+
+vi.mock('#lib/components/layouts/UserPageLayout.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/components/spaces/mock-user-page-layout.test-wrapper.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/ActionMenuItem.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/filter-panel/active-filters-bar.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/active-filters-bar-actions.stub.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/filter-panel/filter-panel.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/bindable-filter-panel.stub.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/search/smart-search-results.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/smart-search-results.stub.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/shared-components/context-menu/ButtonContextMenu.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+// Surfaces `text`/`onClick` instead of swallowing them: which empty state renders is the assertion
+// in the "#763" tests below, and a noop mock cannot tell them apart.
+vi.mock('#lib/components/shared-components/EmptyPlaceholder.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/empty-placeholder.stub.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/Timeline.svelte', async () => {
+  const { default: MockComponent } =
+    await import('../../albums/[albumId=id]/[[photos=photos]]/[[assetId=id]]/mock-timeline.test-wrapper.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/AssetSelectControlBar.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/gallery/actions/ArchiveAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/ChangeDateAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/ChangeDescriptionAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/ChangeLocationAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/DeleteAssetsAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/DownloadAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/FavoriteAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/LinkLivePhotoAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/RotateAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/SelectAllAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/SetVisibilityAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/StackAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/TagAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/managers/asset-multi-select-manager.svelte.js', () => ({
+  assetMultiSelectManager: mockAssetMultiSelectManager,
+}));
+
+vi.mock('#lib/managers/asset-viewer-manager.svelte.js', () => ({
+  assetViewerManager: { isViewing: false },
+}));
+
+vi.mock('#lib/managers/auth-manager.svelte.js', () => ({
+  authManager: mockAuthManager,
+}));
+
+vi.mock('#lib/managers/command-context-manager.svelte.js', () => ({
+  registerSelectionContext: mockRegisterSelectionContext,
+}));
+
+vi.mock('#lib/managers/global-search-manager.svelte.js', () => ({
+  globalSearchManager: {
+    registerSearchablePageFilters: mockRegisterSearchablePageFilters,
+    open: mockOpenSearchPalette,
+  },
+}));
+
+vi.mock('#lib/managers/memory-manager.svelte.js', () => ({
+  memoryManager: mockMemoryManager,
+}));
+
+vi.mock('#lib/services/asset.service.js', () => ({
+  getAssetBulkActions: vi.fn(() => ({})),
+}));
+
+vi.mock('#lib/utils/file-uploader.js', () => ({
+  openFileUploadDialog: vi.fn(),
+}));
+
+vi.mock('#lib/utils/photos-filter-options.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#lib/utils/photos-filter-options.ts')>();
+  return {
+    ...actual,
+    // Spied, NOT stubbed: `<Timeline options>` must carry the REAL derived query (takenAfter/…), or
+    // the `not.toMatchTextContent('"takenAfter"')` assertions below would pass vacuously.
+    buildPhotosTimelineOptions: vi.fn(actual.buildPhotosTimelineOptions),
+  };
+});
+
+/** Must match mockAuthManager.user.id — the signed-in user whose personal timeline /photos is. */
+const MY_USER_ID = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
+
+function renderPage() {
+  return render(TestWrapper as Component<{ component: typeof PhotosPage; componentProps: Record<string, never> }>, {
+    component: PhotosPage,
+    componentProps: {},
+  });
+}
+
+describe('Photos page search URL state', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockPage.reset('https://gallery.test/photos?q=nature', { routeId: '/(user)/photos/[[assetId=id]]' });
+    lang.set('de');
+    mockAssetMultiSelectManager.selectionActive = false;
+    mockAssetMultiSelectManager.assets = [];
+    mockMemoryManager.memories = [];
+    // Shared object across the whole file, and nothing else puts it back - the memories test
+    // below turns it on and every test after it would otherwise render the strip too.
+    mockAuthManager.preferences.memories.enabled = false;
+    mockRegisterSearchablePageFilters.mockReturnValue(vi.fn());
+    sessionStorage.clear();
+    sdkMock.getFilterSuggestions.mockResolvedValue({
+      people: [],
+      countries: [],
+      cameraMakes: [],
+      tags: [],
+      ratings: [],
+      mediaTypes: [],
+      hasUnnamedPeople: false,
+      hasFavorites: false,
+      hasAssetsInAlbum: false,
+      hasAssetsNotInAlbum: false,
+    });
+    sdkMock.searchSmartFacets.mockResolvedValue({
+      total: 12,
+      timeBuckets: [{ timeBucket: '2024-01-01', count: 12 }],
+      countries: ['Germany'],
+      cities: ['Berlin'],
+      cameraMakes: ['Sony'],
+      cameraModels: ['A7'],
+      tags: [{ id: 'tag-1', value: 'Travel' }],
+      people: [{ id: 'person-1', name: 'Ada' }],
+      ratings: [4],
+      mediaTypes: [AssetTypeEnum.Image],
+      hasUnnamedPeople: false,
+      hasFavorites: true,
+      hasAssetsInAlbum: true,
+      hasAssetsNotInAlbum: true,
+    });
+    sdkMock.getSearchSuggestions.mockResolvedValue([]);
+  });
+
+  it('renders search results from q without a local search input', async () => {
+    await renderPage();
+
+    expect(page.getByPlaceholder(/search/i).query()).toBeNull();
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-search-query', 'nature');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-sort-order', 'relevance');
+    expect(page.getByTestId('timeline-stub').query()).toBeNull();
+  });
+
+  it('hydrates an explicit search sort from the URL', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?q=nature&sort=asc');
+
+    await renderPage();
+
+    expect(page.getByPlaceholder(/search/i).query()).toBeNull();
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-search-query', 'nature');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-sort-order', 'asc');
+  });
+
+  it('hydrates typed filter URL params into the photos FilterState', async () => {
+    mockPage.url = new URL(
+      'https://gallery.test/photos?q=beach&people=person-1&tags=tag-1&type=image&favorite=true&album=none&rating=4&from=2025-01-01&to=2025-12-31',
+    );
+
+    await renderPage();
+
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-search-query', 'beach');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-person-ids', 'person-1');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-tag-ids', 'tag-1');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-media-type', 'image');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-favorite', 'true');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-not-in-album', 'true');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-rating', '4');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-date-after', '2025-01-01');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-date-before', '2025-12-31');
+  });
+
+  it('clears only q when clearing the search chip', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?view=timeline&q=beach&people=person-1&city=Berlin');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('active-filters-clear-search'));
+
+    expect(goto).toHaveBeenCalledWith('/photos?view=timeline&people=person-1&city=Berlin', {
+      replace: true,
+      reset: false,
+    });
+  });
+
+  it('syncs the URL when a location typed filter is cleared from the filter panel', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?city=New+York+City');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('filter-panel-clear-location'));
+
+    expect(goto).toHaveBeenCalledWith('/photos', {
+      replace: true,
+      reset: false,
+    });
+  });
+
+  it('clears typed filter URL params and q when clearing all active filters', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?view=timeline&q=beach&people=person-1&city=Berlin');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('active-filters-clear-all'));
+
+    expect(goto).toHaveBeenLastCalledWith('/photos?view=timeline', {
+      replace: true,
+      reset: false,
+    });
+  });
+
+  it('exposes favorites in the photos filter panel', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+
+    expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute(
+      'data-sections',
+      'timeline,people,location,camera,tags,rating,media,favorites,albums,text',
+    );
+  });
+
+  it('passes has-no-album into photos timeline options when hydrated from the URL', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?album=none');
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(buildPhotosTimelineOptions).toHaveBeenCalledWith(
+        expect.objectContaining({ isNotInAlbum: true }),
+        MY_USER_ID,
+      );
+    });
+  });
+
+  it('passes description/filename/ocr text filters into photos timeline options from the URL', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?description=beach&filename=IMG&ocr=invoice');
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(buildPhotosTimelineOptions).toHaveBeenCalledWith(
+        expect.objectContaining({ description: 'beach', originalFileName: 'IMG', ocr: 'invoice' }),
+        MY_USER_ID,
+      );
+    });
+  });
+
+  it('D3: an album chip on /photos still carries the owner gate (userId) into the timeline query', async () => {
+    // /photos is MY timeline. The server leaves `userId` undefined under an `albumId` — that branch
+    // belongs to the ALBUM page, where album ACCESS is the scope (medium E22). If /photos sends the
+    // album chip without stating its own owner scope, `?albumId=A&owner=<co-member>` lists that
+    // co-member's assets, and the Favorites chip the album OWNER's favourites, on my personal
+    // timeline. The two gates AND in the query — the page just has to send both.
+    mockPage.url = new URL(
+      'https://gallery.test/photos?albumId=aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa&owner=bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+    );
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(buildPhotosTimelineOptions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          albumId: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+          ownerId: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+        }),
+        MY_USER_ID,
+      );
+    });
+    expect(page.getByTestId('timeline-options').element()).toMatchTextContent(`"userId":"${MY_USER_ID}"`);
+  });
+
+  it('passes has-album into photos timeline options when hydrated from the URL', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?album=has');
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(buildPhotosTimelineOptions).toHaveBeenCalledWith(expect.objectContaining({ isInAlbum: true }), MY_USER_ID);
+    });
+  });
+
+  it('registers current photos filters for global sort changes', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await vi.waitFor(() => expect(mockRegisterSearchablePageFilters).toHaveBeenCalledOnce());
+    const calls = mockRegisterSearchablePageFilters.mock.calls as unknown as Array<[() => FilterState]>;
+    const getFilters = calls[0][0];
+
+    expect(getFilters().isFavorite).toBeUndefined();
+    expect(getFilters().sortOrder).toBe('desc');
+    await userEvent.click(page.getByTestId('select-favorites-filter'));
+
+    await vi.waitFor(() => expect(getFilters()).toMatchObject({ isFavorite: true, sortOrder: 'desc' }));
+  });
+
+  it('passes typed search names into the photos filter panel', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?people=person-cat&tags=tag-nature');
+    storeTypedSearchNames('/photos?people=person-cat&tags=tag-nature', {
+      personNames: new Map([['person-cat', 'cat']]),
+      tagNames: new Map([['tag-nature', 'nature']]),
+    });
+
+    await renderPage();
+
+    expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute(
+      'data-person-names',
+      JSON.stringify([['person-cat', 'cat']]),
+    );
+    expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute(
+      'data-tag-names',
+      JSON.stringify([['tag-nature', 'nature']]),
+    );
+  });
+
+  it('passes favorites into photos timeline options when selected', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('select-favorites-filter'));
+
+    await vi.waitFor(() => {
+      expect(buildPhotosTimelineOptions).toHaveBeenCalledWith(
+        expect.objectContaining({ isFavorite: true }),
+        MY_USER_ID,
+      );
+    });
+  });
+
+  it('narrows non-search dependent suggestions to favorites while keeping shared spaces in scope (#763 slice 4)', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('select-favorites-filter'));
+    await userEvent.click(page.getByTestId('load-city-suggestions'));
+    await userEvent.click(page.getByTestId('load-camera-model-suggestions'));
+
+    await vi.waitFor(() => {
+      expect(sdkMock.getSearchSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({ country: 'Germany', isFavorite: true }),
+      );
+      expect(sdkMock.getSearchSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({ make: 'Sony', isFavorite: true }),
+      );
+    });
+
+    for (const [request] of sdkMock.getSearchSuggestions.mock.calls) {
+      expect(request).toHaveProperty('withSharedSpaces', true);
+    }
+  });
+
+  it('narrows photos suggestions and dependent providers to has-no-album when selected', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('select-has-no-album-filter'));
+    await userEvent.click(page.getByTestId('load-city-suggestions'));
+    await userEvent.click(page.getByTestId('load-camera-model-suggestions'));
+
+    await vi.waitFor(() => {
+      expect(sdkMock.getFilterSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({ isNotInAlbum: true, withSharedSpaces: true }),
+      );
+      expect(sdkMock.getSearchSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({ country: 'Germany', isNotInAlbum: true }),
+      );
+      expect(sdkMock.getSearchSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({ make: 'Sony', isNotInAlbum: true }),
+      );
+    });
+  });
+
+  it('narrows photos suggestions and dependent providers to has-album when selected', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('select-has-album-filter'));
+    await userEvent.click(page.getByTestId('load-city-suggestions'));
+    await userEvent.click(page.getByTestId('load-camera-model-suggestions'));
+
+    await vi.waitFor(() => {
+      expect(sdkMock.getFilterSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({ isInAlbum: true, withSharedSpaces: true }),
+      );
+      expect(sdkMock.getSearchSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({ country: 'Germany', isInAlbum: true }),
+      );
+      expect(sdkMock.getSearchSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({ make: 'Sony', isInAlbum: true }),
+      );
+    });
+  });
+
+  it('hydrates has-album from the URL into search results', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?q=beach&album=has');
+
+    await renderPage();
+
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-filter-in-album', 'true');
+  });
+
+  it('fetches smart facets for committed photos search and passes exact total to results', async () => {
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(sdkMock.searchSmartFacets).toHaveBeenCalledWith(
+        {
+          smartSearchFacetsDto: expect.objectContaining({
+            query: 'nature',
+            language: 'de',
+            withSharedSpaces: true,
+          }),
+        },
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
+    });
+    await vi.waitFor(() =>
+      expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-total', '12'),
+    );
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-language', 'de');
+  });
+
+  it('narrows search results and smart facets to favorites while keeping shared spaces in scope (#763 slice 4)', async () => {
+    await renderPage();
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(page.getByTestId('select-favorites-filter'));
+
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(2));
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-is-favorite', 'true');
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-with-shared-spaces', 'true');
+    expect(sdkMock.searchSmartFacets.mock.calls[1][0].smartSearchFacetsDto).toMatchObject({
+      query: 'nature',
+      isFavorite: true,
+      withSharedSpaces: true,
+    });
+  });
+
+  it('uses smart facet timeBuckets in search mode', async () => {
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute(
+        'data-time-buckets',
+        JSON.stringify([{ timeBucket: '2024-01-01', count: 12 }]),
+      );
+    });
+  });
+
+  // End-to-end for the narrowing path: URL → FilterState → suggestion request. A state, lens or
+  // contributor filter only ever ARRIVES this way (contextual filter, typed search or a link), so a
+  // panel that did not forward it would show suggestion lists describing the whole library.
+  it('narrows the photos suggestion lists by the state, lens and contributor from the URL', async () => {
+    const ownerId = '44444444-4444-4444-8444-444444444444';
+    mockPage.url = new URL(
+      `https://gallery.test/photos?state=Bavaria&lens=RF24-105mm%20F4%20L%20IS%20USM&owner=${ownerId}`,
+    );
+
+    await renderPage();
+
+    await vi.waitFor(() =>
+      expect(sdkMock.getFilterSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'Bavaria',
+          lensModel: 'RF24-105mm F4 L IS USM',
+          ownerId,
+          withSharedSpaces: true,
+        }),
+      ),
+    );
+  });
+
+  it('never sends the album filter or the free-text filters to the photos suggestion endpoint', async () => {
+    // `albumId` there is a SCOPE the server rejects alongside `withSharedSpaces` (a 400 that would
+    // empty every list), and the free-text filters are ILIKE / trigram predicates, not facets.
+    const albumId = '11111111-1111-4111-8111-111111111111';
+    mockPage.url = new URL(`https://gallery.test/photos?albumId=${albumId}&description=cake&filename=IMG_1.jpg&ocr=hi`);
+
+    await renderPage();
+
+    await vi.waitFor(() => expect(sdkMock.getFilterSuggestions).toHaveBeenCalled());
+    const request = sdkMock.getFilterSuggestions.mock.calls[0][0];
+    for (const key of ['albumId', 'description', 'originalFileName', 'ocr']) {
+      expect(request).not.toHaveProperty(key);
+    }
+  });
+
+  it('does not fetch smart facets when the committed query is empty', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+
+    expect(sdkMock.searchSmartFacets).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(sdkMock.getFilterSuggestions).toHaveBeenCalled());
+  });
+
+  it('does not fetch smart facets when the committed query is whitespace only', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?q=%20%20');
+
+    await renderPage();
+
+    expect(page.getByTestId('smart-search-results').query()).toBeNull();
+    expect(sdkMock.searchSmartFacets).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(sdkMock.getFilterSuggestions).toHaveBeenCalled());
+  });
+
+  it('offers a browse-mode baseline computed with no filters (#910)', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await vi.waitFor(() => expect(sdkMock.getFilterSuggestions).toHaveBeenCalled());
+
+    // The whole point: the baseline ignores whatever filters are active.
+    await userEvent.click(page.getByTestId('select-favorites-filter'));
+    await vi.waitFor(() =>
+      expect(sdkMock.getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ isFavorite: true })),
+    );
+    sdkMock.getFilterSuggestions.mockClear();
+
+    await userEvent.click(page.getByTestId('load-baseline'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).not.toHaveAttribute('data-baseline', 'undefined');
+    });
+    expect(sdkMock.getFilterSuggestions).toHaveBeenCalledWith({ withSharedSpaces: true });
+  });
+
+  it('offers no baseline in query mode, and leaves the page facets alone (#910)', async () => {
+    await renderPage();
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(1));
+    sdkMock.searchSmartFacets.mockClear();
+
+    await userEvent.click(page.getByTestId('load-baseline'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-baseline', 'undefined');
+    });
+    // Regression guard for spec §4.5: a baseline request here would abort the in-flight facet
+    // fetch and then overwrite smartFacets, corrupting the timeline and the result count.
+    expect(sdkMock.searchSmartFacets).not.toHaveBeenCalled();
+  });
+
+  it('remounts the filter panel on the browse-to-query transition, dropping the stale baseline (#910)', async () => {
+    mockPage.url = new SvelteURL('https://gallery.test/photos');
+
+    await renderPage();
+    await vi.waitFor(() => expect(sdkMock.getFilterSuggestions).toHaveBeenCalled());
+    await userEvent.click(page.getByTestId('load-baseline'));
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).not.toHaveAttribute('data-baseline', 'not-loaded');
+    });
+
+    // Commit a query without unmounting the page: the panel's {#key} must remount it so the
+    // browse-mode baseline (cached on the stub for the component's lifetime) doesn't survive into
+    // query mode, where §4.5 says the baseline provider must return undefined.
+    mockPage.url.search = '?q=beach';
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-baseline', 'not-loaded');
+    });
+  });
+
+  it('does not include sort order in the smart facet payload', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?q=nature&sort=asc');
+
+    await renderPage();
+
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalled());
+    expect(sdkMock.searchSmartFacets.mock.calls[0][0].smartSearchFacetsDto).not.toHaveProperty('order');
+  });
+
+  it('does not refetch smart facets for sort-only filter changes', async () => {
+    await renderPage();
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(page.getByTestId('filter-panel-set-sort-asc'));
+
+    await vi.waitFor(() =>
+      expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-sort-order', 'asc'),
+    );
+    expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps rendering search results when smart facets fail', async () => {
+    sdkMock.searchSmartFacets.mockRejectedValueOnce(new Error('facets failed'));
+
+    await renderPage();
+
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalled());
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-search-query', 'nature');
+  });
+
+  it('rejects rather than reporting an empty library when the facet fetch fails (#910)', async () => {
+    sdkMock.searchSmartFacets.mockRejectedValue(new Error('boom'));
+
+    await renderPage();
+
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalled());
+    // The stub's suggestionsProvider effect sets data-suggestions to 'error' on rejection, and to a
+    // JSON dump of the resolved value otherwise — an empty-sentinel resolution would show up here as
+    // JSON, not 'error'. #910: on a first-ever failure (no previous smartFacets to fall back to),
+    // the provider must reject rather than resolve with a fabricated empty response.
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-suggestions', 'error');
+    });
+  });
+
+  it('preserves previous facet total and buckets when a later facet fetch fails', async () => {
+    await renderPage();
+    await vi.waitFor(() =>
+      expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-total', '12'),
+    );
+
+    sdkMock.searchSmartFacets.mockRejectedValueOnce(new Error('facets failed'));
+    await userEvent.click(page.getByTestId('filter-panel-set-country'));
+
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(2));
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-total', '12');
+    expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute(
+      'data-time-buckets',
+      JSON.stringify([{ timeBucket: '2024-01-01', count: 12 }]),
+    );
+  });
+
+  it('refetches smart facets when an active filter changes', async () => {
+    await renderPage();
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(page.getByTestId('filter-panel-set-country'));
+
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(2));
+    expect(sdkMock.searchSmartFacets.mock.calls[1][0].smartSearchFacetsDto).toMatchObject({
+      query: 'nature',
+      country: 'Germany',
+      withSharedSpaces: true,
+    });
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-country', 'Germany');
+  });
+
+  it('refetches smart facets when the search language changes', async () => {
+    await renderPage();
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(1));
+
+    lang.set('fr');
+
+    await vi.waitFor(() => expect(sdkMock.searchSmartFacets).toHaveBeenCalledTimes(2));
+    expect(sdkMock.searchSmartFacets.mock.calls[1][0].smartSearchFacetsDto).toMatchObject({
+      query: 'nature',
+      language: 'fr',
+      withSharedSpaces: true,
+    });
+    expect(page.getByTestId('smart-search-results').element()).toHaveAttribute('data-language', 'fr');
+  });
+
+  it('registers cmdk selection context with photo-page callbacks', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+
+    expect(mockRegisterSelectionContext).toHaveBeenCalledOnce();
+    const options = mockRegisterSelectionContext.mock.calls[0][0];
+    expect(options.getAssets()).toBe(mockAssetMultiSelectManager.assets);
+    expect(options.canAddToAlbum()).toBe(true);
+    expect(options.canAddToSpace()).toBe(true);
+    expect(options.getOnFavorite()).toEqual(expect.any(Function));
+    expect(options.getOnArchive()).toEqual(expect.any(Function));
+    expect(options.getOnDelete()).toEqual(expect.any(Function));
+    expect(options.getOnUndoDelete()).toEqual(expect.any(Function));
+  });
+
+  it('photo-page cmdk callbacks are live functions and clearSelection delegates to the selection manager', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    const options = mockRegisterSelectionContext.mock.calls[0][0];
+
+    expect(options.getOnFavorite()).toEqual(expect.any(Function));
+    expect(options.getOnArchive()).toEqual(expect.any(Function));
+    expect(options.getOnDelete()).toEqual(expect.any(Function));
+    expect(options.getOnUndoDelete()).toEqual(expect.any(Function));
+    options.clearSelection();
+    expect(mockAssetMultiSelectManager.clear).toHaveBeenCalledOnce();
+  });
+
+  it('passes default day grouping into photos timeline options', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"day"');
+    });
+  });
+
+  it('clicking a photos year bucket zooms to month grouping without mutating filters', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?people=person-1&city=Berlin');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('activate-year-bucket'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-month', '');
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-selected-year', '');
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-selected-month', '');
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"month"');
+      // Zooming a year must NOT scope the query: every month of the archive
+      // stays loaded so the user can scroll across year boundaries (Hagen bug 1).
+      expect(page.getByTestId('timeline-options').element()).not.toMatchTextContent('"takenAfter"');
+      expect(page.getByTestId('timeline-options').element()).not.toMatchTextContent('"takenBefore"');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('{"year":2015}');
+    });
+    expect(buildPhotosTimelineOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        personIds: ['person-1'],
+        city: 'Berlin',
+        selectedYear: undefined,
+        selectedMonth: undefined,
+        dateAfter: undefined,
+        dateBefore: undefined,
+      }),
+      MY_USER_ID,
+    );
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it('clicking a photos month bucket zooms to day grouping without mutating filters', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?people=person-1');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('activate-month-bucket'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-month', '');
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-selected-year', '');
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-selected-month', '');
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"day"');
+      expect(page.getByTestId('timeline-options').element()).not.toMatchTextContent('"takenAfter"');
+      expect(page.getByTestId('timeline-options').element()).not.toMatchTextContent('"takenBefore"');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('{"year":2015,"month":8}');
+    });
+    expect(buildPhotosTimelineOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        personIds: ['person-1'],
+        selectedYear: undefined,
+        selectedMonth: undefined,
+        dateAfter: undefined,
+        dateBefore: undefined,
+      }),
+      MY_USER_ID,
+    );
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it('does not show active filter chips when a photos bucket is activated without filters', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('activate-year-bucket'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"month"');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('{"year":2015}');
+    });
+    expect(page.getByTestId('active-filters-bar-stub').query()).toBeNull();
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it('keeps explicit photos temporal filters across URL sync for non-time filter changes', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('filter-panel-set-year'));
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '2015');
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-selected-year', '2015');
+    });
+
+    await userEvent.click(page.getByTestId('filter-panel-set-country'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '2015');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-month', '');
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"day"');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('null');
+    });
+    expect(buildPhotosTimelineOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        country: 'Germany',
+        selectedYear: 2015,
+        selectedMonth: undefined,
+      }),
+      MY_USER_ID,
+    );
+    // D2 — the year rides along in the URL now, rather than in a carry-over slot beside it.
+    expect(goto).toHaveBeenLastCalledWith('/photos?country=Germany&year=2015', {
+      replace: true,
+      reset: false,
+    });
+  });
+
+  it('lets an explicit custom photos date range filter apply and clear a pending zoom anchor', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?people=person-1');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('activate-year-bucket'));
+    await vi.waitFor(() => expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('{"year":2015}'));
+
+    await userEvent.click(page.getByTestId('filter-panel-set-custom-range'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-month', '');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-date-after', '2024-01-01');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-date-before', '2024-12-31');
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-date-after', '2024-01-01');
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-date-before', '2024-12-31');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('null');
+    });
+    expect(buildPhotosTimelineOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        personIds: ['person-1'],
+        dateAfter: '2024-01-01',
+        dateBefore: '2024-12-31',
+        selectedYear: undefined,
+        selectedMonth: undefined,
+      }),
+      MY_USER_ID,
+    );
+    expect(goto).toHaveBeenLastCalledWith('/photos?people=person-1&from=2024-01-01&to=2024-12-31', {
+      replace: true,
+      reset: false,
+    });
+  });
+
+  it('clearing an explicit photos temporal chip keeps non-time filters and the current grouping', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?people=person-1');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('timeline-grouping-month'));
+    await userEvent.click(page.getByTestId('filter-panel-set-year'));
+    await userEvent.click(page.getByTestId('active-filters-remove-timeline'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-month', '');
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"month"');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('null');
+    });
+    expect(buildPhotosTimelineOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        personIds: ['person-1'],
+        selectedYear: undefined,
+        selectedMonth: undefined,
+      }),
+      MY_USER_ID,
+    );
+  });
+
+  it('clicking a photos bucket preserves an existing explicit custom date filter', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?from=2024-01-01&to=2024-12-31&tags=tag-1');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('activate-year-bucket'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-date-after', '2024-01-01');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-date-before', '2024-12-31');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '');
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-date-after', '2024-01-01');
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"month"');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('{"year":2015}');
+    });
+    expect(buildPhotosTimelineOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        tagIds: ['tag-1'],
+        dateAfter: '2024-01-01',
+        dateBefore: '2024-12-31',
+        selectedYear: undefined,
+        selectedMonth: undefined,
+      }),
+      MY_USER_ID,
+    );
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it('renders a desktop grouping control on the photos browse timeline', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+
+    expect(
+      (await expect.element(page.getByTestId('timeline-desktop-grouping-control')).toBeInTheDocument(),
+      page.getByTestId('timeline-desktop-grouping-control').element()),
+    ).toBeInTheDocument();
+    expect(page.getByTestId('timeline-grouping-day').element()).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('keeps the photos grouping control separated from representative buckets without a colored strip', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+
+    const control =
+      (await expect.element(page.getByTestId('timeline-desktop-grouping-control')).toBeInTheDocument(),
+      page.getByTestId('timeline-desktop-grouping-control').element());
+    const toolbar = control.closest('[class*="bg-transparent"]');
+    expect(toolbar).toHaveClass('mb-2', 'bg-transparent', 'dark:bg-transparent');
+    expect(toolbar).not.toHaveClass('mb-6');
+    expect(toolbar).not.toHaveClass('bg-gray-50', 'dark:bg-gray-900', 'border-b');
+  });
+
+  it('shows grouping and the filter bar in one merged toolbar (no separate spacing wrapper)', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?country=Germany');
+
+    await renderPage();
+
+    expect(
+      (await expect.element(page.getByTestId('timeline-desktop-grouping-control')).toBeInTheDocument(),
+      page.getByTestId('timeline-desktop-grouping-control').element()),
+    ).toBeInTheDocument();
+    expect(page.getByTestId('active-filters-bar-stub').element()).toBeInTheDocument();
+    expect(page.getByTestId('photos-active-filters-bar-spacing').query()).toBeNull();
+  });
+
+  it('keeps active filters visually separated from grouped timeline cards', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?country=Germany');
+
+    await renderPage();
+
+    const filterBar =
+      (await expect.element(page.getByTestId('active-filters-bar-stub')).toBeInTheDocument(),
+      page.getByTestId('active-filters-bar-stub').element());
+    const toolbar = filterBar.closest('[class*="shrink-0"]');
+    expect(toolbar).toHaveClass('shrink-0');
+    expect(toolbar).toHaveClass('mb-2');
+  });
+
+  it('changes photos grouping from the desktop control without changing filters or URL params', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?people=person-1');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('timeline-grouping-year'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"year"');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('null');
+    });
+    expect(goto).not.toHaveBeenCalledWith(expect.stringContaining('selectedYear'), expect.anything());
+  });
+
+  it('does not show the route empty state for representative year buckets', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('timeline-grouping-year'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"year"');
+    });
+    expect(page.getByText('no_assets_message').query()).toBeNull();
+  });
+
+  it('does not show the desktop grouping control during photos search results', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?q=nature');
+
+    await renderPage();
+
+    expect(page.getByTestId('timeline-desktop-grouping-control').query()).toBeNull();
+  });
+
+  it('does not show the desktop grouping control while photos selection mode is active', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+    mockAssetMultiSelectManager.selectionActive = true;
+
+    await renderPage();
+
+    expect(page.getByTestId('timeline-desktop-grouping-control').query()).toBeNull();
+  });
+
+  // #1051: same affordance as the album and space timelines — one rule, "the icon is wherever
+  // scoped search works", rather than a per-page allowlist that drifts.
+  describe('scoped search button', () => {
+    it('sits beside the grouping control on the photos timeline', async () => {
+      mockPage.url = new URL('https://gallery.test/photos');
+
+      await renderPage();
+
+      expect(
+        (await expect.element(page.getByTestId('scoped-search-button')).toBeInTheDocument(),
+        page.getByTestId('scoped-search-button').element()),
+      ).toBeInTheDocument();
+    });
+
+    it('opens the page-scoped search palette when clicked', async () => {
+      mockPage.url = new URL('https://gallery.test/photos');
+
+      await renderPage();
+      await userEvent.click(page.getByTestId('scoped-search-button'));
+
+      expect(mockOpenSearchPalette).toHaveBeenCalledOnce();
+    });
+
+    it('is hidden while photos selection mode is active', async () => {
+      mockPage.url = new URL('https://gallery.test/photos');
+      mockAssetMultiSelectManager.selectionActive = true;
+
+      await renderPage();
+
+      expect(page.getByTestId('scoped-search-button').query()).toBeNull();
+    });
+
+    it('stays available while search results are showing, unlike the grouping pill', async () => {
+      mockPage.url = new URL('https://gallery.test/photos?q=nature');
+
+      await renderPage();
+
+      expect(
+        (await expect.element(page.getByTestId('scoped-search-button')).toBeInTheDocument(),
+        page.getByTestId('scoped-search-button').element()),
+      ).toBeInTheDocument();
+      expect(page.getByTestId('timeline-desktop-grouping-control').query()).toBeNull();
+    });
+  });
+
+  it('ignores photos bucket activation while selection mode is active', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+    mockAssetMultiSelectManager.selectionActive = true;
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('activate-year-bucket'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"day"');
+      expect(page.getByTestId('timeline-anchor').element()).toMatchTextContent('null');
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '');
+    });
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it('passes grouping state and change handler into the photos Timeline for mobile placement', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+
+    await renderPage();
+
+    expect(
+      (await expect.element(page.getByTestId('timeline-mobile-grouping-props')).toBeInTheDocument(),
+      page.getByTestId('timeline-mobile-grouping-props').element()),
+    ).toMatchTextContent(JSON.stringify({ grouping: 'day', hasHandler: true }));
+
+    await userEvent.click(page.getByTestId('timeline-mobile-set-year'));
+
+    await vi.waitFor(() => {
+      expect(page.getByTestId('timeline-options').element()).toMatchTextContent('"grouping":"year"');
+      expect(page.getByTestId('timeline-mobile-grouping-props').element()).toMatchTextContent(
+        JSON.stringify({ grouping: 'year', hasHandler: true }),
+      );
+    });
+  });
+
+  it('wires the add-all handler into the active filters bar', async () => {
+    mockPage.url = new URL('https://gallery.test/photos?description=beach');
+
+    await renderPage();
+
+    const bar =
+      (await expect.element(page.getByTestId('active-filters-bar-stub')).toBeInTheDocument(),
+      page.getByTestId('active-filters-bar-stub').element());
+    expect(bar).toHaveAttribute('data-has-add-all', 'true');
+  });
+  // The strip is @immich/ui's ImageCarousel, which carries its own `mt-3` from when it was the
+  // first thing in the timeline. The route grouping bar sits above it now and already ends in
+  // 8px of padding plus an 8px margin, so that third helping put 28px between the
+  // Years/Months/All pill and the strip where the timeline gets 16px with memories off.
+  // Asserted on the rendered section rather than on the prop: the override only works because
+  // the library merges the incoming class with twMerge, and a prop assertion would pass just as
+  // well against a library that concatenated them and left `mt-3` winning.
+  it('drops the memories strip top margin the grouping bar now provides', async () => {
+    mockPage.url = new URL('https://gallery.test/photos');
+    mockAuthManager.preferences.memories.enabled = true;
+    mockMemoryManager.memories = [factory.memory({ assets: [factory.asset()] })];
+
+    await renderPage();
+
+    const card = page.getByTestId('memory-card');
+    await expect.element(card).toHaveAttribute('href', expect.stringContaining('/memories/'));
+    const strip = card.element().closest('section')!;
+    expect([...strip.classList]).toContain('mt-0');
+    expect([...strip.classList]).not.toContain('mt-3');
+  });
+
+  // D2 — the picked year/month is IN the URL codec. It used to be transient, which meant a shared
+  // link silently dropped it (recipient sees the whole library, no chip) and every URL-backed page
+  // needed a carry-over slot to smuggle it across its own goto().
+  describe('D2: the temporal filter is URL-backed', () => {
+    it('hydrates a shared ?year= link into the picker, the chip and the timeline query', async () => {
+      mockPage.url = new URL('https://gallery.test/photos?year=2023');
+
+      await renderPage();
+
+      await vi.waitFor(() => {
+        expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '2023');
+        expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-selected-year', '2023');
+        const options = page.getByTestId('timeline-options').element().textContent ?? '';
+        expect(options).toContain('"takenAfter":"2023-01-01T00:00:00.000Z"');
+        expect(options).toContain('"takenBefore":"2024-01-01T00:00:00.000Z"');
+      });
+    });
+
+    it('hydrates a shared ?year=&month= link', async () => {
+      mockPage.url = new URL('https://gallery.test/photos?year=2023&month=6');
+
+      await renderPage();
+
+      await vi.waitFor(() => {
+        expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '2023');
+        expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-month', '6');
+        const options = page.getByTestId('timeline-options').element().textContent ?? '';
+        expect(options).toContain('"takenAfter":"2023-06-01T00:00:00.000Z"');
+        expect(options).toContain('"takenBefore":"2023-07-01T00:00:00.000Z"');
+      });
+    });
+
+    it('writes the picked year to the URL', async () => {
+      mockPage.url = new URL('https://gallery.test/photos');
+
+      await renderPage();
+      await userEvent.click(page.getByTestId('filter-panel-set-year'));
+
+      await vi.waitFor(() => expect(goto).toHaveBeenCalled());
+      const [target] = vi.mocked(goto).mock.calls.at(-1) as [string];
+      expect(target).toContain('year=2015');
+    });
+
+    // The bug D2 retires. Closing the asset viewer calls replaceScrollTarget, which writes
+    // `?at=<assetId>` — a URL change the page MUST re-hydrate from. Before D2 the year lived only in
+    // a carry-over slot keyed on the exact URL the page itself last wrote, so the `?at=` URL missed
+    // it and the timeline silently widened back to "all time".
+    it('keeps a picked year when the asset viewer closes and writes ?at=', async () => {
+      mockPage.url = new URL('https://gallery.test/photos');
+
+      await renderPage();
+      await userEvent.click(page.getByTestId('filter-panel-set-year'));
+
+      // goto() is mocked, so land page.url on the page's own write the way SvelteKit would.
+      await vi.waitFor(() => expect(goto).toHaveBeenCalled());
+      const [target] = vi.mocked(goto).mock.calls.at(-1) as [string];
+      mockPage.url = new URL(target, 'https://gallery.test');
+      await vi.waitFor(() =>
+        expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '2015'),
+      );
+
+      // Closing the asset viewer: replaceScrollTarget appends `at` to the CURRENT url. This is a raw
+      // property set (not a user event), so nothing implicitly flushes the pending $effect — tick()
+      // forces that flush. A plain waitFor here would be vacuous: its own first synchronous check
+      // runs BEFORE the effect flushes and sees the still-2015 value, so it would pass whether or
+      // not the bug is present.
+      const withAt = new URL(mockPage.url);
+      withAt.searchParams.set('at', 'asset-1');
+      mockPage.url = withAt;
+      await tick();
+
+      expect(page.getByTestId('filter-panel-stub').element()).toHaveAttribute('data-selected-year', '2015');
+      expect(page.getByTestId('timeline-options').element().textContent).toContain(
+        '"takenAfter":"2015-01-01T00:00:00.000Z"',
+      );
+    });
+  });
+
+  // Slice 6 — a pasted/reloaded `/photos?albumId=<uuid>` has no session-cached name and no
+  // suggestions feeder to name the album from, so the chip label comes from a by-id lookup. The bar
+  // stub labels exactly like the real one (`albumNames.get(id) ?? id`), so a page that failed to
+  // pass or fill the map would show the UUID here.
+  describe('Slice 6: album / owner chip names', () => {
+    const ALBUM_ID = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+    const OWNER_ID = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+
+    it('labels the album chip with the album NAME, not the raw id', async () => {
+      sdkMock.getAlbumInfo.mockResolvedValue({ id: ALBUM_ID, albumName: 'Iceland 2026' } as never);
+      mockPage.url = new URL(`https://gallery.test/photos?albumId=${ALBUM_ID}`);
+
+      await renderPage();
+
+      await vi.waitFor(() => {
+        expect(sdkMock.getAlbumInfo).toHaveBeenCalledWith({ id: ALBUM_ID });
+        expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute(
+          'data-album-label',
+          'Iceland 2026',
+        );
+      });
+    });
+
+    it('labels the owner chip with the user NAME, resolved by id', async () => {
+      sdkMock.getUser.mockResolvedValue({ id: OWNER_ID, name: 'Ada Lovelace' } as never);
+      mockPage.url = new URL(`https://gallery.test/photos?owner=${OWNER_ID}`);
+
+      await renderPage();
+
+      await vi.waitFor(() => {
+        expect(sdkMock.getUser).toHaveBeenCalledWith({ id: OWNER_ID });
+        expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute(
+          'data-owner-label',
+          'Ada Lovelace',
+        );
+      });
+    });
+
+    it('keeps the id as the label — and the page alive — when the lookup fails', async () => {
+      sdkMock.getAlbumInfo.mockRejectedValue(new Error('403'));
+      mockPage.url = new URL(`https://gallery.test/photos?albumId=${ALBUM_ID}`);
+
+      await renderPage();
+
+      await vi.waitFor(() => expect(sdkMock.getAlbumInfo).toHaveBeenCalled());
+      expect(page.getByTestId('active-filters-bar-stub').element()).toHaveAttribute('data-album-label', ALBUM_ID);
+    });
+  });
+});
+
+// #1041: adding photos to a space the caller has hidden from their own timeline changes what the
+// server returns, but the mounted TimelineManager has already cached its buckets — the assets used
+// to sit there until the page remounted. The page now keys the Timeline on a reload token.
+//
+// `timeline-mount-id` comes from a counter in the Timeline stub that increments once per component
+// INSTANTIATION, so these assert a real remount (fresh manager, buckets re-fetched) rather than a
+// re-render, which no other stub output distinguishes.
+describe('Photos page — SpaceAddAssets timeline reload (#1041)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockPage.reset('https://gallery.test/photos', { routeId: '/(user)/photos/[[assetId=id]]' });
+    lang.set('en');
+    mockAssetMultiSelectManager.selectionActive = false;
+    mockAssetMultiSelectManager.assets = [];
+    mockMemoryManager.memories = [];
+    mockAuthManager.preferences.memories.enabled = false;
+    mockRegisterSearchablePageFilters.mockReturnValue(vi.fn());
+    sessionStorage.clear();
+    resetTimelineMountSeq();
+  });
+
+  it('remounts the timeline when assets are added to a space hidden from my timeline', async () => {
+    await renderPage();
+    const before = page.getByTestId('timeline-mount-id').element().textContent;
+
+    eventManager.emit('SpaceAddAssets', {
+      assetIds: ['asset-1'],
+      spaceId: 'space-1',
+      hiddenFromMyTimeline: true,
+    });
+    await tick();
+
+    expect(page.getByTestId('timeline-mount-id').element().textContent).not.toBe(before);
+  });
+
+  // The guard that stops the test above from passing for the wrong reason: if the page remounted on
+  // EVERY SpaceAddAssets, the assertion above would still hold while the common path silently paid
+  // a full timeline reload.
+  it('leaves the timeline mounted when the space is still shown', async () => {
+    await renderPage();
+    const before = page.getByTestId('timeline-mount-id').element().textContent;
+
+    eventManager.emit('SpaceAddAssets', {
+      assetIds: ['asset-1'],
+      spaceId: 'space-1',
+      hiddenFromMyTimeline: false,
+    });
+    await tick();
+
+    expect(page.getByTestId('timeline-mount-id').element().textContent).toBe(before);
+  });
+
+  it('leaves the timeline mounted when the emitter says nothing about hiding', async () => {
+    await renderPage();
+    const before = page.getByTestId('timeline-mount-id').element().textContent;
+
+    eventManager.emit('SpaceAddAssets', { assetIds: ['asset-1'], spaceId: 'space-1' });
+    await tick();
+
+    expect(page.getByTestId('timeline-mount-id').element().textContent).toBe(before);
+  });
+});
+
+// #763 — the second half of the bug report: a camera filter that matched nothing rendered the
+// EMPTY-LIBRARY placeholder ("Click to upload your first photo"), which reads as "you have no
+// photos at all" rather than "this filter matched none of them". The user had the photo open in
+// the viewer one click earlier, so the page was telling them something they could see was false.
+describe('Photos page — empty state under active filters (#763)', () => {
+  const timelineStubGlobals = globalThis as typeof globalThis & { __timelineStubAssetCount?: number };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    lang.set('en');
+    mockAssetMultiSelectManager.selectionActive = false;
+    mockAssetMultiSelectManager.assets = [];
+    mockMemoryManager.memories = [];
+    mockAuthManager.preferences.memories.enabled = false;
+    mockRegisterSearchablePageFilters.mockReturnValue(vi.fn());
+    sessionStorage.clear();
+    resetTimelineMountSeq();
+    sdkMock.getFilterSuggestions.mockResolvedValue({
+      people: [],
+      countries: [],
+      cameraMakes: [],
+      tags: [],
+      ratings: [],
+      mediaTypes: [],
+      hasUnnamedPeople: false,
+      hasFavorites: false,
+      hasAssetsInAlbum: false,
+      hasAssetsNotInAlbum: false,
+    });
+    timelineStubGlobals.__timelineStubAssetCount = 0;
+  });
+
+  afterEach(() => {
+    timelineStubGlobals.__timelineStubAssetCount = undefined;
+  });
+
+  it('says there are no results when filters are active, and offers no upload affordance', async () => {
+    mockPage.reset('https://gallery.test/photos?make=Canon&model=Canon+EOS+R6', {
+      routeId: '/(user)/photos/[[assetId=id]]',
+    });
+
+    await renderPage();
+
+    const placeholder =
+      (await expect.element(page.getByTestId('empty-placeholder')).toBeInTheDocument(),
+      page.getByTestId('empty-placeholder').element());
+    expect(page.getByTestId('empty-placeholder-text').element()).toMatchTextContent('no_results');
+    // "Click to upload your first photo" is a call to action; a filter that matched nothing is not.
+    expect(placeholder).toHaveAttribute('data-clickable', 'false');
+  });
+
+  it('still invites the first upload when the timeline is empty with no filters', async () => {
+    mockPage.reset('https://gallery.test/photos', { routeId: '/(user)/photos/[[assetId=id]]' });
+
+    await renderPage();
+
+    const placeholder =
+      (await expect.element(page.getByTestId('empty-placeholder')).toBeInTheDocument(),
+      page.getByTestId('empty-placeholder').element());
+    expect(page.getByTestId('empty-placeholder-text').element()).toMatchTextContent('no_assets_message');
+    expect(placeholder).toHaveAttribute('data-clickable', 'true');
+  });
+});

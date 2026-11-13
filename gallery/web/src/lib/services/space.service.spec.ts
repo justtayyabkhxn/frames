@@ -1,0 +1,139 @@
+import { eventManager } from '#lib/managers/event-manager.svelte.ts';
+import { handleError } from '#lib/utils/handle-error.ts';
+import { UserAvatarColor, addAssets, updateSpace } from '@immich/sdk';
+import { toastManager } from '@immich/ui';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { goto } from '$app/navigation';
+import { addAssetsToSpace, updateSpaceDetails } from './space.service';
+
+// Browser mode rejects an import of a name a mock does not export, so keep the global fake's other exports.
+vi.mock('$app/navigation', async () => ({
+  ...(await import('#test/unit/mocks/app-navigation.ts')),
+  goto: vi.fn().mockResolvedValue(undefined),
+}));
+
+// An ES module namespace cannot be spied on in the browser; spy on the module's exports instead.
+vi.mock(import('#lib/utils/handle-error.ts'), { spy: true });
+
+vi.mock('@immich/ui', async (orig) => {
+  const actual = await orig<typeof import('@immich/ui')>();
+  return {
+    ...actual,
+    toastManager: { primary: vi.fn(), danger: vi.fn(), warning: vi.fn(), success: vi.fn(), info: vi.fn() },
+  };
+});
+
+vi.mock('@immich/sdk', async (orig) => ({
+  ...(await orig<typeof import('@immich/sdk')>()),
+  addAssets: vi.fn().mockResolvedValue(undefined),
+  updateSpace: vi.fn().mockResolvedValue(undefined),
+}));
+
+const handleErrorSpy = vi.mocked(handleError);
+let emitSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(addAssets).mockResolvedValue(undefined as never);
+  vi.mocked(updateSpace).mockResolvedValue(undefined as never);
+  handleErrorSpy.mockImplementation(() => {});
+  emitSpy = vi.spyOn(eventManager, 'emit');
+});
+
+afterEach(() => {
+  emitSpy.mockRestore();
+});
+
+describe('addAssetsToSpace', () => {
+  it('adds assets to the target space, emits refresh event, and shows a toast when requested', async () => {
+    await expect(addAssetsToSpace('space-1', ['asset-1', 'asset-2'], { notify: true })).resolves.toBe(true);
+
+    expect(addAssets).toHaveBeenCalledWith({
+      id: 'space-1',
+      sharedSpaceAssetAddDto: { assetIds: ['asset-1', 'asset-2'] },
+    });
+    expect(emitSpy).toHaveBeenCalledWith('SpaceAddAssets', {
+      assetIds: ['asset-1', 'asset-2'],
+      spaceId: 'space-1',
+      hiddenFromMyTimeline: false,
+    });
+    expect(toastManager.primary).toHaveBeenCalledOnce();
+  });
+
+  // #1041: the flag rides the event so the personal timeline can drop assets that just landed in a
+  // space the caller has hidden. Defaulting to false (not undefined) keeps listeners off the "the
+  // emitter didn't say" branch when the caller genuinely knows the space is shown.
+  it('forwards hiddenFromMyTimeline on the event when the target space is hidden from my timeline', async () => {
+    await addAssetsToSpace('space-1', ['asset-1'], { notify: false, hiddenFromMyTimeline: true });
+
+    expect(emitSpy).toHaveBeenCalledWith('SpaceAddAssets', {
+      assetIds: ['asset-1'],
+      spaceId: 'space-1',
+      hiddenFromMyTimeline: true,
+    });
+  });
+
+  it('does not show a toast when notify is false', async () => {
+    await expect(addAssetsToSpace('space-1', ['asset-1'], { notify: false })).resolves.toBe(true);
+
+    expect(toastManager.primary).not.toHaveBeenCalled();
+    expect(emitSpy).toHaveBeenCalledWith('SpaceAddAssets', {
+      assetIds: ['asset-1'],
+      spaceId: 'space-1',
+      hiddenFromMyTimeline: false,
+    });
+  });
+
+  it('routes the success toast action to the target space', async () => {
+    await addAssetsToSpace('space-1', ['asset-1'], { notify: true });
+
+    const [toast] = vi.mocked(toastManager.primary).mock.calls[0];
+    const button = (toast as { button?: { onclick?: () => void } }).button;
+    button?.onclick?.();
+
+    expect(goto).toHaveBeenCalledWith('/spaces/space-1');
+  });
+
+  it('handles failures and does not emit refresh events', async () => {
+    const error = new Error('no permission');
+    vi.mocked(addAssets).mockRejectedValueOnce(error);
+
+    await expect(addAssetsToSpace('space-1', ['asset-1'], { notify: true })).resolves.toBe(false);
+
+    expect(handleErrorSpy).toHaveBeenCalledWith(error, expect.any(String));
+    expect(emitSpy).not.toHaveBeenCalled();
+    expect(toastManager.primary).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateSpaceDetails', () => {
+  const dto = { name: 'Family & Friends', description: 'Our photos', color: UserAvatarColor.Blue };
+
+  it('sends the edited fields and reports success', async () => {
+    await expect(updateSpaceDetails('space-1', dto)).resolves.toBe(true);
+
+    expect(updateSpace).toHaveBeenCalledWith({ id: 'space-1', sharedSpaceUpdateDto: dto });
+    expect(emitSpy).toHaveBeenCalledWith('SpaceUpdate', { spaceId: 'space-1' });
+    expect(toastManager.primary).toHaveBeenCalledOnce();
+  });
+
+  it('sends an emptied description as an empty string, not undefined', async () => {
+    // The server builds its update payload from keys that are `!== undefined`, so sending
+    // `undefined` for a cleared description would silently keep the old value.
+    await updateSpaceDetails('space-1', { ...dto, description: '' });
+
+    const [call] = vi.mocked(updateSpace).mock.calls[0];
+    expect(call.sharedSpaceUpdateDto.description).toBe('');
+  });
+
+  it('handles failures without throwing and reports failure', async () => {
+    const error = new Error('forbidden');
+    vi.mocked(updateSpace).mockRejectedValueOnce(error);
+
+    await expect(updateSpaceDetails('space-1', dto)).resolves.toBe(false);
+
+    expect(handleErrorSpy).toHaveBeenCalledWith(error, expect.any(String));
+    expect(emitSpy).not.toHaveBeenCalledWith('SpaceUpdate', expect.anything());
+    expect(toastManager.primary).not.toHaveBeenCalled();
+  });
+});

@@ -1,0 +1,591 @@
+<script lang="ts">
+  import { initInput } from '#lib/actions/focus.ts';
+  import AlbumListItem from '#lib/components/asset-viewer/AlbumListItem.svelte';
+  import NewAlbumListItem from '#lib/components/shared-components/album-selection/NewAlbumListItem.svelte';
+  import {
+    CollectionModalRowConverter,
+    CollectionModalRowType,
+    albumToCollection,
+    collectionKey,
+    isSelectableRowType,
+    isValidNewSpaceName,
+    isWritableSpace,
+    pickRecent,
+    spaceToCollection,
+    type CollectionModalRow,
+    type PickerCollection,
+  } from '#lib/components/shared-components/collection-selection/collection-selection-utils.ts';
+  import NewSpaceListItem from '#lib/components/shared-components/collection-selection/new-space-list-item.svelte';
+  import SpaceListItem from '#lib/components/shared-components/collection-selection/space-list-item.svelte';
+  import SpacePoolListItem from '#lib/components/shared-components/collection-selection/space-pool-list-item.svelte';
+  import { MAX_SPACE_ASSETS_PER_REQUEST } from '#lib/constants.ts';
+  import { authManager } from '#lib/managers/auth-manager.svelte.ts';
+  import { eventManager } from '#lib/managers/event-manager.svelte.ts';
+  import { handleError } from '#lib/utils/handle-error.ts';
+  import {
+    createAlbum,
+    createSpace,
+    getAlbumAddTargets,
+    getAllAlbums,
+    getAllSpaces,
+    getSharedSpaceAlbums,
+    type AlbumResponseDto,
+    type SharedSpaceResponseDto,
+  } from '@immich/sdk';
+  import { Button, Icon, Modal, ModalBody, ModalFooter, Text } from '@immich/ui';
+  import { mdiImageMultipleOutline, mdiInformationOutline, mdiKeyboardReturn } from '@mdi/js';
+  import { onMount } from 'svelte';
+  import { t } from 'svelte-i18n';
+  import { SvelteSet } from 'svelte/reactivity';
+
+  interface Props {
+    assetCount: number;
+    onClose: (collections?: PickerCollection[]) => void;
+    /**
+    Restrict the picker to albums linked to this space. Set when the selection contains
+    assets the user does not own: those can only land as #764 space contributions
+    (`album_space_asset`), which the server accepts solely for albums linked to a space
+    where the caller is Owner/Editor. Personal albums, brand-new albums and space pools
+    would all silently drop them, so none are offered.
+    */
+    restrictToSpaceId?: string;
+    /**
+    The selection itself, when the caller knows it. The picker then asks the server which albums
+    accept it (`POST /albums/add-targets`) and offers only those. A selection with photos the
+    caller cannot share (another member's space photos) also hides spaces, gains the albums
+    linked to the caller's writable spaces, and shows a hint explaining the narrower list.
+    */
+    assetIds?: string[];
+  }
+
+  let { assetCount, onClose, restrictToSpaceId, assetIds }: Props = $props();
+
+  let albums = $state<AlbumResponseDto[]>([]);
+  // Space-linked albums the caller has no `album_user` row for, fetched only for a non-shareable selection.
+  let linkedAlbums = $state<AlbumResponseDto[]>([]);
+  // #1114: albums linked to the caller's writable spaces that they are not a member of, fetched on the
+  // first search so typing finds them for a shareable selection too. Listed only while searching.
+  let searchLinkedAlbums = $state<AlbumResponseDto[]>([]);
+  let searchLinkedAlbumsRequested = false;
+  // Album id → accepted asset count from `POST /albums/add-targets`; null = not resolved (no filtering).
+  let acceptedCounts = $state<Record<string, number> | null>(null);
+  let shareableCount = $state<number | null>(null);
+  let spaces = $state<SharedSpaceResponseDto[]>([]);
+  let loading = $state(true);
+  let search = $state('');
+  let selectedRowIndex = $state(-1);
+  const multiSelectedKeys = $state<string[]>([]);
+  const multiSelectActive = $derived(multiSelectedKeys.length > 0);
+
+  const restricted = $derived(restrictToSpaceId !== undefined);
+  // Some of the selection is another member's photo: only space-linked albums can take those, and a
+  // space pool add would reject the whole request (`AssetShare` on every id).
+  const includesNonShareable = $derived(
+    !restricted && assetIds !== undefined && shareableCount !== null && shareableCount < assetIds.length,
+  );
+  const showSpaces = $derived(!restricted && !includesNonShareable && assetCount <= MAX_SPACE_ASSETS_PER_REQUEST);
+  const currentUserId = $derived(authManager.authenticated ? (authManager.user?.id ?? null) : null);
+
+  const albumCollections = $derived(
+    [...albums, ...linkedAlbums, ...(search.trim() ? searchLinkedAlbums : [])]
+      .filter((album) => acceptedCounts === null || (acceptedCounts[album.id] ?? 0) > 0)
+      .map((a) => albumToCollection(a)),
+  );
+  const spaceCollections = $derived(
+    showSpaces ? spaces.filter((space) => isWritableSpace(space, currentUserId)).map((s) => spaceToCollection(s)) : [],
+  );
+  const allCollections = $derived([...albumCollections, ...spaceCollections]);
+
+  const recentCollections = $derived(pickRecent(allCollections, 3));
+
+  // #965: the linked albums of the one expanded space. Fetched lazily on expand and kept for
+  // the life of the modal, so re-opening a space costs nothing and opening the picker still
+  // costs exactly two requests however many spaces the user is in.
+  let expandedSpaceId = $state<string | null>(null);
+  let spaceAlbumCache = $state<Record<string, PickerCollection[]>>({});
+  // Guards duplicate requests; nothing renders from it. `SvelteSet` rather than a plain `Set`
+  // because svelte/prefer-svelte-reactivity forbids mutable built-in Sets in components.
+  const spaceAlbumsInFlight = new SvelteSet<string>();
+  const expandedSpaceAlbums = $derived(expandedSpaceId === null ? undefined : spaceAlbumCache[expandedSpaceId]);
+
+  const converter = new CollectionModalRowConverter();
+  const rows = $derived(
+    converter.toModalRows(search, recentCollections, allCollections, selectedRowIndex, multiSelectedKeys, {
+      showSpaces,
+      // A brand-new album is personal: it takes only the shareable part of the selection.
+      allowCreate: !restricted && !(includesNonShareable && shareableCount === 0),
+      // Restricted mode never lists spaces, so the default "no albums or spaces" wording
+      // would name a collection type that was never on offer.
+      emptyText: restricted ? $t('no_albums_in_space_yet') : includesNonShareable ? $t('no_albums_found') : undefined,
+      noMatchText: restricted || includesNonShareable ? $t('no_albums_found') : undefined,
+      expandedSpaceId,
+      expandedSpaceAlbums,
+    }),
+  );
+  const selectableRowCount = $derived(rows.filter((row) => isSelectableRowType(row.type)).length);
+
+  onMount(async () => {
+    if (restrictToSpaceId) {
+      try {
+        await loadSpaceAlbums(restrictToSpaceId);
+      } catch (error) {
+        handleError(error, $t('errors.unable_to_load_albums'));
+      }
+      loading = false;
+      return;
+    }
+
+    const [albumResult, spaceResult] = await Promise.allSettled([loadAlbums(), loadSpaces()]);
+    if (albumResult.status === 'rejected') {
+      handleError(albumResult.reason, $t('errors.unable_to_load_albums'));
+    }
+    if (spaceResult.status === 'rejected') {
+      handleError(spaceResult.reason, $t('failed_to_load_spaces'));
+    }
+    if (assetIds && assetIds.length > 0) {
+      try {
+        await resolveAddTargets(assetIds);
+      } catch {
+        // Best effort: without an answer the picker lists everything, as before, and the add
+        // itself still reports what the server refused.
+        acceptedCounts = null;
+        shareableCount = null;
+        linkedAlbums = [];
+      }
+    }
+    loading = false;
+  });
+
+  /**
+  Ask the server which albums accept the selection. When part of it is not shareable, the only
+  other valid targets are albums linked to a space where the caller is Owner/Editor — including
+  ones owned by other members, which `getAllAlbums` never returns — so those are fetched and
+  resolved too.
+  */
+  const resolveAddTargets = async (ids: string[]) => {
+    const own = await getAlbumAddTargets({
+      albumAddTargetsDto: { albumIds: albums.map(({ id }) => id), assetIds: ids },
+    });
+    const counts = Object.fromEntries(
+      own.albums.map(({ albumId, acceptedAssetCount }) => [albumId, acceptedAssetCount]),
+    );
+
+    let extra: AlbumResponseDto[] = [];
+    if (own.shareableAssetCount < ids.length) {
+      const writable = spaces.filter((space) => isWritableSpace(space, currentUserId));
+      const perSpace = await Promise.all(writable.map((space) => fetchSpaceAlbums(space.id)));
+      // An album linked to several spaces comes back once per space; keep the first copy.
+      for (const album of perSpace.flat()) {
+        if ([...albums, ...extra].some(({ id }) => id === album.id)) {
+          continue;
+        }
+        extra.push(album);
+      }
+      if (extra.length > 0) {
+        const linked = await getAlbumAddTargets({
+          albumAddTargetsDto: { albumIds: extra.map(({ id }) => id), assetIds: ids },
+        });
+        for (const { albumId, acceptedAssetCount } of linked.albums) {
+          counts[albumId] = acceptedAssetCount;
+        }
+        extra = extra.filter(({ id }) => (counts[id] ?? 0) > 0);
+      }
+    }
+
+    linkedAlbums = extra;
+    acceptedCounts = counts;
+    shareableCount = own.shareableAssetCount;
+  };
+
+  /**
+  Fetch the linked albums of every space the caller can write to, once, the first time they search.
+  Without it a shareable selection only reaches another member's space-linked album by expanding its
+  space, and search does not look inside spaces (#1114). Resolved against the selection like the other
+  targets, so an album that would accept nothing stays hidden.
+  */
+  const loadSearchLinkedAlbums = async () => {
+    const writable = spaces.filter((space) => isWritableSpace(space, currentUserId));
+    const perSpace = await Promise.all(writable.map((space) => fetchSpaceAlbums(space.id)));
+    let found: AlbumResponseDto[] = [];
+    for (const album of perSpace.flat()) {
+      if ([...albums, ...linkedAlbums, ...found].every(({ id }) => id !== album.id)) {
+        found.push(album);
+      }
+    }
+    if (found.length > 0 && acceptedCounts !== null && assetIds && assetIds.length > 0) {
+      const targets = await getAlbumAddTargets({
+        albumAddTargetsDto: { albumIds: found.map(({ id }) => id), assetIds },
+      });
+      const counts = { ...acceptedCounts };
+      for (const { albumId, acceptedAssetCount } of targets.albums) {
+        counts[albumId] = acceptedAssetCount;
+      }
+      acceptedCounts = counts;
+      found = found.filter(({ id }) => (counts[id] ?? 0) > 0);
+    }
+    searchLinkedAlbums = found;
+  };
+
+  $effect(() => {
+    if (!search.trim() || restricted || loading || searchLinkedAlbumsRequested) {
+      return;
+    }
+    searchLinkedAlbumsRequested = true;
+    loadSearchLinkedAlbums().catch((error) => handleError(error, $t('errors.unable_to_load_albums')));
+  });
+
+  /**
+  Every album the user can add to: one request, no filters.
+  
+  This used to fetch `isOwned: true` and `isShared: true` and concatenate them, which double-
+  listed any album the user owns *and* has shared — both queries match it (#1043). The
+  original pair was `shared: false` + `shared: true`, a real partition; the rename to
+  `isOwned`/`isShared` turned it into two overlapping sets. Omitting both filters returns
+  exactly the union the picker wants — every album the user owns or is a member of — and
+  halves the requests. Row order does not depend on it: the converter sorts by name.
+  */
+  const loadAlbums = async () => {
+    albums = await getAllAlbums({});
+  };
+
+  // `SharedSpaceLinkedAlbumDto` is `AlbumResponseDto` minus `albumUsers` (plus link metadata),
+  // so shim the missing field back in for AlbumListItem. The membership list is unused here.
+  const fetchSpaceAlbums = async (spaceId: string): Promise<AlbumResponseDto[]> => {
+    const linked = await getSharedSpaceAlbums({ id: spaceId });
+    return linked.map((album) => ({ ...album, albumUsers: [] }) as AlbumResponseDto);
+  };
+
+  const loadSpaceAlbums = async (spaceId: string) => {
+    albums = await fetchSpaceAlbums(spaceId);
+  };
+
+  /**
+  Open a space's linked albums, or close them again.
+  
+  Accordion, like mobile: at most one space is open, so the row list stays short and only
+  one space's albums are ever in memory. A failed fetch collapses the row rather than
+  leaving it stuck open on a spinner that will never resolve.
+  */
+  const toggleSpaceExpansion = async (collection: PickerCollection) => {
+    if (collection.kind !== 'space') {
+      return;
+    }
+    expandedSpaceId = expandedSpaceId === collection.id ? null : collection.id;
+    // Toggling inserts or removes rows, so every index after this space shifts. Re-anchor the
+    // caret on the space row itself — leaving it where it was would point at a different row,
+    // and clearing it would strand a keyboard user who has to walk the list again to reach the
+    // children they just revealed.
+    reanchorCaretOnSpace(collection.id);
+    if (expandedSpaceId !== collection.id || Object.hasOwn(spaceAlbumCache, collection.id)) {
+      return; // collapsed, or already fetched once this modal was opened
+    }
+    if (spaceAlbumsInFlight.has(collection.id)) {
+      return; // a collapse/re-expand while the first request is still out
+    }
+    spaceAlbumsInFlight.add(collection.id);
+    try {
+      const linked = await fetchSpaceAlbums(collection.id);
+      spaceAlbumCache[collection.id] = linked.map((album) => albumToCollection(album));
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_load_albums'));
+      if (expandedSpaceId === collection.id) {
+        expandedSpaceId = null;
+      }
+    } finally {
+      spaceAlbumsInFlight.delete(collection.id);
+    }
+  };
+
+  /**
+  Put the arrow-key caret back on a space row after its children appeared or disappeared.
+  
+  Only when the caret was already in use — a mouse user who clicks a row should not suddenly
+  acquire a keyboard selection highlight. `rows` is `$derived`, so reading it here sees the
+  post-toggle list.
+  */
+  const reanchorCaretOnSpace = (spaceId: string) => {
+    if (selectedRowIndex === -1) {
+      return;
+    }
+    let index = -1;
+    for (const row of rows) {
+      if (!isSelectableRowType(row.type)) {
+        continue;
+      }
+      index++;
+      if (row.type === CollectionModalRowType.COLLECTION_ITEM && row.collection?.id === spaceId) {
+        selectedRowIndex = index;
+        return;
+      }
+    }
+    selectedRowIndex = -1;
+  };
+
+  const loadSpaces = async () => {
+    spaces = await getAllSpaces();
+  };
+
+  /**
+  Resolve a multi-select key back to its collection.
+  
+  Must search the fetched space albums too, not just `allCollections`: a space-linked album
+  owned by another member has no `album_user` row for the caller, so `getAllAlbums` never
+  returns it — which is precisely the #965 case. Missing it here made `submitMulti` resolve
+  the key to `undefined`, drop it, and close the modal as if the user had cancelled.
+  */
+  const findByKey = (key: string) =>
+    [...allCollections, ...Object.values(spaceAlbumCache).flat()].find(
+      (collection) => collectionKey(collection) === key,
+    );
+
+  const toggleMultiSelect = (collection?: PickerCollection) => {
+    const target = collection ?? rows.find((row) => row.selected)?.collection;
+    if (!target) {
+      return;
+    }
+    const key = collectionKey(target);
+    const index = multiSelectedKeys.indexOf(key);
+    if (index === -1) {
+      multiSelectedKeys.push(key);
+    } else {
+      multiSelectedKeys.splice(index, 1);
+    }
+  };
+
+  const handleCollectionClick = (collection: PickerCollection) => {
+    if (multiSelectActive) {
+      toggleMultiSelect(collection);
+      return;
+    }
+    onClose([collection]);
+  };
+
+  /**
+  What clicking a space row's body does. An expandable one opens instead of picking — its
+  pool stays reachable as the "Add to space" child, and via the row's own checkbox.
+  */
+  const handleSpaceClick = (row: CollectionModalRow, collection: PickerCollection) =>
+    row.expandable ? void toggleSpaceExpansion(collection) : handleCollectionClick(collection);
+
+  const submitMulti = () => {
+    const selected = multiSelectedKeys
+      .map((key) => findByKey(key))
+      .filter((collection): collection is PickerCollection => collection !== undefined);
+    onClose(selected.length > 0 ? selected : undefined);
+  };
+
+  const onNewAlbum = async (name: string) => {
+    name = name.trim();
+    try {
+      const album = await createAlbum({ createAlbumDto: { albumName: name } });
+      eventManager.emit('AlbumCreate', album);
+      onClose([albumToCollection(album)]);
+    } catch (error) {
+      handleError(error, $t('errors.failed_to_create_album'));
+    }
+  };
+
+  const onNewSpace = async (name: string) => {
+    if (!isValidNewSpaceName(name)) {
+      return;
+    }
+    try {
+      const space = await createSpace({ sharedSpaceCreateDto: { name: name.trim() } });
+      onClose([spaceToCollection(space)]);
+    } catch (error) {
+      handleError(error, $t('errors.failed_to_create_space'));
+    }
+  };
+
+  const onEnter = async () => {
+    const item = rows.find((row) => row.selected);
+    if (!item) {
+      return;
+    }
+    switch (item.type) {
+      case CollectionModalRowType.NEW_ALBUM: {
+        await onNewAlbum(search.trim());
+        break;
+      }
+      case CollectionModalRowType.NEW_SPACE: {
+        if (isValidNewSpaceName(search)) {
+          await onNewSpace(search);
+        }
+        break;
+      }
+      case CollectionModalRowType.COLLECTION_ITEM:
+      case CollectionModalRowType.SPACE_POOL_CHILD: {
+        if (item.expandable && item.collection) {
+          await toggleSpaceExpansion(item.collection);
+          return; // toggling re-anchored the caret on the space row; don't clear it below
+        }
+        if (multiSelectActive) {
+          submitMulti();
+        } else if (item.collection) {
+          onClose([item.collection]);
+        }
+        break;
+      }
+      case CollectionModalRowType.SECTION:
+      case CollectionModalRowType.MESSAGE: {
+        // Section headers and informational rows are never selectable, so Enter is a no-op.
+        break;
+      }
+    }
+    selectedRowIndex = -1;
+  };
+
+  const onkeydown = async (event: KeyboardEvent) => {
+    // Called synchronously for every handled key, before any `await` can suspend the
+    // handler — otherwise preventDefault() is a no-op (unicorn/no-late-event-control).
+    if (['ArrowUp', 'ArrowDown', 'Enter', 'Control'].includes(event.key)) {
+      event.preventDefault();
+    }
+    switch (event.key) {
+      case 'ArrowUp': {
+        selectedRowIndex = selectedRowIndex > 0 ? selectedRowIndex - 1 : selectableRowCount - 1;
+        break;
+      }
+      case 'ArrowDown': {
+        selectedRowIndex = selectedRowIndex < selectableRowCount - 1 ? selectedRowIndex + 1 : 0;
+        break;
+      }
+      case 'Enter': {
+        await onEnter();
+        break;
+      }
+      case 'Control': {
+        toggleMultiSelect();
+        break;
+      }
+      default: {
+        selectedRowIndex = -1;
+      }
+    }
+  };
+</script>
+
+<Modal title={$t('add_to_album_or_space')} {onClose} size="medium">
+  <ModalBody>
+    <div class="mb-2 flex max-h-144 flex-col">
+      {#if loading}
+        <!-- eslint-disable-next-line svelte/require-each-key -->
+        {#each { length: 3 } as _}
+          <div class="flex animate-pulse gap-4 px-6 py-2">
+            <div class="size-12 rounded-xl bg-slate-200"></div>
+            <div class="flex flex-col items-start justify-center gap-2">
+              <span class="h-4 w-36 animate-pulse bg-slate-200"></span>
+              <span class="h-3 w-20 animate-pulse bg-slate-200"></span>
+            </div>
+          </div>
+        {/each}
+      {:else}
+        <input
+          class="border-b-4 border-immich-bg px-6 py-2 text-2xl focus:border-immich-primary dark:border-immich-dark-gray dark:focus:border-immich-dark-primary"
+          placeholder={$t('search')}
+          {onkeydown}
+          bind:value={search}
+          use:initInput
+        />
+        {#if restricted}
+          <div
+            class="flex items-center gap-2 px-6 py-2 text-sm text-gray-500 dark:text-gray-400"
+            data-testid="restricted-to-space-notice"
+          >
+            <Icon icon={mdiInformationOutline} size="1rem" />
+            <span>{$t('add_to_collection_restricted_to_space')}</span>
+          </div>
+        {:else if includesNonShareable}
+          <div
+            class="flex items-center gap-2 px-6 py-2 text-sm text-gray-500 dark:text-gray-400"
+            data-testid="non-owned-space-albums-only-notice"
+          >
+            <Icon icon={mdiInformationOutline} size="1rem" />
+            <span>{$t('add_to_collection_non_owned_space_albums_only')}</span>
+          </div>
+        {:else if !showSpaces}
+          <div
+            class="flex items-center gap-2 px-6 py-2 text-sm text-gray-500 dark:text-gray-400"
+            data-testid="spaces-hidden-notice"
+          >
+            <Icon icon={mdiInformationOutline} size="1rem" />
+            <span>{$t('spaces_hidden_too_many_assets', { values: { count: MAX_SPACE_ASSETS_PER_REQUEST } })}</span>
+          </div>
+        {/if}
+        <div class="immich-scrollbar overflow-y-auto">
+          <!-- eslint-disable-next-line svelte/require-each-key -->
+          {#each rows as row}
+            {#if row.type === CollectionModalRowType.NEW_ALBUM}
+              <NewAlbumListItem selected={row.selected || false} {onNewAlbum} searchQuery={search} />
+            {:else if row.type === CollectionModalRowType.NEW_SPACE}
+              <NewSpaceListItem selected={row.selected || false} {onNewSpace} searchQuery={search} />
+            {:else if row.type === CollectionModalRowType.SECTION}
+              <p class="px-5 py-3 text-xs">{row.text}</p>
+            {:else if row.type === CollectionModalRowType.MESSAGE}
+              <!-- ps-11 lines the child up with the album children's thumbnails (ps-9 wrapper + p-2). -->
+              <p class={['py-1 text-sm', row.indented ? 'ps-11 pe-5' : 'px-5']}>{row.text}</p>
+            {:else if row.type === CollectionModalRowType.SPACE_POOL_CHILD && row.collection}
+              {const collection = $derived(row.collection)}
+              <SpacePoolListItem
+                spaceId={collection.id}
+                selected={row.selected || false}
+                multiSelected={row.multiSelected}
+                onClick={() => handleCollectionClick(collection)}
+                onMultiSelect={() => toggleMultiSelect(collection)}
+              />
+            {:else if row.type === CollectionModalRowType.COLLECTION_ITEM && row.collection}
+              {const collection = $derived(row.collection)}
+              <div data-testid={`row-${collection.kind}-${collection.id}`} class={{ 'ps-9': row.indented }}>
+                {#if collection.kind === 'album'}
+                  <AlbumListItem
+                    album={collection.album}
+                    selected={row.selected || false}
+                    multiSelected={row.multiSelected}
+                    searchQuery={search}
+                    badgeIcon={mdiImageMultipleOutline}
+                    onAlbumClick={() => handleCollectionClick(collection)}
+                    onMultiSelect={() => toggleMultiSelect(collection)}
+                  />
+                {:else}
+                  <SpaceListItem
+                    space={collection.space}
+                    selected={row.selected || false}
+                    multiSelected={row.multiSelected}
+                    expandable={row.expandable}
+                    expanded={row.expanded}
+                    searchQuery={search}
+                    onSpaceClick={() => handleSpaceClick(row, collection)}
+                    onMultiSelect={() => toggleMultiSelect(collection)}
+                  />
+                {/if}
+              </div>
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    </div>
+    {#if multiSelectActive}
+      <Button size="small" shape="round" fullWidth onclick={submitMulti} data-testid="add-collections-button">
+        {$t('add_to_collections_count', { values: { count: multiSelectedKeys.length } })}
+      </Button>
+    {/if}
+  </ModalBody>
+  <ModalFooter>
+    <div class="flex w-full justify-around">
+      <div class="flex gap-4">
+        <div class="flex place-items-center gap-1">
+          <span class="rounded-sm bg-gray-300 p-1 dark:bg-gray-500">
+            <Icon icon={mdiKeyboardReturn} size="1rem" />
+          </span>
+          <Text size="tiny">{$t('to_select')}</Text>
+        </div>
+        <div class="flex place-items-center gap-1">
+          <span class="rounded-sm bg-gray-300 p-1 dark:bg-gray-500">
+            <Text size="tiny">CTRL</Text>
+          </span>
+          <Text size="tiny">{$t('to_multi_select')}</Text>
+        </div>
+      </div>
+    </div>
+  </ModalFooter>
+</Modal>

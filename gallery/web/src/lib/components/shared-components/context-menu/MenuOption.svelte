@@ -1,0 +1,81 @@
+<script lang="ts">
+  import {
+    shortcut as bindShortcut,
+    shortcutLabel as computeShortcutLabel,
+    type Shortcut,
+  } from '#lib/actions/shortcut.ts';
+  import { optionClickCallbackStore, selectedIdStore } from '#lib/stores/context-menu.store.ts';
+  import { Icon, type IconLike } from '@immich/ui';
+
+  interface Props {
+    text: string;
+    subtitle?: string;
+    icon?: IconLike;
+    activeColor?: string;
+    textColor?: string;
+    onClick: (event: KeyboardEvent | MouseEvent) => void;
+    shortcut?: Shortcut | null;
+    shortcutLabel?: string;
+  }
+
+  let {
+    text,
+    subtitle = '',
+    icon,
+    activeColor = 'bg-slate-300',
+    textColor = 'text-immich-fg dark:text-immich-dark-bg',
+    onClick,
+    shortcut = null,
+    shortcutLabel = '',
+  }: Props = $props();
+
+  const id = $props.id();
+  const isActive = $derived($selectedIdStore === id);
+
+  const handleClick = (event: MouseEvent) => {
+    // eslint-disable-next-line unicorn/no-optional-chaining-on-undeclared-variable
+    $optionClickCallbackStore?.();
+    onClick(event);
+  };
+
+  if (shortcut && !shortcutLabel) {
+    shortcutLabel = computeShortcutLabel(shortcut);
+  }
+  const bindShortcutIfSet = shortcut
+    ? (n: HTMLElement) => bindShortcut(n, { shortcut, onShortcut: onClick })
+    : () => {};
+</script>
+
+<svelte:document use:bindShortcutIfSet />
+
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_mouse_events_have_key_events -->
+<li
+  {id}
+  onclick={handleClick}
+  onmouseover={() => ($selectedIdStore = id)}
+  onmouseleave={() => ($selectedIdStore = undefined)}
+  class="w-full p-4 text-start text-sm font-medium {textColor} flex cursor-pointer items-center gap-2 border-gray-200 focus:ring-2 focus:outline-none focus:ring-inset {isActive
+    ? activeColor
+    : 'bg-slate-100'}"
+  role="menuitem"
+>
+  {#if icon}
+    <Icon {icon} aria-hidden size="18" />
+  {/if}
+  <div class="w-full">
+    <div class="flex justify-between">
+      {text}
+      {#if shortcutLabel}
+        <span class="ps-4 text-gray-500">
+          {shortcutLabel}
+        </span>
+      {/if}
+    </div>
+    {#if subtitle}
+      <p class="text-xs text-gray-500">
+        {subtitle}
+      </p>
+    {/if}
+  </div>
+</li>

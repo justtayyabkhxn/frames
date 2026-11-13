@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "module": "esnext",
+    "noImplicitOverride": true,
+    "paths": {
+      "#i18n/*": ["../i18n/gallery/merged/*"],
+      "#test/*": ["./test/*"]
+    },
+    "rootDir": ".",
+    "sourceMap": true,
+    "strict": true,
+    "target": "es2022",
+    "types": ["$app/types", "vitest/globals"]
+  },
+  "exclude": ["vite.config.ts", "src/service-worker/*"],
+  "extends": "$app/tsconfig",
+  "include": ["src", "test/unit", "vite.config.ts"]
+}

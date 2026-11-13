@@ -1,0 +1,181 @@
+<script lang="ts">
+  import { ADMIN_VISIBLE_QUEUES, type AdminVisibleQueue } from '#lib/constants.ts';
+  import { queueManager } from '#lib/managers/queue-manager.svelte.ts';
+  import { createPreloadedQuery } from '#lib/queries/client.ts';
+  import { getUserConfigQuery } from '#lib/queries/config-user.query.ts';
+  import { asQueueItem } from '#lib/services/queue.service.ts';
+  import { handleError } from '#lib/utils/handle-error.ts';
+  import {
+    QueueCommand,
+    QueueName,
+    runQueueCommandLegacy,
+    type QueueCommandDto,
+    type QueueResponseDto,
+  } from '@immich/sdk';
+  import { modalManager, toastManager } from '@immich/ui';
+  import type { Component } from 'svelte';
+  import { t } from 'svelte-i18n';
+  import QueueCard from './QueueCard.svelte';
+  import QueueStorageMigrationDescription from './QueueStorageMigrationDescription.svelte';
+
+  type Props = {
+    queues: QueueResponseDto[];
+  };
+
+  let { queues }: Props = $props();
+  const query = createPreloadedQuery(getUserConfigQuery);
+  const { machineLearning } = $derived(query.data);
+
+  type QueueDetails = {
+    description?: Component;
+    allText?: string;
+    refreshText?: string;
+    missingText: string;
+    disabled?: boolean;
+    handleCommand?: (jobId: QueueName, jobCommand: QueueCommandDto) => Promise<void>;
+  };
+
+  const queueDetails: Record<AdminVisibleQueue, QueueDetails> = $derived({
+    [QueueName.ThumbnailGeneration]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+    },
+    [QueueName.MetadataExtraction]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+    },
+    [QueueName.Library]: {
+      missingText: $t('rescan'),
+    },
+    [QueueName.Sidecar]: {
+      allText: $t('sync'),
+      missingText: $t('discover'),
+    },
+    [QueueName.SmartSearch]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+      disabled: !machineLearning.clip.enabled,
+    },
+    [QueueName.DuplicateDetection]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+      disabled: !machineLearning.duplicateDetection.enabled,
+    },
+    [QueueName.FaceDetection]: {
+      allText: $t('reset'),
+      refreshText: $t('refresh'),
+      missingText: $t('missing'),
+      disabled: !machineLearning.facialRecognition.enabled,
+    },
+    [QueueName.FacialRecognition]: {
+      allText: $t('reset'),
+      missingText: $t('missing'),
+      disabled: !machineLearning.facialRecognition.enabled,
+    },
+    [QueueName.PeopleBackfill]: {
+      missingText: $t('start'),
+    },
+    [QueueName.Ocr]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+      disabled: !machineLearning.ocr.enabled,
+    },
+    [QueueName.PetDetection]: {
+      allText: $t('reset'),
+      missingText: $t('missing'),
+    },
+    [QueueName.PetRecognition]: {
+      allText: $t('reset'),
+      missingText: $t('missing'),
+    },
+    [QueueName.Classification]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+    },
+    [QueueName.QualityAnalysis]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+    },
+    [QueueName.SpatialScene]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+    },
+    [QueueName.VideoConversion]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+    },
+    [QueueName.StorageTemplateMigration]: {
+      missingText: $t('start'),
+      description: QueueStorageMigrationDescription,
+    },
+    [QueueName.Migration]: {
+      missingText: $t('start'),
+    },
+  });
+
+  const queueList = $derived(ADMIN_VISIBLE_QUEUES.map((name) => [name, queueDetails[name]] as const));
+
+  const handleCommand = async (name: QueueName, dto: QueueCommandDto) => {
+    const item = asQueueItem($t, { name });
+
+    switch (name) {
+      case QueueName.FaceDetection:
+      case QueueName.FacialRecognition: {
+        if (dto.force) {
+          const confirmed = await modalManager.showDialog({ prompt: $t('admin.confirm_reprocess_all_faces') });
+          if (!confirmed) {
+            return;
+          }
+        }
+        break;
+      }
+
+      case QueueName.PetDetection: {
+        if (dto.force) {
+          const confirmed = await modalManager.showDialog({ prompt: $t('admin.confirm_reprocess_all_pets') });
+          if (!confirmed) {
+            return;
+          }
+        }
+        break;
+      }
+
+      case QueueName.PetRecognition: {
+        if (dto.force) {
+          const confirmed = await modalManager.showDialog({
+            prompt: $t('admin.confirm_reprocess_all_pet_recognition'),
+          });
+          if (!confirmed) {
+            return;
+          }
+        }
+        break;
+      }
+      // no default
+    }
+
+    try {
+      await runQueueCommandLegacy({ name, queueCommandDto: dto });
+      await queueManager.refresh();
+
+      switch (dto.command) {
+        case QueueCommand.Empty: {
+          toastManager.primary($t('admin.cleared_jobs', { values: { job: item.title } }));
+          break;
+        }
+        // no default
+      }
+    } catch (error) {
+      handleError(error, $t('admin.failed_job_command', { values: { command: dto.command, job: item.title } }));
+    }
+  };
+</script>
+
+<div class="mt-10 flex flex-col gap-7">
+  {#each queueList as [queueName, props] (queueName)}
+    {const queue = $derived(queues.find(({ name }) => name === queueName))}
+    {#if queue}
+      <QueueCard {queue} onCommand={(command) => handleCommand(queueName, command)} {...props} />
+    {/if}
+  {/each}
+</div>

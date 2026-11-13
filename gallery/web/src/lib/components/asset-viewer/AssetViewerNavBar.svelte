@@ -1,0 +1,203 @@
+<script lang="ts">
+  import ActionMenuItem from '#lib/components/ActionMenuItem.svelte';
+  import LoadingDots from '#lib/components/LoadingDots.svelte';
+  import ArchiveAction from '#lib/components/asset-viewer/actions/ArchiveAction.svelte';
+  import DeleteAction from '#lib/components/asset-viewer/actions/DeleteAction.svelte';
+  import RestoreAction from '#lib/components/asset-viewer/actions/RestoreAction.svelte';
+  import SetVisibilityAction from '#lib/components/asset-viewer/actions/SetVisibilityAction.svelte';
+  import type { OnAction, PreAction } from '#lib/components/asset-viewer/actions/action.ts';
+  import ButtonContextMenu from '#lib/components/shared-components/context-menu/ButtonContextMenu.svelte';
+  import { getSpatialSceneActions } from '#lib/gallery/spatial/spatial-scene.svelte.ts';
+  import { viewerAlbumId } from '#lib/gallery/stack/album-stack-strip.ts';
+  import { getViewerSpace } from '#lib/gallery/viewer-space.ts';
+  import { assetViewerManager } from '#lib/managers/asset-viewer-manager.svelte.ts';
+  import { authManager } from '#lib/managers/auth-manager.svelte.ts';
+  import { languageManager } from '#lib/managers/language-manager.svelte.ts';
+  import { getAlbumAssetActions } from '#lib/services/album.service.ts';
+  import { getGlobalActions } from '#lib/services/app.service.ts';
+  import { getAssetActions } from '#lib/services/asset.service.ts';
+  import { getPersonAssetActions } from '#lib/services/person.service.ts';
+  import { getStackActions } from '#lib/services/stack.service.ts';
+  import { getSharedLink, withoutIcons } from '#lib/utils.ts';
+  import type { OnUndoDelete } from '#lib/utils/actions.ts';
+  import { canEditAsset } from '#lib/utils/asset-editability.ts';
+  import { toTimelineAsset } from '#lib/utils/timeline-util.ts';
+  import {
+    AssetTypeEnum,
+    AssetVisibility,
+    type AlbumResponseDto,
+    type AssetResponseDto,
+    type PersonResponseDto,
+    type StackResponseDto,
+  } from '@immich/sdk';
+  import { ActionButton, CommandPaletteDefaultProvider, Icon, Tooltip, type ActionItem } from '@immich/ui';
+  import { mdiArrowLeft, mdiArrowRight, mdiDotsVertical, mdiPencilOutline, mdiVideoOutline } from '@mdi/js';
+  import { t } from 'svelte-i18n';
+
+  interface Props {
+    asset: AssetResponseDto;
+    album?: AlbumResponseDto;
+    person?: PersonResponseDto | null;
+    stack?: StackResponseDto;
+    preAction: PreAction;
+    onAction: OnAction;
+    onUndoDelete?: OnUndoDelete;
+    onClose?: () => void;
+    isPlayingOriginalVideo: boolean;
+    setPlayOriginalVideo: (value: boolean) => void;
+  }
+
+  let {
+    asset,
+    album,
+    person = null,
+    stack,
+    preAction,
+    onAction,
+    onUndoDelete = undefined,
+    onClose,
+    isPlayingOriginalVideo = false,
+    setPlayOriginalVideo,
+  }: Props = $props();
+
+  const { space } = $derived.by(getViewerSpace());
+  const isOwner = $derived(authManager.authenticated && asset.ownerId === authManager.user.id);
+  const isLocked = $derived(asset.visibility === AssetVisibility.Locked);
+  // #734: a space Owner/Editor may edit a member's asset. Server-authoritative via `asset.canEdit`
+  // on a single-asset read; falls back to ownership otherwise (see `canEditAsset`).
+  const isEditable = $derived(
+    canEditAsset(asset, { userId: authManager.authenticated ? authManager.user.id : undefined }),
+  );
+
+  const { Cast } = $derived(getGlobalActions($t));
+
+  const Close: ActionItem = $derived({
+    title: $t('go_back'),
+    icon: languageManager.rtl ? mdiArrowRight : mdiArrowLeft,
+    $if: () => !!onClose && !assetViewerManager.isFaceEditMode && !assetViewerManager.isEditFacesPanelOpen,
+    onAction: () => onClose?.(),
+    shortcuts: [{ key: 'Escape' }],
+  });
+
+  const PlayOriginalVideo: ActionItem = $derived({
+    title: isPlayingOriginalVideo ? $t('play_transcoded_video') : $t('play_original_video'),
+    icon: mdiVideoOutline,
+    $if: () => asset.type === AssetTypeEnum.Video,
+    onAction: () => setPlayOriginalVideo(!isPlayingOriginalVideo),
+  });
+
+  const Actions = $derived(
+    getAssetActions($t, { ...asset, stackPrimaryAssetId: stack?.primaryAssetId }, album, { space }),
+  );
+  const StackActions = $derived(getStackActions($t, stack, asset, !!viewerAlbumId(album)));
+  const SpatialActions = $derived(getSpatialSceneActions($t, asset));
+  const sharedLink = getSharedLink();
+</script>
+
+<CommandPaletteDefaultProvider name={$t('assets')} actions={withoutIcons([Close, Cast, ...Object.values(Actions)])} />
+
+<div
+  class="relative isolate flex h-16 place-items-center justify-between px-3 drop-shadow-[0_0_1px_rgba(0,0,0,0.4)] transition-transform duration-200"
+>
+  <div class="pointer-events-none absolute inset-x-0 top-0 -z-10 h-24 bg-black/40 mask-smoothstep-to-bottom"></div>
+  <div class="dark">
+    <ActionButton action={Close} />
+  </div>
+
+  <div
+    class="dark -m-1 flex items-center gap-2 overflow-x-auto p-1 *:shrink-0"
+    data-testid="asset-viewer-navbar-actions"
+  >
+    {#if asset.isEdited}
+      <div class="flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-xs text-white">
+        <Icon icon={mdiPencilOutline} size="14" />
+        <span>{$t('edited')}</span>
+      </div>
+    {/if}
+    {#if assetViewerManager.isImageLoading}
+      <Tooltip text={$t('loading')}>
+        {#snippet child({ props })}
+          <div {...props} role="status" aria-label={$t('loading')}>
+            <LoadingDots class="me-1" />
+          </div>
+        {/snippet}
+      </Tooltip>
+    {/if}
+    <ActionButton action={Cast} />
+    <ActionButton action={Actions.Share} />
+    <ActionButton action={Actions.Offline} />
+    <ActionButton action={Actions.ZoomIn} />
+    <ActionButton action={Actions.ZoomOut} />
+    <ActionButton action={Actions.PlayMotionPhoto} />
+    <ActionButton action={Actions.StopMotionPhoto} />
+    <ActionButton action={SpatialActions.ShowSpatialScene} />
+    <ActionButton action={SpatialActions.HideSpatialScene} />
+    <ActionButton action={Actions.Copy} />
+    <ActionButton action={Actions.SharedLinkDownload} />
+    <ActionButton action={Actions.Info} />
+    <ActionButton action={Actions.Favorite} />
+    <ActionButton action={Actions.Unfavorite} />
+
+    <ActionButton action={Actions.RotateRight} />
+    <ActionButton action={Actions.Edit} />
+
+    {#if isOwner}
+      <DeleteAction {asset} {onAction} {preAction} {onUndoDelete} />
+    {/if}
+
+    {#if !sharedLink}
+      <ButtonContextMenu direction="left" align="top-right" color="secondary" title={$t('more')} icon={mdiDotsVertical}>
+        <ActionMenuItem action={Actions.PlaySlideshow} />
+
+        <ActionMenuItem action={Actions.Download} />
+        <ActionMenuItem action={Actions.DownloadOriginal} />
+        <ActionMenuItem action={Actions.RotateLeft} />
+        <ActionMenuItem action={Actions.Rotate180} />
+
+        {#if !isLocked && asset.isTrashed}
+          <RestoreAction {asset} {onAction} />
+        {/if}
+
+        <ActionMenuItem action={Actions.AddToAlbum} />
+        <ActionMenuItem action={Actions.RemoveFromAlbum} />
+
+        <ActionMenuItem action={StackActions.AddUploads} />
+        <ActionMenuItem action={StackActions.Unstack} />
+        <ActionMenuItem action={StackActions.KeepThisDeleteOthers} />
+        <ActionMenuItem action={StackActions.SetPrimaryAsset} />
+        <ActionMenuItem action={StackActions.RemoveAsset} />
+
+        {#if album}
+          {const { SetCover } = $derived(getAlbumAssetActions($t, album, asset))}
+          <ActionMenuItem action={SetCover} />
+        {/if}
+        {#if person}
+          {const { SetFeaturedPhoto } = $derived(getPersonAssetActions($t, person, asset))}
+          <ActionMenuItem action={SetFeaturedPhoto} />
+        {/if}
+
+        <ActionMenuItem action={Actions.SetProfilePicture} />
+
+        {#if isOwner && !isLocked}
+          <ArchiveAction {asset} {onAction} {preAction} />
+        {/if}
+        <ActionMenuItem action={Actions.ViewInTimeline} />
+        <ActionMenuItem action={Actions.ViewSimilar} />
+
+        {#if !asset.isTrashed && isOwner}
+          <SetVisibilityAction asset={toTimelineAsset(asset)} {onAction} {preAction} />
+        {/if}
+
+        <ActionMenuItem action={PlayOriginalVideo} />
+
+        {#if isEditable}
+          <hr />
+          <ActionMenuItem action={Actions.RefreshFacesJob} />
+          <ActionMenuItem action={Actions.RefreshMetadataJob} />
+          <ActionMenuItem action={Actions.RegenerateThumbnailJob} />
+          <ActionMenuItem action={Actions.TranscodeVideoJob} />
+        {/if}
+      </ButtonContextMenu>
+    {/if}
+  </div>
+</div>

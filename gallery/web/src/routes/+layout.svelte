@@ -1,0 +1,290 @@
+<script lang="ts">
+  import { shortcut, shortcuts } from '#lib/actions/shortcut.ts';
+  import { getMyImmichLink } from '#lib/commands.ts';
+  import OnEvents from '#lib/components/OnEvents.svelte';
+  import GlobalSearch from '#lib/components/global-search/global-search.svelte';
+  import OpenInAppBanner from '#lib/components/shared-components/open-in-app-banner.svelte';
+  import { setupMotion } from '#lib/gallery/motion/index.ts';
+  import { authManager } from '#lib/managers/auth-manager.svelte.ts';
+  import { closePaletteOnNavigate } from '#lib/managers/close-palette-on-navigate.ts';
+  import { eventManager } from '#lib/managers/event-manager.svelte.ts';
+  import { featureFlagsManager } from '#lib/managers/feature-flags-manager.svelte.ts';
+  import { globalSearchManager, type SearchMode } from '#lib/managers/global-search-manager.svelte.ts';
+  import ServerRestartingModal from '#lib/modals/ServerRestartingModal.svelte';
+  import { queryClient } from '#lib/queries/client.ts';
+  import { Route } from '#lib/route.ts';
+  import { lang, locale } from '#lib/stores/preferences.store.ts';
+  import { sidebarStore } from '#lib/stores/sidebar.svelte.ts';
+  import { closeWebsocketConnection, openWebsocketConnection, websocketStore } from '#lib/stores/websocket.ts';
+  import { copyToClipboard } from '#lib/utils.ts';
+  import { maintenanceShouldRedirect } from '#lib/utils/maintenance.ts';
+  import { searchShortcuts } from '#lib/utils/search-shortcut.ts';
+  import { getUiTranslations } from '#lib/utils/ui-translations.ts';
+  import { getServerConfig } from '@immich/sdk';
+  import { TooltipProvider, modalManager, setLocale, setTranslations, themeManager, toastManager } from '@immich/ui';
+  import { QueryClientProvider } from '@tanstack/svelte-query';
+  import { En } from 'media-chrome/lang/en';
+  import { addTranslation } from 'media-chrome/utils/i18n';
+  import { onMount, type Snippet } from 'svelte';
+  import { t } from 'svelte-i18n';
+  import { get } from 'svelte/store';
+  import { afterNavigate, beforeNavigate } from '$app/navigation';
+  import { page } from '$app/state';
+  import '../app.css';
+  import DownloadPanel from './DownloadPanel.svelte';
+  import ErrorLayout from './ErrorLayout.svelte';
+  import NavigationLoadingBar from './NavigationLoadingBar.svelte';
+  import UploadPanel from './UploadPanel.svelte';
+  import VersionAnnouncement from './VersionAnnouncement.svelte';
+
+  interface Props {
+    children?: Snippet;
+  }
+
+  const MediaChromeDefaultKeys = [
+    'Start airplay',
+    'Stop airplay',
+    'Audio',
+    'Start casting',
+    'Stop casting',
+    'Enter picture in picture mode',
+    'Exit picture in picture mode',
+    'Seek backward',
+    'Seek forward',
+    'audio player',
+    'seek',
+    'audio tracks',
+    'chapter: {chapterName}',
+    'live',
+    'start airplay',
+    'stop airplay',
+    'start casting',
+    'stop casting',
+    'enter picture in picture mode',
+    'exit picture in picture mode',
+    'seek to live',
+    'playing live',
+    'seek back {seekOffset} seconds',
+    'seek forward {seekOffset} seconds',
+    'Encryption Error',
+    'The media is encrypted and there are no keys to decrypt it.',
+  ] as const satisfies Array<keyof typeof En>;
+  const MediaChromeDefaults = Object.fromEntries(MediaChromeDefaultKeys.map((key) => [key, key])) as {
+    [K in (typeof MediaChromeDefaultKeys)[number]]: K;
+  };
+
+  $effect(() => {
+    setTranslations(getUiTranslations($t));
+
+    addTranslation($lang, {
+      ...MediaChromeDefaults,
+      Captions: $t('media_chrome.captions'),
+      'Enable captions': $t('media_chrome.enable_captions'),
+      'Disable captions': $t('media_chrome.disable_captions'),
+      'Enter fullscreen mode': $t('media_chrome.enter_fullscreen_mode'),
+      'Exit fullscreen mode': $t('media_chrome.exit_fullscreen_mode'),
+      Mute: $t('media_chrome.mute'),
+      Unmute: $t('media_chrome.unmute'),
+      Loop: $t('media_chrome.loop'),
+      Play: $t('play'),
+      Pause: $t('pause'),
+      'Playback rate': $t('media_chrome.playback_rate'),
+      'Playback rate {playbackRate}': $t('media_chrome.playback_rate_value'),
+      Quality: $t('media_chrome.quality'),
+      Settings: $t('settings'),
+      Auto: $t('media_chrome.auto'),
+      'video player': $t('media_chrome.video_player'),
+      volume: $t('media_chrome.volume'),
+      'closed captions': $t('media_chrome.closed_captions'),
+      'current playback rate': $t('media_chrome.playback_rate_current'),
+      'playback time': $t('media_chrome.playback_time'),
+      'media loading': $t('media_chrome.media_loading'),
+      settings: $t('settings'),
+      quality: $t('media_chrome.quality'),
+      play: $t('play'),
+      pause: $t('pause'),
+      mute: $t('media_chrome.mute'),
+      unmute: $t('media_chrome.unmute'),
+      Off: $t('media_chrome.captions_off'),
+      'enter fullscreen mode': $t('media_chrome.enter_fullscreen_mode'),
+      'exit fullscreen mode': $t('media_chrome.exit_fullscreen_mode'),
+      'Network Error': $t('media_chrome.network_error'),
+      'Decode Error': $t('media_chrome.decode_error'),
+      'Source Not Supported': $t('media_chrome.not_supported_error'),
+      'A network error caused the media download to fail.': $t('media_chrome.network_error_description'),
+      'A media error caused playback to be aborted. The media could be corrupt or your browser does not support this format.':
+        $t('media_chrome.media_error_description'),
+      'An unsupported error occurred. The server or network failed, or your browser does not support this format.': $t(
+        'media_chrome.unsupported_error_description',
+      ),
+      hour: $t('hour'),
+      hours: $t('hours'),
+      minute: $t('minute'),
+      minutes: $t('minutes'),
+      second: $t('media_chrome.second'),
+      seconds: $t('media_chrome.seconds'),
+      '{time} remaining': $t('media_chrome.time_value_remaining'),
+      '{currentTime} of {totalTime}': $t('media_chrome.time_value_of_total_time'),
+      'video not loaded, unknown time.': $t('media_chrome.video_not_loaded_unknown_time'),
+    });
+  });
+
+  $effect(() => setLocale($locale));
+
+  let { children }: Props = $props();
+
+  let showNavigationLoadingBar = $state(false);
+
+  toastManager.setOptions({ class: 'top-16 fixed' });
+
+  onMount(() => {
+    const element = document.querySelector('#stencil');
+    element?.remove();
+    // if the browser theme changes, changes the Immich theme too
+  });
+
+  setupMotion();
+
+  eventManager.emit('AppInit');
+
+  beforeNavigate(({ from, to, shallow, type }) => {
+    if (shallow && type === 'goto') return;
+
+    if (sidebarStore.isOpen) {
+      sidebarStore.reset();
+    }
+
+    const fromRouteId = from?.route?.id;
+    const toRouteId = to?.route?.id;
+    const sameRouteTransition = fromRouteId && toRouteId && fromRouteId === toRouteId;
+
+    if (sameRouteTransition) {
+      return;
+    }
+
+    eventManager.emit('AppNavigate');
+
+    showNavigationLoadingBar = true;
+  });
+
+  afterNavigate(({ shallow, type }) => {
+    if (shallow && type === 'goto') return;
+
+    showNavigationLoadingBar = false;
+  });
+
+  afterNavigate(closePaletteOnNavigate);
+
+  const { serverRestarting } = websocketStore;
+
+  $effect.pre(() => {
+    if (authManager.authenticated || $serverRestarting || page.url.pathname.startsWith(Route.maintenanceMode())) {
+      openWebsocketConnection();
+    } else {
+      closeWebsocketConnection();
+    }
+  });
+
+  serverRestarting.subscribe((isRestarting) => {
+    if (!isRestarting) {
+      return;
+    }
+
+    if (maintenanceShouldRedirect(isRestarting.isMaintenanceMode, location)) {
+      modalManager.show(ServerRestartingModal, {}).catch((error) => console.error('Error [ServerRestartBox]:', error));
+    }
+  });
+
+  const onWebsocketConnect = async () => {
+    const isRestarting = get(serverRestarting);
+    if (isRestarting && maintenanceShouldRedirect(isRestarting.isMaintenanceMode, location)) {
+      const { maintenanceMode } = await getServerConfig();
+      if (maintenanceMode === isRestarting.isMaintenanceMode) {
+        location.reload();
+      }
+    }
+  };
+
+  const isApplePlatform = typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/.test(navigator.platform);
+
+  const openModalSearch = () => {
+    // Use valueOrUndefined so the shortcut never throws if it fires before
+    // feature flags have loaded (SSR→hydration race).
+    if (featureFlagsManager.valueOrUndefined?.search) {
+      globalSearchManager.toggle('modal');
+    }
+  };
+</script>
+
+<OnEvents {onWebsocketConnect} />
+
+<VersionAnnouncement />
+
+<svelte:head>
+  <title>{page.data.meta?.title || 'Web'} - Immich</title>
+  <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
+  <meta name="theme-color" content="white" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="black" media="(prefers-color-scheme: dark)" />
+</svelte:head>
+
+<svelte:document
+  use:shortcut={{
+    shortcut: { ctrl: true, shift: true, key: 'm' },
+    onShortcut: () => void copyToClipboard(getMyImmichLink().href),
+  }}
+  use:shortcut={{
+    shortcut: { shift: true, key: 't' },
+    onShortcut: () => themeManager.toggle(),
+  }}
+  use:shortcuts={[
+    {
+      shortcut: { ctrl: true, key: 'k' },
+      onShortcut: () => {
+        if (!isApplePlatform) {
+          openModalSearch();
+        }
+      },
+    },
+    {
+      shortcut: { meta: true, key: 'k' },
+      onShortcut: () => {
+        if (isApplePlatform) {
+          openModalSearch();
+        }
+      },
+    },
+    {
+      shortcut: { ctrl: true, key: '/' },
+      onShortcut: () => {
+        if (!globalSearchManager.isOpen) {
+          return;
+        }
+        const order: SearchMode[] = ['smart', 'metadata', 'description', 'ocr'];
+        const next = order[(order.indexOf(globalSearchManager.mode) + 1) % order.length];
+        globalSearchManager.setMode(next);
+      },
+    },
+    ...searchShortcuts(openModalSearch),
+  ]}
+/>
+
+<QueryClientProvider client={queryClient}>
+  <TooltipProvider>
+    <OpenInAppBanner />
+    {#if page.data.error}
+      <ErrorLayout error={page.data.error}></ErrorLayout>
+    {:else}
+      {@render children?.()}
+    {/if}
+
+    {#if showNavigationLoadingBar}
+      <NavigationLoadingBar />
+    {/if}
+
+    <DownloadPanel />
+    <UploadPanel />
+    {#if globalSearchManager.isOpen && globalSearchManager.presentation === 'modal'}
+      <GlobalSearch manager={globalSearchManager} />
+    {/if}
+  </TooltipProvider>
+</QueryClientProvider>

@@ -1,0 +1,180 @@
+import { sdkMock } from '#lib/gallery/__mocks__/sdk.mock.ts';
+import { PeopleFilterBy, PeopleSortBy, peopleViewSettings } from '#lib/gallery/stores/preferences.store.ts';
+
+// Loaded after sdk.mock.ts: browser mode links static imports in order, and any module that imports
+// @immich/sdk before sdk.mock.ts registers its vi.mock binds the real SDK for the whole file.
+const { PEOPLE_PAGE_SIZE } = await import('#lib/constants.ts');
+const { load } = await import('./+page');
+
+const { authenticate, getFormatter, featureFlagsMock } = vi.hoisted(() => ({
+  authenticate: vi.fn(),
+  getFormatter: vi.fn(),
+  featureFlagsMock: {
+    valueOrUndefined: undefined as { peopleStatistics: boolean } | undefined,
+  },
+}));
+
+vi.mock('#lib/utils/auth.js', () => ({ authenticate }));
+// preferences.store (reached via people-filter, for the persisted People/Pets choice) pulls the
+// locale helpers out of this module at import time, so the mock has to carry them too.
+vi.mock('#lib/utils/i18n.js', () => ({
+  getFormatter,
+  getPreferredLocale: () => 'en',
+  convertBCP47: (value: string) => value,
+}));
+vi.mock('#lib/managers/feature-flags-manager.svelte.js', () => ({ featureFlagsManager: featureFlagsMock }));
+
+describe('people page load', () => {
+  const peopleResponse = {
+    people: [],
+    total: 12,
+    hidden: 2,
+    hasNextPage: false,
+  };
+
+  const statisticsResponse = {
+    total: 12,
+    hidden: 2,
+    detectedFaceCount: 2901,
+  };
+
+  let parent: ReturnType<typeof vi.fn>;
+
+  const runLoad = (url: URL) => load({ url, parent } as never);
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    getFormatter.mockResolvedValue((key: string) => key);
+    sdkMock.getAllPeople.mockResolvedValue(peopleResponse);
+    sdkMock.getPeopleStatistics.mockResolvedValue(statisticsResponse);
+    parent = vi.fn().mockResolvedValue({});
+    featureFlagsMock.valueOrUndefined = { peopleStatistics: true };
+    peopleViewSettings.set({ sortBy: PeopleSortBy.PhotoCount, filterBy: PeopleFilterBy.All });
+  });
+
+  it('authenticates, awaits parent, and loads a bounded first page with overview statistics when enabled', async () => {
+    const url = new URL('https://gallery.test/people');
+
+    await expect(runLoad(url)).resolves.toEqual({
+      people: peopleResponse,
+      peopleStatistics: statisticsResponse,
+      peopleListTotals: null,
+      meta: { title: 'people' },
+    });
+
+    expect(authenticate).toHaveBeenCalledWith(url);
+    // parent() resolves only after the root layout's init() runs, which is what guarantees the
+    // feature-flags manager is populated before we read it.
+    expect(parent).toHaveBeenCalled();
+    expect(sdkMock.getAllPeople).toHaveBeenCalledWith({
+      withHidden: true,
+      withSharedSpaces: true,
+      size: PEOPLE_PAGE_SIZE,
+    });
+    expect(sdkMock.getPeopleStatistics).toHaveBeenCalledWith({ withSharedSpaces: true });
+    expect(sdkMock.getPeopleFaceStatistics).not.toHaveBeenCalled();
+  });
+
+  // The page used to load unfiltered and re-apply the persisted filter in onMount, so refreshing
+  // under a Pets filter painted the whole people list for one round trip before narrowing to pets.
+  it('applies a persisted Pets filter to the first request', async () => {
+    peopleViewSettings.set({ sortBy: PeopleSortBy.PhotoCount, filterBy: PeopleFilterBy.Pets });
+
+    const result = await runLoad(new URL('https://gallery.test/people'));
+
+    expect(sdkMock.getAllPeople).toHaveBeenCalledWith({
+      withHidden: true,
+      withSharedSpaces: true,
+      size: PEOPLE_PAGE_SIZE,
+      $type: 'pet',
+    });
+    // Header totals come back with the list, so the page needs no second request to correct them.
+    expect(result.peopleListTotals).toEqual({ total: peopleResponse.total, hidden: peopleResponse.hidden });
+  });
+
+  it('applies a persisted People filter to the first request', async () => {
+    peopleViewSettings.set({ sortBy: PeopleSortBy.PhotoCount, filterBy: PeopleFilterBy.People });
+
+    await runLoad(new URL('https://gallery.test/people'));
+
+    expect(sdkMock.getAllPeople).toHaveBeenCalledWith(expect.objectContaining({ $type: 'person' }));
+  });
+
+  it('sends no type and no list totals under the All filter', async () => {
+    const result = await runLoad(new URL('https://gallery.test/people'));
+
+    expect(sdkMock.getAllPeople).toHaveBeenCalledWith(expect.objectContaining({ $type: undefined }));
+    // Null, so the header keeps reading the unfiltered overview statistics.
+    expect(result.peopleListTotals).toBeNull();
+  });
+
+  it('falls back to All when the persisted filter is corrupt', async () => {
+    peopleViewSettings.set({ sortBy: PeopleSortBy.PhotoCount, filterBy: 'Nonsense' as never });
+
+    const result = await runLoad(new URL('https://gallery.test/people'));
+
+    expect(sdkMock.getAllPeople).toHaveBeenCalledWith(expect.objectContaining({ $type: undefined }));
+    expect(result.peopleListTotals).toBeNull();
+  });
+
+  it('skips the overview statistics query when the peopleStatistics flag is disabled', async () => {
+    featureFlagsMock.valueOrUndefined = { peopleStatistics: false };
+    const url = new URL('https://gallery.test/people');
+
+    await expect(runLoad(url)).resolves.toEqual({
+      people: peopleResponse,
+      peopleStatistics: null,
+      peopleListTotals: null,
+      meta: { title: 'people' },
+    });
+
+    // People still load (with the bounded size); only the discarded stats query is skipped.
+    expect(sdkMock.getAllPeople).toHaveBeenCalledWith({
+      withHidden: true,
+      withSharedSpaces: true,
+      size: PEOPLE_PAGE_SIZE,
+    });
+    expect(sdkMock.getPeopleStatistics).not.toHaveBeenCalled();
+  });
+
+  it('treats an uninitialized feature-flags manager as statistics-disabled', async () => {
+    // In maintenance mode the root layout skips featureFlagsManager.init(), so valueOrUndefined is
+    // undefined. Fail safe: skip the stats query rather than throw.
+    featureFlagsMock.valueOrUndefined = undefined;
+    const url = new URL('https://gallery.test/people');
+
+    const result = await runLoad(url);
+
+    expect(result.peopleStatistics).toBeNull();
+    expect(sdkMock.getPeopleStatistics).not.toHaveBeenCalled();
+    expect(sdkMock.getAllPeople).toHaveBeenCalled();
+  });
+
+  it('does not forward unsupported search parameters to overview statistics', async () => {
+    const url = new URL('https://gallery.test/people?searchedPeople=Ali&closestPersonId=p1&closestAssetId=a1');
+
+    await runLoad(url);
+
+    expect(sdkMock.getPeopleStatistics).toHaveBeenCalledWith({ withSharedSpaces: true });
+  });
+
+  it('keeps the people list when overview statistics fail', async () => {
+    const url = new URL('https://gallery.test/people');
+    sdkMock.getPeopleStatistics.mockRejectedValue(new Error('stats unavailable'));
+
+    await expect(runLoad(url)).resolves.toEqual({
+      people: peopleResponse,
+      peopleStatistics: null,
+      peopleListTotals: null,
+      meta: { title: 'people' },
+    });
+  });
+
+  it('still rejects when the people list fails', async () => {
+    const url = new URL('https://gallery.test/people');
+    const error = new Error('people unavailable');
+    sdkMock.getAllPeople.mockRejectedValue(error);
+
+    await expect(runLoad(url)).rejects.toThrow(error);
+  });
+});

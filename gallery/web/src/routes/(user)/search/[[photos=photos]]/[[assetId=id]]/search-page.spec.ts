@@ -1,0 +1,376 @@
+import TestWrapper from '#lib/components/TestWrapper.svelte';
+import { QueryParameter } from '#lib/constants.ts';
+import { AssetVisibility, type AssetResponseDto } from '@immich/sdk';
+import type { Component } from 'svelte';
+import { expect } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+import SearchPage from './+page.svelte';
+
+const {
+  mockAfterNavigate,
+  mockAssetMultiSelectManager,
+  mockAuthManager,
+  mockFeatureFlagsManager,
+  mockGlobalSearchManager,
+  mockGetPerson,
+  mockPage,
+  mockRegisterSelectionContext,
+  mockSearchAssets,
+  mockSearchPerson,
+  mockSearchSmart,
+} = vi.hoisted(() => ({
+  mockAfterNavigate: vi.fn(),
+  mockAssetMultiSelectManager: {
+    selectionActive: false,
+    assets: [],
+    clear: vi.fn(),
+    isAllArchived: false,
+    isAllFavorite: false,
+    isAllUserOwned: true,
+    selectAssets: vi.fn(),
+  },
+  mockAuthManager: {
+    preferences: { tags: { enabled: true } },
+  },
+  mockFeatureFlagsManager: {
+    value: { smartSearch: false },
+  },
+  mockGlobalSearchManager: {
+    open: vi.fn(),
+  },
+  mockGetPerson: vi.fn(),
+  mockPage: {
+    url: new URL('https://gallery.test/search'),
+    route: { id: '/(user)/search/[[photos=photos]]/[[assetId=id]]' },
+    params: {},
+  },
+  mockRegisterSelectionContext: vi.fn(),
+  mockSearchAssets: vi.fn(),
+  mockSearchPerson: vi.fn(),
+  mockSearchSmart: vi.fn(),
+}));
+
+vi.mock('$app/navigation', async () => ({
+  ...(await import('#test/unit/mocks/app-navigation.ts')),
+
+  afterNavigate: mockAfterNavigate,
+  goto: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('$app/state', async () => ({
+  ...(await import('#test/unit/mocks/app-state.svelte.ts')),
+  page: mockPage,
+}));
+
+vi.mock('#lib/components/ActionMenuItem.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/OnEvents.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/shared-components/LoadingSpinner.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/shared-components/context-menu/ButtonContextMenu.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/shared-components/ControlAppBar.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/shared-components/gallery-viewer/GalleryViewer.svelte', async () => {
+  const { default: MockComponent } = await import('./mock-gallery-viewer.test-wrapper.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/AssetSelectControlBar.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/gallery/actions/ArchiveAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/ChangeDateAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/ChangeDescriptionAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/ChangeLocationAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/DeleteAssetsAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/DownloadAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/FavoriteAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/RotateAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/SetVisibilityAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/actions/TagAction.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/managers/asset-multi-select-manager.svelte.js', () => ({
+  assetMultiSelectManager: mockAssetMultiSelectManager,
+}));
+
+vi.mock('#lib/managers/auth-manager.svelte.js', () => ({ authManager: mockAuthManager }));
+
+vi.mock('#lib/managers/command-context-manager.svelte.js', () => ({
+  registerSelectionContext: mockRegisterSelectionContext,
+}));
+
+vi.mock('#lib/managers/feature-flags-manager.svelte.js', () => ({
+  featureFlagsManager: mockFeatureFlagsManager,
+}));
+
+vi.mock('#lib/managers/global-search-manager.svelte.js', () => ({
+  globalSearchManager: mockGlobalSearchManager,
+}));
+
+vi.mock('#lib/services/asset.service.js', () => ({
+  getAssetBulkActions: vi.fn(() => ({})),
+}));
+
+vi.mock('#lib/utils/navigation.js', { spy: true });
+
+vi.mock('#lib/utils/timeline-util.js', { spy: true });
+
+vi.mock('@immich/sdk', async () => {
+  const actual = await vi.importActual<typeof import('@immich/sdk')>('@immich/sdk');
+  return {
+    ...actual,
+    getPerson: mockGetPerson,
+    getTagById: vi.fn().mockResolvedValue({ value: 'Tag' }),
+    searchAssets: mockSearchAssets,
+    searchPerson: mockSearchPerson,
+    searchSmart: mockSearchSmart,
+  };
+});
+
+function makeAsset(overrides: Partial<AssetResponseDto> = {}): AssetResponseDto {
+  return {
+    id: 'asset-1',
+    ownerId: 'user-1',
+    visibility: AssetVisibility.Timeline,
+    isFavorite: false,
+    isTrashed: false,
+    fileCreatedAt: '2026-01-01T00:00:00.000Z',
+    localDateTime: '2026-01-01T00:00:00.000Z',
+    type: 'IMAGE',
+    ...overrides,
+  } as AssetResponseDto;
+}
+
+function renderPage() {
+  return render(TestWrapper as Component<{ component: typeof SearchPage; componentProps: Record<string, never> }>, {
+    component: SearchPage,
+    componentProps: {},
+  });
+}
+
+describe('Search page cmdk selection context', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAssetMultiSelectManager.selectionActive = false;
+    mockAssetMultiSelectManager.assets = [];
+    mockFeatureFlagsManager.value.smartSearch = false;
+    mockPage.url = new URL('https://gallery.test/search');
+    mockSearchAssets.mockResolvedValue({
+      albums: { items: [] },
+      assets: { items: [makeAsset()], nextPage: null },
+    });
+    mockGetPerson.mockResolvedValue({ name: 'Person' });
+    mockSearchPerson.mockResolvedValue([]);
+    mockSearchSmart.mockResolvedValue({
+      albums: { items: [] },
+      assets: { items: [], nextPage: null },
+    });
+  });
+
+  it('registers add-to-album and visible toolbar callbacks', async () => {
+    await renderPage();
+
+    expect(mockRegisterSelectionContext).toHaveBeenCalledOnce();
+    const options = mockRegisterSelectionContext.mock.calls[0][0];
+    expect(options.getAssets()).toBe(mockAssetMultiSelectManager.assets);
+    expect(options.canAddToAlbum()).toBe(true);
+    expect(options.getOnFavorite()).toEqual(expect.any(Function));
+    expect(options.getOnArchive()).toEqual(expect.any(Function));
+    expect(options.getOnDelete()).toEqual(expect.any(Function));
+    expect(options.getOnUndoDelete()).toEqual(expect.any(Function));
+    expect(options.getAddSelectedToCurrentSpace?.()).toBeUndefined();
+  });
+
+  it('removes archived rows when the active visibility filter excludes archived assets', async () => {
+    const query = encodeURIComponent(JSON.stringify({ visibility: AssetVisibility.Timeline }));
+    mockPage.url = new URL(`https://gallery.test/search?${QueryParameter.QUERY}=${query}`);
+
+    await renderPage();
+
+    await expect.element(page.getByTestId('asset-row-asset-1')).toBeInTheDocument();
+    const options = mockRegisterSelectionContext.mock.calls[0][0];
+
+    options.getOnArchive()(['asset-1'], AssetVisibility.Archive);
+
+    await expect.element(page.getByTestId('asset-row-asset-1')).not.toBeInTheDocument();
+  });
+
+  it('enables GalleryViewer grouping for legacy search result grids', async () => {
+    await renderPage();
+
+    await expect.element(page.getByTestId('gallery-viewer')).toHaveAttribute('data-enable-grouping', 'true');
+  });
+
+  // #830: "Show similar photos" on a photo shared through a Space returned nothing for a member
+  // who does not own it — the page searched only the caller's own (and partner) assets, so the
+  // space owner got a long list and every other member got zero. Global search on this page has to
+  // cover shared-space content the way the command palette already does (#894).
+  it('includes shared spaces when searching by a reference asset', async () => {
+    mockFeatureFlagsManager.value.smartSearch = true;
+    const query = encodeURIComponent(JSON.stringify({ queryAssetId: 'asset-1' }));
+    mockPage.url = new URL(`https://gallery.test/search?${QueryParameter.QUERY}=${query}`);
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(mockSearchSmart).toHaveBeenCalledWith({
+        smartSearchDto: expect.objectContaining({ queryAssetId: 'asset-1', withSharedSpaces: true }),
+      });
+    });
+  });
+
+  // A hand-typed or shared `/search?query=beach` is plain text, not the JSON the page writes itself.
+  // JSON.parse used to throw on it and blank the whole page.
+  it('treats a plain-text query parameter as a smart search instead of crashing', async () => {
+    mockFeatureFlagsManager.value.smartSearch = true;
+    mockPage.url = new URL(`https://gallery.test/search?${QueryParameter.QUERY}=beach`);
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(mockSearchSmart).toHaveBeenCalledWith({
+        smartSearchDto: expect.objectContaining({ query: 'beach' }),
+      });
+    });
+  });
+
+  it('treats non-object JSON in the query parameter as text', async () => {
+    mockFeatureFlagsManager.value.smartSearch = true;
+    mockPage.url = new URL(`https://gallery.test/search?${QueryParameter.QUERY}=42`);
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(mockSearchSmart).toHaveBeenCalledWith({
+        smartSearchDto: expect.objectContaining({ query: '42' }),
+      });
+    });
+  });
+
+  it('includes shared spaces for metadata searches', async () => {
+    const query = encodeURIComponent(JSON.stringify({ city: 'Berlin' }));
+    mockPage.url = new URL(`https://gallery.test/search?${QueryParameter.QUERY}=${query}`);
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(mockSearchAssets).toHaveBeenCalledWith({
+        metadataSearchDto: expect.objectContaining({ city: 'Berlin', withSharedSpaces: true }),
+      });
+    });
+  });
+
+  // The server rejects `spaceId` + `withSharedSpaces` together with a 400, so a space-scoped URL
+  // must not pick up the global default.
+  it('omits shared spaces when the search is already scoped to one space', async () => {
+    mockFeatureFlagsManager.value.smartSearch = true;
+    const query = encodeURIComponent(JSON.stringify({ query: 'beach', spaceId: 'space-1' }));
+    mockPage.url = new URL(`https://gallery.test/search?${QueryParameter.QUERY}=${query}`);
+
+    await renderPage();
+
+    await vi.waitFor(() => expect(mockSearchSmart).toHaveBeenCalled());
+    expect(mockSearchSmart.mock.calls[0][0].smartSearchDto).not.toHaveProperty('withSharedSpaces');
+  });
+
+  it('lets an explicit withSharedSpaces:false in the URL win over the default', async () => {
+    const query = encodeURIComponent(JSON.stringify({ city: 'Berlin', withSharedSpaces: false }));
+    mockPage.url = new URL(`https://gallery.test/search?${QueryParameter.QUERY}=${query}`);
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(mockSearchAssets).toHaveBeenCalledWith({
+        metadataSearchDto: expect.objectContaining({ withSharedSpaces: false }),
+      });
+    });
+  });
+
+  it('resolves scoped person filter chips from shared people search', async () => {
+    const query = encodeURIComponent(
+      JSON.stringify({ personIds: ['space-person:space-person-1'], withSharedSpaces: true }),
+    );
+    mockPage.url = new URL(`https://gallery.test/search?${QueryParameter.QUERY}=${query}`);
+    mockSearchPerson.mockResolvedValue([
+      {
+        id: 'space-person-1',
+        name: 'Pierre',
+        filterId: 'space-person:space-person-1',
+        primaryProfile: { type: 'space-person', id: 'space-person-1', spaceId: 'space-1' },
+      },
+    ]);
+
+    await renderPage();
+
+    await vi.waitFor(() => {
+      expect(mockSearchAssets).toHaveBeenCalledWith({
+        metadataSearchDto: expect.objectContaining({
+          personIds: ['space-person:space-person-1'],
+          withSharedSpaces: true,
+        }),
+      });
+    });
+    await expect.element(page.getByText('Pierre')).toBeInTheDocument();
+    await expect.element(page.getByText('withSharedSpaces')).not.toBeInTheDocument();
+    expect(mockGetPerson).not.toHaveBeenCalledWith({ id: 'space-person:space-person-1' });
+  });
+});

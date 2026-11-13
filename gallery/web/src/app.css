@@ -1,0 +1,234 @@
+@import 'tailwindcss';
+@import '@immich/ui/theme/default.css';
+@import './styles/gallery-theme.css';
+@source "../node_modules/@immich/ui";
+/* @import '../../../ui/packages/ui/dist/theme/default.css'; */
+
+@custom-variant dark (&:where(.dark, .dark *):not(.light));
+
+@theme inline {
+  --color-immich-primary: rgb(var(--immich-primary));
+  --color-immich-bg: rgb(var(--immich-bg));
+  --color-immich-fg: rgb(var(--immich-fg));
+  --color-immich-gray: rgb(var(--immich-gray));
+
+  --color-immich-dark-primary: rgb(var(--immich-dark-primary));
+  --color-immich-dark-bg: rgb(var(--immich-dark-bg));
+  --color-immich-dark-fg: rgb(var(--immich-dark-fg));
+  --color-immich-dark-gray: rgb(var(--immich-dark-gray));
+}
+
+@theme {
+  --font-sans: 'GoogleSans', sans-serif;
+  --font-mono: 'GoogleSansCode', monospace;
+
+  --color-logo-red: #fa2921;
+  --color-logo-pink: #ed79b5;
+  --color-logo-yellow: #ffb400;
+  --color-logo-blue: #1e83f7;
+  --color-logo-green: #18c249;
+
+  --spacing-18: 4.5rem;
+
+  --breakpoint-tall: 800px;
+  --breakpoint-2xl: 1535px;
+  --breakpoint-xl: 1279px;
+  --breakpoint-lg: 1023px;
+  --breakpoint-md: 767px;
+  --breakpoint-sm: 639px;
+  --breakpoint-sidebar: 850px;
+}
+
+/* cubic-bezier(1/3, 0, 2/3, 1), sampled every 1/6 */
+:root {
+  --mask-smoothstep:
+    black 0%, rgb(0 0 0 / 0.926) 17%, rgb(0 0 0 / 0.741) 33%, rgb(0 0 0 / 0.5) 50%, rgb(0 0 0 / 0.259) 67%,
+    rgb(0 0 0 / 0.074) 83%, transparent 100%;
+}
+
+@utility mask-smoothstep-to-bottom {
+  mask-image: linear-gradient(to bottom, var(--mask-smoothstep));
+}
+
+@utility mask-smoothstep-to-top {
+  mask-image: linear-gradient(to top, var(--mask-smoothstep));
+}
+
+@utility immich-form-input {
+  @apply bg-gray-100 ring-1 ring-gray-200 transition outline-none focus-within:ring-primary focus-within:ring-1 disabled:cursor-not-allowed dark:bg-gray-800 dark:ring-neutral-900 dark:focus-within:ring-primary flex w-full items-center rounded-lg disabled:bg-gray-300 disabled:text-dark dark:disabled:bg-gray-900 dark:disabled:text-gray-200 flex-1 py-2.5 text-base px-4;
+}
+
+@utility immich-form-label {
+  @apply font-medium text-gray-500 dark:text-gray-300;
+}
+
+@utility immich-scrollbar {
+  /* width */
+  scrollbar-width: thin;
+}
+
+@utility scrollbar-hidden {
+  /* Hidden scrollbar */
+  /* width */
+  scrollbar-width: none;
+}
+
+@utility scrollbar-stable {
+  scrollbar-gutter: stable both-edges;
+}
+
+@utility grid-auto-fit-* {
+  grid-template-columns: repeat(auto-fit, minmax(min(calc(var(--spacing) * --value(number)), 100%), 1fr));
+}
+
+@utility grid-auto-fill-* {
+  grid-template-columns: repeat(auto-fill, minmax(min(calc(var(--spacing) * --value(number)), 100%), 1fr));
+}
+
+@layer base {
+  :root {
+    /* light */
+    --immich-primary: 66 80 175;
+    --immich-bg: 255 255 255;
+    --immich-fg: 0 0 0;
+
+    /* dark */
+    --immich-dark-primary: 172 203 250;
+    --immich-dark-bg: 10 10 10;
+    --immich-dark-fg: 229 231 235;
+    --immich-dark-gray: 33 33 33;
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@layer utilities {
+  @font-face {
+    font-family: 'GoogleSans';
+    src: url('./lib/assets/fonts/GoogleSans/GoogleSans.ttf') format('truetype-variations');
+    font-weight: 410 900;
+    font-style: normal;
+    ascent-override: 106.25%;
+    size-adjust: 106.25%;
+  }
+
+  @font-face {
+    font-family: 'GoogleSansCode';
+    src: url('./lib/assets/fonts/GoogleSansCode/GoogleSansCode.ttf') format('truetype-variations');
+    font-weight: 1 900;
+    font-style: monospace;
+  }
+
+  :root {
+    font-family: var(--font-sans);
+    letter-spacing: 0.1px;
+
+    /* The top NavigationBar's own height, which UserPageLayout subtracts from the viewport to
+       size the page grid beneath it. Google Photos' bar is 3.5rem - a 48px search field with 4px
+       above and below - and ours holds that same field, but carries 4rem because it also owns the
+       8px gutter separating it from the content panel. The panel does not float below the navbar:
+       it starts at the navbar's bottom edge, and the navbar supplies that gap instead (see the
+       panel's `margin-block` in gallery-theme.css). Both surfaces paint --gallery-chrome, so the
+       seam between them is invisible and the user reads one band - which is why the field has to
+       be centred in 4rem. Centred in 3.5rem it sat 4px from the top of that band and 12px from
+       the bottom, visibly low. The md variant is held equal rather than dropped - the field and
+       the gutter are the same at every width, and the logo no longer sets the floor since it is
+       2.5rem on small screens too - so that the ~10 pages referencing it keep working and can
+       differ again later. */
+    --navbar-height: 4rem;
+    --navbar-height-md: 4rem;
+
+    /* Reserve for ControlAppBar - the absolutely-positioned bar that stands in for the navbar on
+       the album, person, partner and shared-link viewers, which render no NavigationBar at all.
+       It measures 80px, so this deliberately stays at the old navbar height rather than tracking
+       --navbar-height: the two shared one value until the navbar was thinned, and reusing it
+       would have slid every one of those pages' content up underneath the control bar. */
+    --control-bar-height: calc(4.5rem + 4px);
+    --control-bar-height-md: calc(4.5rem + 4px - 14px);
+  }
+
+  :root.dark {
+    color-scheme: dark;
+  }
+
+  :root:not(.dark) {
+    color-scheme: light;
+  }
+
+  html {
+    height: 100%;
+    width: 100%;
+  }
+
+  html::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  /* Track */
+  html::-webkit-scrollbar-track {
+    background-color: var(--immich-ui-light-100);
+    border-radius: 4px;
+  }
+
+  /* Handle */
+  html::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklab, var(--immich-ui-light-600) 40%, transparent);
+    border-radius: 4px;
+  }
+
+  /* Handle on hover */
+  html::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklab, var(--immich-ui-primary-500) 70%, transparent);
+  }
+
+  body {
+    margin: 0;
+    color: var(--immich-ui-dark);
+  }
+
+  body.asset-viewer-open {
+    background-color: black;
+  }
+
+  input:focus-visible {
+    outline-offset: 0px !important;
+    outline: none !important;
+  }
+
+  .text-white-shadow {
+    text-shadow:
+      0 0 4px rgba(0, 0, 0, 0.9),
+      0 1px 3px rgba(0, 0, 0, 0.8);
+  }
+
+  .icon-white-drop-shadow {
+    filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.8));
+  }
+}
+
+.maplibregl-popup {
+  .maplibregl-popup-tip {
+    @apply border-t-subtle! -translate-y-px;
+  }
+
+  .maplibregl-popup-content {
+    @apply bg-subtle rounded-lg;
+  }
+}
+
+/* cmdk palette progress stripe — shimmer animation used after the 200ms grace window.
+   The utility `animate-cmdk-shimmer` is referenced directly from global-search.svelte. */
+@keyframes cmdk-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+.animate-cmdk-shimmer {
+  animation: cmdk-shimmer 1.6s linear infinite;
+}

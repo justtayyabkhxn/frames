@@ -1,0 +1,811 @@
+<script lang="ts">
+  import { clickOutside } from '#lib/actions/click-outside.ts';
+  import { listNavigation } from '#lib/actions/list-navigation.ts';
+  import ImageThumbnail from '#lib/components/assets/thumbnail/ImageThumbnail.svelte';
+  import PersonSuggestionBanner from '#lib/components/faces-page/person-suggestion-banner.svelte';
+  import PeopleMergeSelector from '#lib/components/people/people-merge-selector.svelte';
+  import ControlAppBar from '#lib/components/shared-components/ControlAppBar.svelte';
+  import SelectionToolbar from '#lib/components/timeline/SelectionToolbar.svelte';
+  import Timeline from '#lib/components/timeline/Timeline.svelte';
+  import TimelineRouteGroupingBar from '#lib/components/timeline/TimelineRouteGroupingBar.svelte';
+  import { timeBeforeShowLoadingSpinner } from '#lib/constants.ts';
+  import { timelineGroupingProps } from '#lib/gallery/filtered-timeline/timeline-grouping.svelte.ts';
+  import PersonSuggestionReviewModal from '#lib/gallery/people/PersonSuggestionReviewModal.svelte';
+  import { confirmAndMergeSpacePerson, findSpacePersonNamed } from '#lib/gallery/people/space-person-name-merge.ts';
+  import { assetMultiSelectManager } from '#lib/managers/asset-multi-select-manager.svelte.ts';
+  import { authManager } from '#lib/managers/auth-manager.svelte.ts';
+  import { featureFlagsManager } from '#lib/managers/feature-flags-manager.svelte.ts';
+  import { TimelineManager } from '#lib/managers/timeline-manager/timeline-manager.svelte.ts';
+  import type { TimelineAsset } from '#lib/managers/timeline-manager/types.ts';
+  import PersonEditBirthDateModal from '#lib/modals/PersonEditBirthDateModal.svelte';
+  import RepresentativeFacePickerModal from '#lib/modals/RepresentativeFacePickerModal.svelte';
+  import { Route } from '#lib/route.ts';
+  import { locale } from '#lib/stores/preferences.store.ts';
+  import {
+    createCrossOwnerMergeHandlers,
+    runMergeWithCrossOwnerConfirmation,
+    runScopedMergeWithCrossOwnerConfirmation,
+  } from '#lib/utils/cross-owner-merge.ts';
+  import { getGlobalPersonThumbnailUrl, getSpacePersonThumbnailUrl } from '#lib/utils/global-person-route.ts';
+  import { handleError } from '#lib/utils/handle-error.ts';
+  import { getSpacePersonFaceThumbnailUrl } from '#lib/utils/people-utils.ts';
+  import { toScopedPersonRef as toPersonScopedRef } from '#lib/utils/scoped-person-ref.ts';
+  import {
+    RepresentativeFaceSource,
+    ScopedPersonProfileType,
+    SharedSpaceRole,
+    confirmSpacePersonFaceSuggestion,
+    detachScopedPerson,
+    dismissSpacePersonFaceSuggestion,
+    getSpacePeople,
+    getSpacePersonFaceSuggestions,
+    getSpacePersonFaces,
+    ignoreSpacePersonFaceSuggestion,
+    mergeSpacePeople,
+    searchPerson,
+    updateSpacePerson,
+    updateSpacePersonRepresentativeFace,
+    type PersonFaceResponseDto,
+    type PersonFaceSuggestionResponseDto,
+    type PersonResponseDto,
+    type PersonStatisticsResponseDto,
+    type ScopedPersonProfileRefDto,
+    type SharedSpaceMemberResponseDto,
+    type SharedSpacePersonResponseDto,
+  } from '@immich/sdk';
+  import { ContextMenuButton, LoadingSpinner, modalManager, toastManager, type ActionItem } from '@immich/ui';
+  import {
+    mdiAccountBoxOutline,
+    mdiAccountMultipleCheckOutline,
+    mdiArrowLeft,
+    mdiCalendarEditOutline,
+    mdiEyeOffOutline,
+  } from '@mdi/js';
+  import { DateTime } from 'luxon';
+  import { tick } from 'svelte';
+  import { t } from 'svelte-i18n';
+  import { goto, invalidateAll } from '$app/navigation';
+  import type { PageData } from './$types';
+
+  interface Props {
+    data: PageData;
+  }
+
+  let { data }: Props = $props();
+
+  const PAGE_SIZE = 100;
+
+  const space = $derived(data.space);
+  const members: SharedSpaceMemberResponseDto[] = $derived(data.members);
+  const routeStateKey = $derived(`${data.space.id}:${data.person.id}:${data.person.updatedAt}:${data.action ?? ''}`);
+
+  let timelineManager = $state<TimelineManager>() as TimelineManager;
+  const timelineGrouping = timelineGroupingProps(() => timelineManager);
+  let personOverride = $state<SharedSpacePersonResponseDto>();
+  let personOverrideKey = $state('');
+  const person = $derived(personOverrideKey === routeStateKey && personOverride ? personOverride : data.person);
+  let statisticsOverride = $state<PersonStatisticsResponseDto>();
+  let statisticsOverrideKey = $state('');
+  const statistics = $derived(
+    statisticsOverrideKey === routeStateKey && statisticsOverride ? statisticsOverride : data.statistics,
+  );
+  const previousRoute = $derived(data.previousRoute ?? `/spaces/${space.id}/people`);
+  const previousRouteParams = $derived(data.previousRoute ? { previousRoute: data.previousRoute } : undefined);
+  let isEditingName = $state(false);
+  let editedName = $state('');
+  let nameInput = $state<HTMLInputElement>();
+  let suggestedPeople: SharedSpacePersonResponseDto[] = $state([]);
+  let isSearchingPeople = $state(false);
+  let suggestionContainer: HTMLElement | undefined = $state();
+  let abortController: AbortController | null = null;
+  let loadingTimeout: NodeJS.Timeout | null = null;
+
+  type ScopedMergeCandidate = SharedSpacePersonResponseDto | PersonResponseDto;
+
+  let actionOverride = $state<string | null>();
+  let actionOverrideKey = $state('');
+  const action = $derived(actionOverrideKey === routeStateKey ? actionOverride : data.action);
+
+  const baseTimelineOptions = $derived({
+    spaceId: space.id,
+    spacePersonId: person.id,
+    withStacked: true,
+  });
+  const options = $derived({
+    ...baseTimelineOptions,
+    grouping: timelineGrouping.grouping,
+  });
+
+  const currentMember = $derived(members.find((member) => member.userId === authManager.user.id));
+  const isEditor = $derived(
+    currentMember?.role === SharedSpaceRole.Owner || currentMember?.role === SharedSpaceRole.Editor,
+  );
+  const getSpacePersonRoute = (personId: string) => Route.viewSpacePerson(space.id, personId, previousRouteParams);
+  let thumbnailRefresh = $state<string | null>(null);
+  const thumbnailUrl = $derived(getSpacePersonThumbnailUrl(person, thumbnailRefresh ?? person.updatedAt));
+  const suggestionPerson = $derived({ id: person.id, name: person.name } as PersonResponseDto);
+  let suggestionTotal = $state(0);
+  let suggestionPreviews = $state<PersonFaceSuggestionResponseDto[]>([]);
+
+  const setPerson = (updatedPerson: SharedSpacePersonResponseDto) => {
+    personOverride = updatedPerson;
+    personOverrideKey = routeStateKey;
+  };
+
+  const setStatistics = (updatedStatistics: PersonStatisticsResponseDto) => {
+    statisticsOverride = updatedStatistics;
+    statisticsOverrideKey = routeStateKey;
+  };
+
+  const setAction = (updatedAction: string | null) => {
+    actionOverride = updatedAction;
+    actionOverrideKey = routeStateKey;
+  };
+
+  const startEditingName = () => {
+    if (!isEditor) {
+      return;
+    }
+    editedName = person.name;
+    suggestedPeople = [];
+    isEditingName = true;
+    void tick().then(() => nameInput?.focus());
+  };
+
+  const cancelPreviousSearch = () => {
+    abortController?.abort();
+    abortController = null;
+    if (loadingTimeout) {
+      clearTimeout(loadingTimeout);
+      loadingTimeout = null;
+    }
+    isSearchingPeople = false;
+  };
+
+  const cancelEditingName = () => {
+    cancelPreviousSearch();
+    suggestedPeople = [];
+    editedName = person.name;
+    isEditingName = false;
+  };
+
+  const searchSpacePeople = async () => {
+    cancelPreviousSearch();
+    suggestedPeople = [];
+
+    if (editedName === '') {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => (isSearchingPeople = true), timeBeforeShowLoadingSpinner);
+    abortController = controller;
+    loadingTimeout = timeout;
+
+    try {
+      const people = await getSpacePeople(
+        { id: space.id, name: editedName, named: true, limit: 5 },
+        { signal: controller.signal },
+      );
+      suggestedPeople = people.filter((suggestedPerson) => suggestedPerson.id !== person.id);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      handleError(error, $t('errors.cant_search_people'));
+    } finally {
+      if (loadingTimeout === timeout) {
+        clearTimeout(timeout);
+        loadingTimeout = null;
+      }
+      if (abortController === controller) {
+        abortController = null;
+        isSearchingPeople = false;
+      }
+    }
+  };
+
+  const saveName = async () => {
+    if (!isEditingName) {
+      return;
+    }
+
+    isEditingName = false;
+    cancelPreviousSearch();
+    suggestedPeople = [];
+    if (editedName === person.name) {
+      return;
+    }
+
+    try {
+      // Typing a name the space already has is almost always the same identity, so offer the merge
+      // first and only rename when it is declined (#1100). A merge that was wanted but refused
+      // leaves the name alone: renaming then would create the duplicate.
+      if (editedName.trim()) {
+        const existingPerson = await findSpacePersonNamed(space.id, editedName, person.id);
+        if (existingPerson) {
+          const outcome = await mergeIntoSuggestedPerson(existingPerson);
+          if (outcome === 'failed') {
+            editedName = person.name;
+          }
+          if (outcome !== 'declined') {
+            return;
+          }
+        }
+      }
+
+      const updatedPerson = await updateSpacePerson({
+        id: space.id,
+        personId: person.id,
+        sharedSpacePersonUpdateDto: { name: editedName },
+      });
+      setPerson({ ...person, ...updatedPerson, name: updatedPerson.name ?? editedName });
+      toastManager.success($t('change_name_successfully'));
+    } catch (error) {
+      editedName = person.name;
+      handleError(error, $t('errors.unable_to_save_name'));
+    }
+  };
+
+  const selectSuggestedPerson = async (suggestedPerson: SharedSpacePersonResponseDto) => {
+    // Close the name editor before prompting: picking a suggestion means "merge", not "rename", and the
+    // prompt is portalled outside the header, so confirming it would otherwise register as the
+    // click-outside-to-save gesture and commit an unrelated rename alongside the merge (issue #859).
+    cancelEditingName();
+
+    try {
+      await mergeIntoSuggestedPerson(suggestedPerson);
+    } catch (error) {
+      handleError(error, $t('cannot_merge_people'));
+    }
+  };
+
+  const mergeIntoSuggestedPerson = async (suggestedPerson: SharedSpacePersonResponseDto) => {
+    const outcome = await confirmAndMergeSpacePerson({
+      spaceId: space.id,
+      sourceId: person.id,
+      targetId: suggestedPerson.id,
+    });
+    if (outcome === 'merged') {
+      // The current route person is the merge source and no longer exists; navigate
+      // straight to the surviving suggested person instead of reloading a deleted route.
+      await goto(getSpacePersonRoute(suggestedPerson.id), { replaceState: true });
+    }
+    return outcome;
+  };
+
+  const isSharedSpacePerson = (person: ScopedMergeCandidate): person is SharedSpacePersonResponseDto =>
+    'assetCount' in person;
+
+  // eslint-disable-next-line unicorn/no-unnecessary-parameters
+  const toScopedPersonRef = (person: ScopedMergeCandidate, fallbackSpaceId = space.id): ScopedPersonProfileRefDto => {
+    if (!isSharedSpacePerson(person)) {
+      return toPersonScopedRef(person);
+    }
+
+    return { type: ScopedPersonProfileType.SpacePerson, id: person.id, spaceId: person.spaceId ?? fallbackSpaceId };
+  };
+
+  const getMergeDisplayName = (person: ScopedMergeCandidate) => person.name || '';
+
+  const getMergeThumbnailUrl = (person: ScopedMergeCandidate): string =>
+    isSharedSpacePerson(person) ? getSpacePersonThumbnailUrl(person) : getGlobalPersonThumbnailUrl(person);
+
+  const loadMergePeople = () => getSpacePeople({ id: space.id, limit: PAGE_SIZE });
+
+  const mergePeople = async (targetPerson: ScopedMergeCandidate, selectedPeople: ScopedMergeCandidate[]) => {
+    const targetRef = toScopedPersonRef(targetPerson);
+    const sourceRefs = selectedPeople.map((person) => toScopedPersonRef(person));
+    const canUseSameSpaceMerge =
+      targetRef.type === ScopedPersonProfileType.SpacePerson &&
+      targetRef.spaceId === space.id &&
+      sourceRefs.every((ref) => ref.type === ScopedPersonProfileType.SpacePerson && ref.spaceId === space.id);
+
+    const committed = canUseSameSpaceMerge
+      ? await runMergeWithCrossOwnerConfirmation(
+          (confirmCrossOwner) =>
+            mergeSpacePeople({
+              id: space.id,
+              personId: targetRef.id,
+              sharedSpacePersonMergeDto: confirmCrossOwner
+                ? { ids: selectedPeople.map(({ id }) => id), confirmCrossOwner: true }
+                : { ids: selectedPeople.map(({ id }) => id) },
+            }),
+          createCrossOwnerMergeHandlers(),
+        )
+      : await runScopedMergeWithCrossOwnerConfirmation(
+          { target: targetRef, sources: sourceRefs },
+          createCrossOwnerMergeHandlers(),
+        );
+
+    if (!committed) {
+      // Cross-owner merge was blocked or the user declined the confirmation — nothing merged.
+      return;
+    }
+
+    toastManager.success($t('spaces_people_merged'));
+    // Return the surviving target, not the page's route person — after an auto-swap
+    // the route person is a merged-away source and would 404 on reload.
+    return targetPerson;
+  };
+
+  const handleBack = async () => {
+    if (assetMultiSelectManager.selectionActive) {
+      assetMultiSelectManager.clear();
+      return;
+    }
+
+    await goto(previousRoute);
+  };
+
+  const handleRemoveAssets = async (assetIds: string[]) => {
+    const removedAssetCount = new Set(assetIds).size;
+    timelineManager.removeAssets(assetIds);
+    setPerson({ ...person, assetCount: Math.max(0, person.assetCount - removedAssetCount) });
+    setStatistics({ ...statistics, assets: Math.max(0, statistics.assets - removedAssetCount) });
+    await invalidateAll();
+  };
+
+  // Mirrors the space timeline page's `handleSetVisibility`: moving assets to/from the locked
+  // folder takes them out of this (non-locked) timeline view. It isn't a space-membership
+  // change, so it doesn't touch the person's/space's asset count.
+  const handleSetVisibility = (assetIds: string[]) => {
+    timelineManager.removeAssets(assetIds);
+    assetMultiSelectManager.clear();
+  };
+
+  // DeleteAssets already performed the server-side trash before calling this. The space
+  // timeline page's equivalent handler is view-update-only because that page has an
+  // `<OnEvents onAssetsDelete={refreshSpace} />` websocket listener that re-fetches
+  // server-truth counts after a trash. This page has no such wiring, so — unlike that page —
+  // we also force a data reload here to keep the header's asset/face counts in sync with the
+  // server (rather than guessing a local decrement, since it isn't clear the server excludes
+  // trashed assets from these counts).
+  const handleAssetDelete = (assetIds: string[]) => {
+    timelineManager.removeAssets(assetIds);
+    void invalidateAll();
+  };
+
+  // Mirrors the space timeline page's `handleUndoAssetDelete`. There's no websocket event for
+  // restore, so re-add the assets to the local view directly; no count refresh is needed since
+  // undoing a delete doesn't change space membership either.
+  const handleUndoAssetDelete = (assets: TimelineAsset[]) => {
+    timelineManager.upsertAssets(assets);
+  };
+
+  async function closeMergeFlow() {
+    setAction(null);
+    if (data.action === 'merge') {
+      await goto(getSpacePersonRoute(person.id), { replaceState: true });
+    }
+  }
+
+  async function handleMergeComplete(updatedPerson: ScopedMergeCandidate) {
+    setAction(null);
+
+    const targetRef = toScopedPersonRef(updatedPerson);
+    const targetIsCurrentSpacePerson =
+      targetRef.type === ScopedPersonProfileType.SpacePerson &&
+      (targetRef.spaceId ?? space.id) === space.id &&
+      targetRef.id === person.id;
+
+    if (targetIsCurrentSpacePerson) {
+      // The route person survived as the merge target — refresh it in place.
+      if (isSharedSpacePerson(updatedPerson)) {
+        setPerson(updatedPerson);
+      }
+      await invalidateAll();
+      return;
+    }
+
+    // The route person was a merged-away source; navigate to the surviving target
+    // instead of reloading a deleted route (which 400s with "Person not found").
+    const destination =
+      targetRef.type === ScopedPersonProfileType.SpacePerson
+        ? Route.viewSpacePerson(targetRef.spaceId ?? space.id, targetRef.id, previousRouteParams)
+        : Route.viewPerson({ id: targetRef.id }, previousRouteParams);
+    await goto(destination, { replaceState: true });
+  }
+
+  async function openBirthDateModal() {
+    await modalManager.show(PersonEditBirthDateModal, {
+      birthDate: person.birthDate,
+      onSave: async (birthDate) => {
+        try {
+          const updatedPerson = await updateSpacePerson({
+            id: space.id,
+            personId: person.id,
+            sharedSpacePersonUpdateDto: { birthDate },
+          });
+          setPerson({ ...person, ...updatedPerson, birthDate: updatedPerson.birthDate ?? birthDate });
+          toastManager.success($t('date_of_birth_saved'));
+          return true;
+        } catch (error) {
+          handleError(error, $t('errors.unable_to_save_date_of_birth'));
+          return false;
+        }
+      },
+    });
+  }
+
+  async function openRepresentativeFacePicker() {
+    const updated = await modalManager.show(RepresentativeFacePickerModal, {
+      title: $t('select_representative_face'),
+      loadFaces: ({ page, size }: { page: number; size: number }) =>
+        getSpacePersonFaces({ id: space.id, personId: person.id, page, size }),
+      updateFace: async (faceId: string) => {
+        const updatedPerson = await updateSpacePersonRepresentativeFace({
+          id: space.id,
+          personId: person.id,
+          spaceRepresentativeFaceUpdateDto: { assetFaceId: faceId },
+        });
+        setPerson({ ...person, ...updatedPerson });
+      },
+      resetFace:
+        person.representativeFaceSource === RepresentativeFaceSource.Manual
+          ? async () => {
+              const updatedPerson = await updateSpacePersonRepresentativeFace({
+                id: space.id,
+                personId: person.id,
+                spaceRepresentativeFaceUpdateDto: { assetFaceId: null },
+              });
+              setPerson({ ...person, ...updatedPerson });
+            }
+          : undefined,
+      getThumbnailUrl: (face: PersonFaceResponseDto) =>
+        getSpacePersonFaceThumbnailUrl(space.id, person.id, face.id, person.updatedAt),
+      canUpdate: isEditor,
+    });
+
+    if (updated) {
+      await invalidateAll();
+    }
+  }
+
+  async function loadSuggestionSummary(spaceId = space.id, personId = person.id) {
+    try {
+      const response = await getSpacePersonFaceSuggestions({ id: spaceId, personId, page: 1, size: 5 });
+      if (spaceId !== space.id || personId !== person.id) {
+        return;
+      }
+      suggestionTotal = response.total;
+      suggestionPreviews = response.items;
+    } catch {
+      if (spaceId !== space.id || personId !== person.id) {
+        return;
+      }
+      suggestionTotal = 0;
+      suggestionPreviews = [];
+    }
+  }
+
+  // F24/S11b: these endpoints answer 200 with `{ acted }` — the signal is in the body because
+  // `oazapfts.ok()` discards the status code for every 2xx. They pass straight through to the modal.
+
+  async function openSuggestionReview() {
+    const currentSpaceId = space.id;
+    const currentPersonId = person.id;
+    const currentPerson = suggestionPerson;
+    const currentThumbnailUrl = thumbnailUrl;
+
+    const result = await modalManager.show(PersonSuggestionReviewModal, {
+      person: currentPerson,
+      referenceThumbnailUrl: currentThumbnailUrl,
+      loadPage: ({ page, size }: { page: number; size: number }) =>
+        getSpacePersonFaceSuggestions({ id: currentSpaceId, personId: currentPersonId, page, size }),
+      confirm: (assetFaceId: string) =>
+        confirmSpacePersonFaceSuggestion({ id: currentSpaceId, personId: currentPersonId, assetFaceId }),
+      dismiss: (assetFaceId: string) =>
+        dismissSpacePersonFaceSuggestion({ id: currentSpaceId, personId: currentPersonId, assetFaceId }),
+      ignore: (assetFaceId: string) =>
+        ignoreSpacePersonFaceSuggestion({ id: currentSpaceId, personId: currentPersonId, assetFaceId }),
+    });
+
+    await loadSuggestionSummary(currentSpaceId, currentPersonId);
+    if (result && result.confirmed > 0) {
+      thumbnailRefresh = Date.now().toString();
+      await invalidateAll();
+    }
+  }
+
+  async function handleHidePerson() {
+    try {
+      await updateSpacePerson({
+        id: space.id,
+        personId: person.id,
+        sharedSpacePersonUpdateDto: { isHidden: true },
+      });
+      toastManager.primary($t('changed_visibility_successfully'));
+      await goto(`/spaces/${space.id}/people`);
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_hide_person'));
+    }
+  }
+
+  async function handleDetachProfile() {
+    const isConfirm = await modalManager.showDialog({ prompt: $t('separate_from_grouped_person_prompt') });
+    if (!isConfirm) {
+      return;
+    }
+
+    try {
+      await detachScopedPerson({
+        detachScopedPersonDto: {
+          profile: { type: ScopedPersonProfileType.SpacePerson, id: person.id, spaceId: space.id },
+        },
+      });
+      toastManager.success($t('separate_from_grouped_person'));
+      await invalidateAll();
+    } catch (error) {
+      handleError(error, $t('spaces_error_merging_people'));
+    }
+  }
+
+  const actionItems = $derived.by(() => {
+    const items: ActionItem[] = [];
+
+    if (isEditor) {
+      items.push(
+        {
+          title: $t('select_representative_face'),
+          icon: mdiAccountBoxOutline,
+          onAction: () => void openRepresentativeFacePicker(),
+        },
+        {
+          title: $t('set_date_of_birth'),
+          icon: mdiCalendarEditOutline,
+          onAction: () => void openBirthDateModal(),
+        },
+        {
+          title: $t('hide_person'),
+          icon: mdiEyeOffOutline,
+          $if: () => !person.isHidden,
+          onAction: () => void handleHidePerson(),
+        },
+        {
+          title: $t('merge_people'),
+          icon: mdiAccountMultipleCheckOutline,
+          onAction: () => setAction('merge'),
+        },
+        {
+          title: $t('separate_from_grouped_person'),
+          icon: mdiAccountMultipleCheckOutline,
+          onAction: () => void handleDetachProfile(),
+        },
+      );
+    }
+
+    return items;
+  });
+
+  $effect(() => {
+    const currentSpaceId = space.id;
+    const currentPersonId = person.id;
+    thumbnailRefresh = null;
+    suggestionTotal = 0;
+    suggestionPreviews = [];
+    void loadSuggestionSummary(currentSpaceId, currentPersonId);
+  });
+</script>
+
+<main
+  class="relative z-0 flex h-dvh flex-col overflow-hidden px-2 pt-(--control-bar-height) md:px-6 md:pt-(--control-bar-height-md)"
+>
+  <!-- Sticky grouping switcher: lives outside the scrolling timeline so it stays visible (see Tags).
+       mt-12 clears the taller ControlAppBar, which exceeds the --control-bar-height padding reserve. -->
+  <TimelineRouteGroupingBar
+    {...timelineGrouping.barProps}
+    hidden={assetMultiSelectManager.selectionActive || action === 'merge'}
+    class="mt-12 shrink-0"
+  />
+  <div class="relative min-h-0 flex-1">
+    {#key person.id}
+      <Timeline
+        enableRouting={true}
+        bind:timelineManager
+        {options}
+        assetInteraction={assetMultiSelectManager}
+        onEscape={handleBack}
+        spaceId={space.id}
+        space={{ id: space.id, canWrite: isEditor }}
+        {...timelineGrouping.timelineProps}
+      >
+        <div
+          class="relative p-4 pt-12 sm:px-6"
+          use:clickOutside={{
+            onOutclick: () => void saveName(),
+            onEscape: cancelEditingName,
+          }}
+          use:listNavigation={suggestionContainer}
+        >
+          <div class="flex flex-wrap items-center gap-4" data-testid="person-timeline-header">
+            <section class="flex w-fit place-items-center border-black" data-testid="person-timeline-identity">
+              {#if isEditor}
+                <button
+                  type="button"
+                  class="relative flex items-center justify-center text-start"
+                  aria-label={$t('edit_name')}
+                  onclick={startEditingName}
+                >
+                  <ImageThumbnail
+                    circle
+                    shadow
+                    url={thumbnailUrl}
+                    altText={person.name}
+                    widthStyle="3.375rem"
+                    heightStyle="3.375rem"
+                  />
+                </button>
+              {:else}
+                <div class="relative flex items-center justify-center">
+                  <ImageThumbnail
+                    circle
+                    shadow
+                    url={thumbnailUrl}
+                    altText={person.name}
+                    widthStyle="3.375rem"
+                    heightStyle="3.375rem"
+                  />
+                </div>
+              {/if}
+              <div class="flex flex-col justify-center px-4 text-start text-primary">
+                {#if isEditingName}
+                  <input
+                    bind:this={nameInput}
+                    bind:value={editedName}
+                    class="w-40 rounded-lg bg-gray-100 px-2 py-1 font-medium text-primary outline-hidden focus:ring-2 focus:ring-immich-primary sm:w-72 dark:bg-immich-dark-gray dark:focus:ring-immich-dark-primary"
+                    placeholder={$t('add_a_name')}
+                    aria-label={$t('edit_name')}
+                    oninput={() => void searchSpacePeople()}
+                    onkeydown={(event) => {
+                      if (event.key === 'Enter') {
+                        void saveName();
+                      } else if (event.key === 'Escape') {
+                        cancelEditingName();
+                      }
+                    }}
+                  />
+                {:else if isEditor}
+                  <button
+                    type="button"
+                    class="w-40 truncate text-start font-medium"
+                    aria-label={$t('edit_name')}
+                    onclick={startEditingName}
+                  >
+                    {person.name || $t('add_a_name')}
+                  </button>
+                {:else}
+                  <p class="w-40 truncate font-medium">{person.name || $t('add_a_name')}</p>
+                {/if}
+                <p class="text-sm text-gray-500 dark:text-gray-400">
+                  {$t('assets_count', { values: { count: statistics.assets } })}
+                </p>
+                {#if featureFlagsManager.value.peopleStatistics}
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {$t('faces_count', { values: { count: statistics.faces } })}
+                  </p>
+                {/if}
+                {#if person.birthDate}
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {$t('person_birthdate', {
+                      values: {
+                        date: DateTime.fromISO(person.birthDate).toLocaleString(
+                          {
+                            month: 'numeric',
+                            day: 'numeric',
+                            year: 'numeric',
+                          },
+                          { locale: $locale },
+                        ),
+                      },
+                    })}
+                  </p>
+                {/if}
+              </div>
+            </section>
+          </div>
+          {#if isEditingName}
+            <div class="absolute z-1 w-64 sm:w-96">
+              {#if isSearchingPeople}
+                <div
+                  class="flex h-14 place-items-center rounded-b-lg border border-gray-400 bg-gray-200 p-2 dark:border-immich-dark-gray dark:bg-gray-700"
+                >
+                  <div class="flex w-full place-items-center">
+                    <LoadingSpinner />
+                  </div>
+                </div>
+              {:else}
+                <div bind:this={suggestionContainer}>
+                  {#each suggestedPeople as suggestedPerson, index (suggestedPerson.id)}
+                    <button
+                      type="button"
+                      class="flex h-14 w-full place-items-center border border-gray-200 bg-gray-100 p-2 hover:bg-gray-300 focus:bg-gray-300 dark:border-immich-dark-gray dark:bg-gray-700 hover:dark:bg-[#232932] focus:dark:bg-[#232932] {index ===
+                      suggestedPeople.length - 1
+                        ? 'rounded-b-lg border-b'
+                        : ''}"
+                      aria-label={suggestedPerson.name}
+                      onclick={() => void selectSuggestedPerson(suggestedPerson)}
+                    >
+                      <ImageThumbnail
+                        circle
+                        shadow
+                        url={getSpacePersonThumbnailUrl(suggestedPerson)}
+                        altText={suggestedPerson.name}
+                        widthStyle="2rem"
+                        heightStyle="2rem"
+                      />
+                      <p class="ms-4 text-gray-700 dark:text-gray-100">{suggestedPerson.name}</p>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+
+        {#if isEditor}
+          <!-- Defence in depth, not the primary gate: the server already returns an empty page (`total: 0`)
+               to members below editor (loadSuggestionSummary above), which is what actually keeps this
+               hidden from viewers today. This client-side check exists so that a future relaxation of that
+               read gate ("let viewers see what is pending") does not also silently expose the review
+               action — it must be relaxed here explicitly, not by accident. -->
+          <PersonSuggestionBanner
+            person={suggestionPerson}
+            snoozeId={person.id}
+            total={suggestionTotal}
+            previews={suggestionPreviews}
+            referenceThumbnailUrl={thumbnailUrl}
+            onReview={openSuggestionReview}
+          />
+        {/if}
+
+        {#snippet empty()}
+          <div class="mx-auto max-w-md py-16 text-center">
+            <p class="text-gray-500 dark:text-gray-400">{$t('spaces_no_person_assets')}</p>
+          </div>
+        {/snippet}
+      </Timeline>
+    {/key}
+  </div>
+</main>
+
+<header>
+  {#if assetMultiSelectManager.selectionActive}
+    <SelectionToolbar
+      {timelineManager}
+      assetInteraction={assetMultiSelectManager}
+      space={{ id: space.id, canWrite: isEditor, members }}
+      downloadFilename={`${person.name || space.name || 'immich'}.zip`}
+      onRemove={handleRemoveAssets}
+      onFavorite={(ids, isFavorite) => timelineManager.update(ids, (asset) => (asset.isFavorite = isFavorite))}
+      onArchive={(ids, visibility) => timelineManager.update(ids, (asset) => (asset.visibility = visibility))}
+      onVisibilitySet={handleSetVisibility}
+      onAssetDelete={handleAssetDelete}
+      onUndoDelete={handleUndoAssetDelete}
+    />
+  {:else}
+    <ControlAppBar backIcon={mdiArrowLeft} onClose={handleBack}>
+      {#snippet trailing()}
+        {#if isEditor && action !== 'merge'}
+          <ContextMenuButton items={actionItems} aria-label={$t('show_person_options')} />
+        {/if}
+      {/snippet}
+    </ControlAppBar>
+  {/if}
+</header>
+
+{#if isEditor && action === 'merge'}
+  <PeopleMergeSelector
+    {person}
+    getDisplayName={getMergeDisplayName}
+    getThumbnailUrl={getMergeThumbnailUrl}
+    loadPeople={loadMergePeople}
+    {mergePeople}
+    searchPeople={(name) => searchPerson({ name, withHidden: true, withSharedSpaces: true })}
+    onBack={() => void closeMergeFlow()}
+    onMerge={(mergedPerson) => void handleMergeComplete(mergedPerson)}
+    showSimilaritySort={false}
+    loadErrorMessage={$t('spaces_error_loading_people')}
+    mergeErrorMessage={$t('spaces_error_merging_people')}
+  />
+{/if}

@@ -23,3 +23,11 @@ __pycache__/
 *.suo
 .impeccable/
 .marginalia
+
+# Gallery web app: installed packages and build output (standalone/build-gallery.mjs)
+gallery/**/node_modules/
+gallery/web/build/
+gallery/web/.svelte-kit/
+gallery/packages/sdk/build/
+gallery/i18n/merged/
+.superpowers/

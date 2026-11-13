@@ -1,0 +1,145 @@
+<script lang="ts">
+  import { shortcuts, type ShortcutOptions } from '#lib/actions/shortcut.ts';
+  import {
+    setFocusToAsset as setFocusAssetInit,
+    setFocusTo as setFocusToInit,
+  } from '#lib/components/timeline/actions/focus-actions.ts';
+  import type { AssetMultiSelectManager } from '#lib/managers/asset-multi-select-manager.svelte.ts';
+  import { assetViewerManager } from '#lib/managers/asset-viewer-manager.svelte.ts';
+  import { featureFlagsManager } from '#lib/managers/feature-flags-manager.svelte.ts';
+  import { TimelineManager } from '#lib/managers/timeline-manager/timeline-manager.svelte.ts';
+  import type { TimelineAsset } from '#lib/managers/timeline-manager/types.ts';
+  import AssetDeleteConfirmModal from '#lib/modals/AssetDeleteConfirmModal.svelte';
+  import NavigateToDateModal from '#lib/modals/NavigateToDateModal.svelte';
+  import ShortcutsModal from '#lib/modals/ShortcutsModal.svelte';
+  import { toggleFavoriteAssets } from '#lib/services/asset.service.ts';
+  import { handleStack } from '#lib/services/stack.service.ts';
+  import { keyboardManager } from '#lib/stores/keyboard-manager.svelte.ts';
+  import { showDeleteModal } from '#lib/stores/preferences.store.ts';
+  import { searchStore } from '#lib/stores/search.svelte.ts';
+  import { handlePromiseError } from '#lib/utils.ts';
+  import { deleteAssets } from '#lib/utils/actions.ts';
+  import { selectAllAssets } from '#lib/utils/asset-utils.ts';
+  import { isModalOpen, modalManager } from '@immich/ui';
+
+  type Props = {
+    timelineManager: TimelineManager;
+    assetInteraction: AssetMultiSelectManager;
+    onEscape?: () => void;
+    scrollToAsset: (asset: TimelineAsset) => boolean;
+  };
+
+  let { timelineManager = $bindable(), assetInteraction, onEscape, scrollToAsset }: Props = $props();
+
+  const trashOrDelete = async (forceRequested?: boolean) => {
+    const force = forceRequested || !featureFlagsManager.value.trash;
+    const selectedAssets = assetInteraction.assets;
+
+    if ($showDeleteModal && force) {
+      const confirmed = await modalManager.show(AssetDeleteConfirmModal, { size: selectedAssets.length });
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    await deleteAssets(
+      force,
+      (assetIds) => timelineManager.removeAssets(assetIds),
+      selectedAssets,
+      force ? undefined : (assets) => timelineManager.upsertAssets(assets),
+    );
+    assetInteraction.clear();
+  };
+
+  const onDelete = () => {
+    const hasTrashedAsset = assetInteraction.assets.some((asset) => asset.isTrashed);
+    handlePromiseError(trashOrDelete(hasTrashedAsset));
+  };
+
+  const onStackAssets = async () => {
+    await handleStack(assetInteraction.assets.map((asset) => asset.id));
+    onEscape?.();
+  };
+
+  const toggleFavoriteSelected = async () => {
+    const allAssets = assetInteraction.assets;
+    const isFavorite = allAssets.some((a) => !a.isFavorite);
+    const assetsToUpdate = allAssets.filter((asset) => asset.isFavorite !== isFavorite);
+    await toggleFavoriteAssets(assetsToUpdate, isFavorite);
+    assetInteraction.clear();
+  };
+
+  const onSelectStart = (e: Event) => {
+    if (!searchStore.isSearchEnabled && assetInteraction.selectionActive && keyboardManager.shift) {
+      e.preventDefault();
+    }
+  };
+
+  const isEmpty = $derived(timelineManager.isInitialized && timelineManager.months.length === 0);
+  let isShortcutModalOpen = false;
+
+  const handleOpenShortcutModal = async () => {
+    if (isShortcutModalOpen) {
+      return;
+    }
+
+    isShortcutModalOpen = true;
+    await modalManager.show(ShortcutsModal, {});
+    isShortcutModalOpen = false;
+  };
+
+  $effect(() => {
+    if (isEmpty) {
+      assetInteraction.clear();
+    }
+  });
+
+  const setFocusTo = setFocusToInit.bind(undefined, scrollToAsset, timelineManager);
+  const setFocusAsset = setFocusAssetInit.bind(undefined, scrollToAsset);
+
+  const handleOpenDateModal = async () => {
+    const asset = await modalManager.show(NavigateToDateModal, { timelineManager });
+    if (asset) {
+      setFocusAsset(asset);
+    }
+  };
+
+  const shortcutList = $derived.by(() => {
+    if (searchStore.isSearchEnabled || assetViewerManager.isViewing || isModalOpen()) {
+      return [];
+    }
+
+    const shortcuts: ShortcutOptions[] = [
+      { shortcut: { key: '?', shift: true }, onShortcut: handleOpenShortcutModal },
+      { shortcut: { key: 'A', ctrl: true }, onShortcut: () => selectAllAssets(timelineManager, assetInteraction) },
+      { shortcut: { key: 'ArrowRight' }, onShortcut: () => setFocusTo('earlier', 'asset') },
+      { shortcut: { key: 'ArrowLeft' }, onShortcut: () => setFocusTo('later', 'asset') },
+      { shortcut: { key: 'D' }, onShortcut: () => setFocusTo('earlier', 'day') },
+      { shortcut: { key: 'M' }, onShortcut: () => setFocusTo('earlier', 'month') },
+      { shortcut: { key: 'M', shift: true }, onShortcut: () => setFocusTo('later', 'month') },
+      { shortcut: { key: 'Y' }, onShortcut: () => setFocusTo('earlier', 'year') },
+      { shortcut: { key: 'Y', shift: true }, onShortcut: () => setFocusTo('later', 'year') },
+      { shortcut: { key: 'G' }, onShortcut: handleOpenDateModal },
+    ];
+    if (onEscape) {
+      shortcuts.push({ shortcut: { key: 'Escape' }, onShortcut: onEscape });
+    }
+
+    if (assetInteraction.selectionActive) {
+      shortcuts.push(
+        { shortcut: { key: 'Delete' }, onShortcut: onDelete },
+        { shortcut: { key: 'Delete', shift: true }, onShortcut: () => trashOrDelete(true) },
+        { shortcut: { key: 'D', ctrl: true }, onShortcut: () => assetInteraction.clear() },
+        { shortcut: { key: 's' }, onShortcut: () => onStackAssets() },
+        { shortcut: { key: 'f' }, onShortcut: () => toggleFavoriteSelected() },
+      );
+    } else {
+      // conflicting shortcuts
+      shortcuts.push({ shortcut: { key: 'D', shift: true }, onShortcut: () => setFocusTo('later', 'day') });
+    }
+
+    return shortcuts;
+  });
+</script>
+
+<svelte:document onselectstart={onSelectStart} use:shortcuts={shortcutList} />

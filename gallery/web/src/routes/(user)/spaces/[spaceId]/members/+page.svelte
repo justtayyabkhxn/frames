@@ -1,0 +1,150 @@
+<script lang="ts">
+  import UserAvatar from '#lib/components/shared-components/UserAvatar.svelte';
+  import RoleBadge from '#lib/components/spaces/role-badge.svelte';
+  import SpaceMemberPermissionSettings from '#lib/gallery/components/spaces/space-member-permission-settings.svelte';
+  import { showAddSpaceMembersModal } from '#lib/gallery/spaces/add-space-members.ts';
+  import { formatTimeAgo } from '#lib/gallery/utils/time-ago.ts';
+  import { authManager } from '#lib/managers/auth-manager.svelte.ts';
+  import { getAssetMediaUrl } from '#lib/utils.ts';
+  import { handleError } from '#lib/utils/handle-error.ts';
+  import {
+    SharedSpaceRole,
+    UserAvatarColor,
+    removeMember,
+    updateMember,
+    updateSpace,
+    type SharedSpaceMemberResponseDto,
+    type SharedSpaceUpdateDto,
+  } from '@immich/sdk';
+  import { Button, Field, Select, modalManager, type SelectOption } from '@immich/ui';
+  import { mdiAccountPlusOutline } from '@mdi/js';
+  import { t } from 'svelte-i18n';
+  import { invalidateAll } from '$app/navigation';
+  import type { PageData } from './$types';
+
+  let { data }: { data: PageData } = $props();
+  const space = $derived(data.space);
+  const members = $derived(data.members);
+  const currentMember = $derived(members.find((m) => m.userId === authManager.user.id));
+  const isOwner = $derived(currentMember?.role === SharedSpaceRole.Owner);
+
+  // An absent memberManagement block (older server) falls back to today's rule: owners only, no owner controls.
+  const canAddMembers = $derived(space.memberManagement?.canAddMembers ?? isOwner);
+  const canChangeRoles = $derived(space.memberManagement?.canChangeRoles ?? isOwner);
+
+  const handleSettingsChange = async (dto: SharedSpaceUpdateDto) => {
+    try {
+      await updateSpace({ id: space.id, sharedSpaceUpdateDto: dto });
+      await invalidateAll();
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_update_space'));
+    }
+  };
+
+  const toAvatarUser = (m: SharedSpaceMemberResponseDto) => ({
+    id: m.userId,
+    name: m.name,
+    email: m.email,
+    profileImagePath: m.profileImagePath ?? '',
+    avatarColor: (m.avatarColor as UserAvatarColor) ?? UserAvatarColor.Primary,
+    profileChangedAt: m.profileChangedAt ?? '',
+  });
+
+  async function handleAddMember() {
+    const added = await showAddSpaceMembersModal(
+      space.id,
+      members.map((m) => m.userId),
+    );
+    if (added.length > 0) {
+      await invalidateAll();
+    }
+  }
+
+  async function handleRoleChange(member: SharedSpaceMemberResponseDto, newRole: SharedSpaceRole | 'remove') {
+    if (newRole === 'remove') {
+      const confirmed = await modalManager.showDialog({
+        prompt: $t('spaces_remove_member_confirmation', { values: { name: member.name } }),
+        title: $t('spaces_remove_member'),
+      });
+      if (!confirmed) {
+        return;
+      }
+      try {
+        await removeMember({ id: space.id, userId: member.userId });
+        await invalidateAll();
+      } catch (error) {
+        handleError(error, $t('errors.error_removing_member'));
+      }
+      return;
+    }
+    try {
+      await updateMember({ id: space.id, userId: member.userId, sharedSpaceMemberUpdateDto: { role: newRole } });
+      await invalidateAll();
+    } catch (error) {
+      handleError(error, $t('errors.error_updating_member_role'));
+    }
+  }
+</script>
+
+<div class="mx-auto w-full max-w-3xl p-4">
+  <div class="mb-3 flex items-center justify-between">
+    <h2 class="text-base font-semibold">{$t('members')} ({members.length})</h2>
+    {#if canAddMembers}
+      <Button size="small" leadingIcon={mdiAccountPlusOutline} onclick={handleAddMember} data-testid="members-invite">
+        {$t('spaces_add_member')}
+      </Button>
+    {/if}
+  </div>
+
+  {#if isOwner && space.memberManagement}
+    <SpaceMemberPermissionSettings {space} onChange={handleSettingsChange} />
+  {/if}
+
+  <div data-testid="member-list" class="rounded-xl border border-gray-200 dark:border-gray-800">
+    {#each members as member (member.userId)}
+      <div class="border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-gray-800/50">
+        <div class="flex items-center gap-3">
+          <UserAvatar user={toAvatarUser(member)} size="sm" />
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-medium">{member.name}</p>
+            <p class="truncate text-xs text-gray-500">{member.email}</p>
+          </div>
+          {#if canChangeRoles && member.role !== 'owner' && member.userId !== currentMember?.userId}
+            <Field class="w-28 shrink-0">
+              <Select
+                value={member.role as string as SharedSpaceRole}
+                options={[
+                  { label: $t('role_editor'), value: SharedSpaceRole.Editor },
+                  { label: $t('role_viewer'), value: SharedSpaceRole.Viewer },
+                  ...(isOwner ? [{ label: $t('remove'), value: 'remove' }] : []),
+                ] as SelectOption<SharedSpaceRole | 'remove'>[]}
+                onChange={(value) => void handleRoleChange(member, value)}
+              />
+            </Field>
+          {:else}
+            <RoleBadge role={member.role} spaceColor={space.color} size="sm" />
+          {/if}
+        </div>
+        {#if (member.contributionCount ?? 0) > 0}
+          <div class="mt-2 flex items-center gap-2.5">
+            {#if member.recentAssetId}
+              <img
+                alt=""
+                src={getAssetMediaUrl({ id: member.recentAssetId })}
+                class="size-12 rounded-lg object-cover"
+                loading="lazy"
+                draggable="false"
+              />
+            {/if}
+            <div class="text-xs text-gray-500">
+              <span>{member.contributionCount} {$t('photos')}</span>
+              {#if member.lastActiveAt}
+                <span class="mx-0.5">·</span><span>{formatTimeAgo(member.lastActiveAt)}</span>
+              {/if}
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/each}
+  </div>
+</div>

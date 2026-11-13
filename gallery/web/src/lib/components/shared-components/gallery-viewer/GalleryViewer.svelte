@@ -1,0 +1,578 @@
+<script lang="ts">
+  import { shortcuts, type ShortcutOptions } from '#lib/actions/shortcut.ts';
+  import type { AssetCursor } from '#lib/components/asset-viewer/AssetViewer.svelte';
+  import type { Action } from '#lib/components/asset-viewer/actions/action.ts';
+  import Thumbnail from '#lib/components/assets/thumbnail/Thumbnail.svelte';
+  import TimelineBucketCard from '#lib/components/timeline/TimelineBucketCard.svelte';
+  import TimelineRouteGroupingBar from '#lib/components/timeline/TimelineRouteGroupingBar.svelte';
+  import { AssetAction } from '#lib/constants.ts';
+  import Portal from '#lib/elements/Portal.svelte';
+  import { retryOnAnimationFrames } from '#lib/gallery/timeline/timeline-anchor.ts';
+  import type { AssetMultiSelectManager } from '#lib/managers/asset-multi-select-manager.svelte.ts';
+  import { assetViewerManager } from '#lib/managers/asset-viewer-manager.svelte.ts';
+  import { featureFlagsManager } from '#lib/managers/feature-flags-manager.svelte.ts';
+  import type {
+    TimelineAsset,
+    TimelineGrouping,
+    TimelineTemporalAnchor,
+    Viewport,
+  } from '#lib/managers/timeline-manager/types.ts';
+  import AssetDeleteConfirmModal from '#lib/modals/AssetDeleteConfirmModal.svelte';
+  import ShortcutsModal from '#lib/modals/ShortcutsModal.svelte';
+  import { Route } from '#lib/route.ts';
+  import { keyboardManager } from '#lib/stores/keyboard-manager.svelte.ts';
+  import { showDeleteModal } from '#lib/stores/preferences.store.ts';
+  import { handlePromiseError } from '#lib/utils.ts';
+  import { deleteAssets } from '#lib/utils/actions.ts';
+  import { getNextAsset, getPreviousAsset, navigateToAsset } from '#lib/utils/asset-utils.ts';
+  import { moveFocus } from '#lib/utils/focus-util.ts';
+  import { buildGalleryViewerBuckets, getGalleryViewerAssetDate } from '#lib/utils/gallery-viewer-grouping.ts';
+  import { handleError } from '#lib/utils/handle-error.ts';
+  import { getJustifiedLayoutFromAssets } from '#lib/utils/layout-utils.ts';
+  import { lazyComponent } from '#lib/utils/lazy-component.svelte.ts';
+  import { navigate } from '#lib/utils/navigation.ts';
+  import { isTimelineAsset, toTimelineAsset } from '#lib/utils/timeline-util.ts';
+  import { getTimelineBucketZoomTarget, type ActivatableTimelineBucket } from '#lib/utils/timeline-zoom-navigation.ts';
+  import { TUNABLES } from '#lib/utils/tunables.ts';
+  import { type AssetResponseDto } from '@immich/sdk';
+  import { modalManager } from '@immich/ui';
+  import { debounce } from 'lodash-es';
+  import { t } from 'svelte-i18n';
+  import { goto } from '$app/navigation';
+
+  const {
+    TIMELINE: { INTERSECTION_EXPAND_TOP, INTERSECTION_EXPAND_BOTTOM },
+  } = TUNABLES;
+
+  type Props = {
+    assets: AssetResponseDto[];
+    viewerAssets?: AssetResponseDto[];
+    assetInteraction: AssetMultiSelectManager;
+    showArchiveIcon?: boolean;
+    viewport: Viewport;
+    onEndReached?: (() => void) | undefined;
+    showAssetName?: boolean;
+    onReload?: (() => void) | undefined;
+    pageHeaderOffset?: number;
+    slidingWindowOffset?: number;
+    arrowNavigation?: boolean;
+    allowDeletion?: boolean;
+    enableGrouping?: boolean;
+    /**
+    Element this gallery scrolls inside. Defaults to the document, which is what the
+    full-page callers (search, folders, memory, shared link) use. Surfaces embedded in
+    an inner `overflow-y-auto` pane — e.g. the smart search results inside
+    `UserPageLayout` — must pass their scroll container, otherwise `document`'s
+    scrollTop never moves and virtualization freezes on the first viewport.
+    */
+    scrollElement?: HTMLElement;
+    /**
+    Overrides click-to-open. Defaults to route navigation (`navigateToAsset`). Callers
+    that own their own asset viewer (and so need extra context such as `spaceId`) pass
+    their own opener together with `withAssetViewer={false}`.
+    */
+    onAssetOpen?: (asset: AssetResponseDto) => void;
+    /** Set to `false` when the caller mounts its own `AssetViewer`. */
+    withAssetViewer?: boolean;
+  };
+
+  let {
+    assets = $bindable(),
+    viewerAssets,
+    assetInteraction,
+    showArchiveIcon = false,
+    viewport,
+    onEndReached = undefined,
+    showAssetName = false,
+    onReload = undefined,
+    slidingWindowOffset = 0,
+    pageHeaderOffset = 0,
+    arrowNavigation = true,
+    allowDeletion = true,
+    enableGrouping = false,
+    scrollElement = undefined,
+    onAssetOpen = undefined,
+    withAssetViewer = true,
+  }: Props = $props();
+
+  let galleryGrouping = $state<TimelineGrouping>('day');
+  let galleryTemporalAnchor = $state<TimelineTemporalAnchor | undefined>();
+  let galleryViewerElement: HTMLElement | undefined = $state();
+  let galleryBuckets = $derived(galleryGrouping === 'day' ? [] : buildGalleryViewerBuckets(assets, galleryGrouping));
+  let showRepresentativeBuckets = $derived(enableGrouping && galleryGrouping !== 'day' && assets.length > 0);
+  let showGalleryGroupingControls = $derived(
+    enableGrouping && assets.length > 0 && !assetInteraction.selectionActive && !assetViewerManager.isViewing,
+  );
+
+  const navigationAssets = $derived(viewerAssets ?? assets);
+
+  const geometry = $derived(
+    getJustifiedLayoutFromAssets(assets, {
+      spacing: 2,
+      heightTolerance: 0.5,
+      rowHeight: Math.floor(viewport.width) < 850 ? 100 : 235,
+      rowWidth: Math.floor(viewport.width),
+    }),
+  );
+
+  const getStyle = (index: number) => {
+    return `top: ${geometry.getTop(index)}px; left: ${geometry.getLeft(index)}px; width: ${geometry.getWidth(index)}px; height: ${geometry.getHeight(index)}px;`;
+  };
+
+  const isInOrNearViewport = (index: number) => {
+    const window = slidingWindow;
+    const top = geometry.getTop(index);
+    return top + pageHeaderOffset < window.bottom && top + geometry.getHeight(index) > window.top;
+  };
+
+  let lastAssetMouseEvent: TimelineAsset | null = $state(null);
+  let scrollTop = $state(0);
+
+  let slidingWindow = $derived.by(() => {
+    const top = (scrollTop || 0) - slidingWindowOffset - INTERSECTION_EXPAND_TOP;
+    const bottom = top + viewport.height + slidingWindowOffset + INTERSECTION_EXPAND_BOTTOM;
+    return {
+      top,
+      bottom,
+    };
+  });
+
+  const updateCurrentAsset = (asset: AssetResponseDto) => {
+    const index = assets.findIndex((oldAsset) => oldAsset.id === asset.id);
+    assets[index] = asset;
+  };
+
+  const updateSlidingWindow = () => (scrollTop = (scrollElement ?? document.scrollingElement)?.scrollTop ?? 0);
+
+  // `scroll` doesn't bubble, so the `svelte:document` handler below only ever sees
+  // document-level scrolling. Attach directly when we're virtualizing inside a container.
+  $effect(() => {
+    const element = scrollElement;
+    if (!element) {
+      return;
+    }
+    updateSlidingWindow();
+    element.addEventListener('scroll', updateSlidingWindow, { passive: true });
+    return () => element.removeEventListener('scroll', updateSlidingWindow);
+  });
+
+  const openAsset = (asset: AssetResponseDto) => {
+    if (onAssetOpen) {
+      onAssetOpen(asset);
+      return;
+    }
+    void navigateToAsset(asset);
+  };
+
+  const debouncedOnEndReached = debounce(() => onEndReached?.(), 750, { maxWait: 100, leading: true });
+
+  let lastEndReachedHeight = 0;
+  $effect(() => {
+    if (enableGrouping && showRepresentativeBuckets) {
+      return;
+    }
+
+    // Intersect if there's only one viewport worth of assets left to scroll.
+    if (geometry.containerHeight - slidingWindow.bottom > viewport.height) {
+      return;
+    }
+
+    const contentHeight = geometry.containerHeight;
+    if (lastEndReachedHeight !== contentHeight) {
+      debouncedOnEndReached();
+      lastEndReachedHeight = contentHeight;
+    }
+  });
+
+  const selectAllAssets = () => {
+    assetInteraction.selectAssets(assets.map((a) => toTimelineAsset(a)));
+  };
+
+  const handleSelectAssets = (asset: TimelineAsset) => {
+    if (!asset) {
+      return;
+    }
+    const deselect = assetInteraction.hasSelectedAsset(asset.id);
+
+    // Select/deselect already loaded assets
+    if (deselect) {
+      for (const candidate of assetInteraction.candidates) {
+        assetInteraction.removeAssetFromMultiselectGroup(candidate.id);
+      }
+      assetInteraction.removeAssetFromMultiselectGroup(asset.id);
+    } else {
+      for (const candidate of assetInteraction.candidates) {
+        assetInteraction.selectAsset(candidate);
+      }
+      assetInteraction.selectAsset(asset);
+    }
+
+    assetInteraction.clearCandidates();
+    assetInteraction.setAssetSelectionStart(deselect ? null : asset);
+  };
+
+  const handleSelectAssetCandidates = (asset: TimelineAsset | null) => {
+    if (asset) {
+      selectAssetCandidates(asset);
+    }
+    lastAssetMouseEvent = asset;
+  };
+
+  const selectAssetCandidates = (endAsset: TimelineAsset) => {
+    if (!keyboardManager.shift) {
+      return;
+    }
+
+    const startAsset = assetInteraction.startAsset;
+    if (!startAsset) {
+      return;
+    }
+
+    let start = assets.findIndex((a) => a.id === startAsset.id);
+    let end = assets.findIndex((a) => a.id === endAsset.id);
+
+    if (start === -1 || end === -1) {
+      return;
+    }
+
+    if (start > end) {
+      [start, end] = [end, start];
+    }
+
+    assetInteraction.setAssetSelectionCandidates(assets.slice(start, end + 1).map((a) => toTimelineAsset(a)));
+  };
+
+  const onSelectStart = (event: Event) => {
+    if (assetInteraction.selectionActive && keyboardManager.shift) {
+      event.preventDefault();
+    }
+  };
+
+  const onDelete = () => {
+    const hasTrashedAsset = assetInteraction.assets.some((asset) => asset.isTrashed);
+    handlePromiseError(trashOrDelete(hasTrashedAsset));
+  };
+
+  const trashOrDelete = async (force: boolean = false) => {
+    const forceOrNoTrash = force || !featureFlagsManager.value.trash;
+    const selectedAssets = assetInteraction.assets;
+
+    if ($showDeleteModal && forceOrNoTrash) {
+      const confirmed = await modalManager.show(AssetDeleteConfirmModal, { size: selectedAssets.length });
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    await deleteAssets(
+      forceOrNoTrash,
+      (assetIds) => (assets = assets.filter((asset) => !assetIds.includes(asset.id))),
+      selectedAssets,
+      onReload,
+    );
+
+    assetInteraction.clear();
+  };
+
+  const focusNextAsset = () => moveFocus((element) => element.dataset.thumbnailFocusContainer !== undefined, 'next');
+  const focusPreviousAsset = () =>
+    moveFocus((element) => element.dataset.thumbnailFocusContainer !== undefined, 'previous');
+
+  let isShortcutModalOpen = false;
+
+  const handleOpenShortcutModal = async () => {
+    if (isShortcutModalOpen) {
+      return;
+    }
+
+    isShortcutModalOpen = true;
+    await modalManager.show(ShortcutsModal, {});
+    isShortcutModalOpen = false;
+  };
+
+  const shortcutList = $derived(
+    (() => {
+      if (assetViewerManager.isViewing) {
+        return [];
+      }
+
+      const shortcuts: ShortcutOptions[] = [
+        { shortcut: { key: '?', shift: true }, onShortcut: handleOpenShortcutModal },
+        { shortcut: { key: 'A', ctrl: true }, onShortcut: () => selectAllAssets() },
+        ...(arrowNavigation
+          ? [
+              { shortcut: { key: 'ArrowRight' }, preventDefault: false, onShortcut: focusNextAsset },
+              { shortcut: { key: 'ArrowLeft' }, preventDefault: false, onShortcut: focusPreviousAsset },
+            ]
+          : []),
+      ];
+
+      if (assetInteraction.selectionActive) {
+        shortcuts.push(
+          { shortcut: { key: 'Escape' }, onShortcut: () => assetInteraction.clear() },
+          { shortcut: { key: 'D', ctrl: true }, onShortcut: () => assetInteraction.clear() },
+        );
+        if (allowDeletion) {
+          shortcuts.push(
+            { shortcut: { key: 'Delete' }, onShortcut: onDelete },
+            { shortcut: { key: 'Delete', shift: true }, onShortcut: () => trashOrDelete(true) },
+          );
+        }
+      }
+
+      return shortcuts;
+    })(),
+  );
+
+  const handleRandom = async (): Promise<{ id: string } | undefined> => {
+    if (navigationAssets.length === 0) {
+      return;
+    }
+    try {
+      const randomIndex = Math.floor(Math.random() * navigationAssets.length);
+      const asset = navigationAssets[randomIndex];
+
+      await navigateToAsset(asset);
+      return asset;
+    } catch (error) {
+      handleError(error, $t('errors.cannot_navigate_next_asset'));
+      return;
+    }
+  };
+
+  const handleAction = async (action: Action) => {
+    switch (action.type) {
+      case AssetAction.ARCHIVE:
+      case AssetAction.DELETE:
+      case AssetAction.TRASH: {
+        const nextAsset = assetCursor.nextAsset ?? assetCursor.previousAsset;
+        assets.splice(
+          assets.findIndex((currentAsset) => currentAsset.id === action.asset.id),
+          1,
+        );
+        if (assets.length === 0) {
+          return await goto(Route.photos());
+        }
+        if (nextAsset) {
+          await navigateToAsset(nextAsset);
+        }
+        break;
+      }
+      // no default
+    }
+  };
+
+  const assetMouseEventHandler = (asset: TimelineAsset | null) => {
+    if (assetInteraction.selectionActive) {
+      handleSelectAssetCandidates(asset);
+    }
+  };
+
+  const handleGalleryGroupingChange = (grouping: TimelineGrouping) => {
+    galleryGrouping = grouping;
+    galleryTemporalAnchor = undefined;
+  };
+
+  const handleGalleryBucketActivate = (bucket: ActivatableTimelineBucket) => {
+    if (assetInteraction.selectionActive) {
+      return;
+    }
+
+    const result = getTimelineBucketZoomTarget(bucket);
+    if (!result) {
+      return;
+    }
+
+    galleryGrouping = result.grouping;
+    galleryTemporalAnchor = result.anchor;
+  };
+
+  const isCurrentGalleryAnchor = (anchor: TimelineTemporalAnchor, grouping: TimelineGrouping) =>
+    galleryGrouping === grouping &&
+    galleryTemporalAnchor?.year === anchor.year &&
+    galleryTemporalAnchor?.month === anchor.month;
+
+  const getGalleryAnchorSelector = (anchor: TimelineTemporalAnchor, grouping: TimelineGrouping) => {
+    if (grouping === 'month' && anchor.month === undefined) {
+      return `[data-gallery-bucket-year="${anchor.year}"]`;
+    }
+
+    if (grouping === 'day' && anchor.month !== undefined) {
+      return `[data-gallery-asset-year="${anchor.year}"][data-gallery-asset-month="${anchor.month}"]`;
+    }
+  };
+
+  const getFirstGalleryAssetIndexForAnchor = (anchor: TimelineTemporalAnchor) =>
+    assets.findIndex((asset) => {
+      const date = getGalleryViewerAssetDate(asset);
+      return date?.year === anchor.year && date.month === anchor.month;
+    });
+
+  const scrollToGalleryAssetIndex = (index: number) => {
+    const top = geometry.getTop(index);
+    scrollTop = top;
+    (scrollElement ?? document.scrollingElement)?.scrollTo?.({ top });
+  };
+
+  $effect(() => {
+    const anchor = galleryTemporalAnchor;
+    const grouping = galleryGrouping;
+    const container = galleryViewerElement;
+    if (!anchor || !container) {
+      return;
+    }
+
+    const selector = getGalleryAnchorSelector(anchor, grouping);
+    if (!selector) {
+      galleryTemporalAnchor = undefined;
+      return;
+    }
+
+    // A day anchor whose card is not rendered yet scrolls the virtual list to its first asset,
+    // then scrolls the card into view one frame later.
+    return retryOnAnimationFrames((frame) => {
+      if (!isCurrentGalleryAnchor(anchor, grouping)) {
+        return true;
+      }
+
+      const target = container.querySelector<HTMLElement>(selector);
+      const index = !target && frame === 0 && grouping === 'day' ? getFirstGalleryAssetIndexForAnchor(anchor) : -1;
+      if (index !== -1) {
+        scrollToGalleryAssetIndex(index);
+        return false;
+      }
+
+      target?.scrollIntoView({ block: 'start', inline: 'nearest' });
+      galleryTemporalAnchor = undefined;
+      return true;
+    }, 1);
+  });
+
+  $effect(() => {
+    if (!lastAssetMouseEvent) {
+      assetInteraction.clearCandidates();
+    }
+  });
+
+  $effect(() => {
+    if (!keyboardManager.shift) {
+      assetInteraction.clearCandidates();
+    }
+  });
+
+  $effect(() => {
+    if (keyboardManager.shift && lastAssetMouseEvent) {
+      selectAssetCandidates(lastAssetMouseEvent);
+    }
+  });
+
+  const assetCursor = $derived<AssetCursor>({
+    current: assetViewerManager.asset!,
+    nextAsset: getNextAsset(navigationAssets, assetViewerManager.asset),
+    previousAsset: getPreviousAsset(navigationAssets, assetViewerManager.asset),
+  });
+
+  // Mounting the viewer through `{#await}` leaves it permanently unreactive on reopen.
+  // See lazyComponent().
+  const LazyAssetViewer = lazyComponent(() => import('#lib/components/asset-viewer/AssetViewer.svelte'));
+</script>
+
+<svelte:document onselectstart={onSelectStart} use:shortcuts={shortcutList} onscroll={() => updateSlidingWindow()} />
+
+<div bind:this={galleryViewerElement} data-testid="gallery-viewer">
+  {#if enableGrouping && assets.length > 0}
+    <TimelineRouteGroupingBar
+      grouping={galleryGrouping}
+      hidden={!showGalleryGroupingControls}
+      onGroupingChange={handleGalleryGroupingChange}
+    />
+  {/if}
+
+  {#if showRepresentativeBuckets}
+    <div
+      class="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4 p-4"
+      data-testid="gallery-viewer-representative-buckets"
+      data-grouping={galleryGrouping}
+    >
+      {#each galleryBuckets as bucket (bucket.viewId)}
+        <div
+          data-testid={`gallery-viewer-bucket-anchor-${bucket.viewId}`}
+          data-gallery-bucket-year={bucket.date.year}
+          data-gallery-bucket-month={bucket.date.month ?? null}
+        >
+          <TimelineBucketCard
+            {bucket}
+            disabled={assetInteraction.selectionActive}
+            onActivate={handleGalleryBucketActivate}
+          />
+        </div>
+      {/each}
+    </div>
+  {:else if assets.length > 0}
+    <div
+      style:position="relative"
+      style:height={geometry.containerHeight + 'px'}
+      style:width={geometry.containerWidth + 'px'}
+    >
+      {#each assets as asset, index (asset.id + '-' + index)}
+        {#if isInOrNearViewport(index)}
+          {const currentAsset = $derived(toTimelineAsset(asset))}
+          {const assetDate = $derived(getGalleryViewerAssetDate(asset))}
+          <div
+            class="absolute"
+            style:overflow="clip"
+            style={getStyle(index)}
+            data-testid={`gallery-viewer-asset-anchor-${asset.id}`}
+            data-gallery-asset-year={assetDate?.year ?? null}
+            data-gallery-asset-month={assetDate?.month ?? null}
+          >
+            <Thumbnail
+              onClick={() => {
+                if (assetInteraction.selectionActive) {
+                  handleSelectAssets(currentAsset);
+                  return;
+                }
+                openAsset(asset);
+              }}
+              onSelect={() => handleSelectAssets(currentAsset)}
+              onPreview={assetInteraction.selectionActive ? () => openAsset(asset) : undefined}
+              onMouseEvent={() => assetMouseEventHandler(currentAsset)}
+              {showArchiveIcon}
+              asset={currentAsset}
+              selected={assetInteraction.hasSelectedAsset(currentAsset.id)}
+              selectionCandidate={assetInteraction.hasSelectionCandidate(currentAsset.id)}
+              thumbnailWidth={geometry.getWidth(index)}
+              thumbnailHeight={geometry.getHeight(index)}
+            />
+            {#if showAssetName && !isTimelineAsset(asset)}
+              <div
+                class="absolute bottom-0 w-full overflow-clip bg-slate-50/75 bg-linear-to-t p-1 text-center font-mono text-xs font-semibold text-ellipsis whitespace-pre-wrap dark:bg-slate-800/75"
+              >
+                {asset.originalFileName}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      {/each}
+    </div>
+  {/if}
+</div>
+
+<!-- Overlay Asset Viewer -->
+{#if withAssetViewer && assetViewerManager.isViewing}
+  <Portal target="body">
+    {#if LazyAssetViewer.current}
+      {const AssetViewer = $derived(LazyAssetViewer.current)}
+      <AssetViewer
+        cursor={assetCursor}
+        onAction={handleAction}
+        onRandom={handleRandom}
+        onAssetChange={updateCurrentAsset}
+        onClose={() => {
+          assetViewerManager.showAssetViewer(false);
+          handlePromiseError(navigate({ targetRoute: 'current', assetId: null }));
+        }}
+      />
+    {/if}
+  </Portal>
+{/if}

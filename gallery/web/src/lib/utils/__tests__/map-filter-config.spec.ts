@@ -1,0 +1,345 @@
+import { buildMapFilterConfig } from '#lib/utils/map-filter-config.ts';
+import { Type, getFilterSuggestions, getSearchSuggestions } from '@immich/sdk';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@immich/sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@immich/sdk')>();
+  return {
+    ...actual,
+    getFilterSuggestions: vi.fn().mockResolvedValue({
+      countries: [],
+      cameraMakes: [],
+      tags: [],
+      people: [],
+      ratings: [],
+      mediaTypes: [],
+      hasUnnamedPeople: false,
+      hasFavorites: false,
+      hasAssetsInAlbum: true,
+      hasAssetsNotInAlbum: true,
+    }),
+    getSearchSuggestions: vi.fn().mockResolvedValue([]),
+  };
+});
+
+describe('buildMapFilterConfig', () => {
+  it('should include location in sections', () => {
+    const config = buildMapFilterConfig();
+    expect(config.sections).toContain('location');
+  });
+
+  it('should include all expected sections', () => {
+    const config = buildMapFilterConfig();
+    expect(config.sections).toEqual([
+      'timeline',
+      'people',
+      'location',
+      'camera',
+      'tags',
+      'rating',
+      'media',
+      'favorites',
+      'albums',
+      'text',
+    ]);
+  });
+
+  it('should have suggestionsProvider', () => {
+    const config = buildMapFilterConfig();
+    expect(config.suggestionsProvider).toBeDefined();
+  });
+
+  it('should have cameraModels fallback provider', () => {
+    const config = buildMapFilterConfig();
+    expect(config.providers!.cameraModels).toBeDefined();
+  });
+
+  it('should have cities provider', () => {
+    const config = buildMapFilterConfig();
+    expect(config.providers!.cities).toBeDefined();
+  });
+
+  describe('suggestionsProvider', () => {
+    const emptyFilters = {
+      personIds: [],
+      country: undefined,
+      city: undefined,
+      make: undefined,
+      model: undefined,
+      tagIds: [],
+      rating: undefined,
+      mediaType: 'all' as const,
+      isFavorite: undefined,
+      selectedYear: undefined,
+      selectedMonth: undefined,
+      sortOrder: 'desc' as const,
+    };
+
+    it('should pass withSharedSpaces when no spaceId', async () => {
+      const config = buildMapFilterConfig();
+      await config.suggestionsProvider!(emptyFilters);
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ withSharedSpaces: true }));
+    });
+
+    it('should pass spaceId when provided', async () => {
+      const config = buildMapFilterConfig('space-123');
+      await config.suggestionsProvider!(emptyFilters);
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ spaceId: 'space-123' }));
+    });
+
+    it('should pass has-no-album to filter suggestions', async () => {
+      const config = buildMapFilterConfig();
+      await config.suggestionsProvider!({ ...emptyFilters, isNotInAlbum: true });
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ isNotInAlbum: true }));
+    });
+
+    it('should omit has-no-album from filter suggestions when false', async () => {
+      const config = buildMapFilterConfig();
+      await config.suggestionsProvider!({ ...emptyFilters, isNotInAlbum: false });
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(
+        expect.not.objectContaining({ isNotInAlbum: expect.anything() }),
+      );
+    });
+
+    it('should pass has-album to filter suggestions', async () => {
+      const config = buildMapFilterConfig();
+      await config.suggestionsProvider!({ ...emptyFilters, isInAlbum: true });
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ isInAlbum: true }));
+    });
+
+    it('should omit has-album from filter suggestions when false', async () => {
+      const config = buildMapFilterConfig();
+      await config.suggestionsProvider!({ ...emptyFilters, isInAlbum: false });
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(expect.not.objectContaining({ isInAlbum: expect.anything() }));
+    });
+
+    it('should narrow the map suggestions by state, lens and contributor', async () => {
+      const config = buildMapFilterConfig();
+      await config.suggestionsProvider!({
+        ...emptyFilters,
+        state: 'Bavaria',
+        lensModel: 'RF24-105mm F4 L IS USM',
+        ownerId: 'owner-1',
+      });
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'Bavaria',
+          lensModel: 'RF24-105mm F4 L IS USM',
+          ownerId: 'owner-1',
+        }),
+      );
+    });
+
+    it('should never send the album filter or the free-text filters to the suggestion endpoint', async () => {
+      // `albumId` there is a SCOPE, mutually exclusive with the `withSharedSpaces` this surface
+      // sends: forwarding it would 400 the request rather than narrow anything.
+      const config = buildMapFilterConfig();
+      await config.suggestionsProvider!({
+        ...emptyFilters,
+        albumId: '11111111-1111-4111-8111-111111111111',
+        description: 'cake',
+        originalFileName: 'IMG_1.jpg',
+        ocr: 'happy',
+      });
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(expect.not.objectContaining({ albumId: expect.anything() }));
+      for (const key of ['description', 'originalFileName', 'ocr']) {
+        expect(vi.mocked(getFilterSuggestions).mock.lastCall![0]).not.toHaveProperty(key);
+      }
+    });
+
+    it('should map people with thumbnail URLs', async () => {
+      vi.mocked(getFilterSuggestions).mockResolvedValueOnce({
+        countries: [],
+        cameraMakes: [],
+        tags: [],
+        people: [{ id: '1', name: 'Alice' }],
+        ratings: [],
+        mediaTypes: [],
+        hasUnnamedPeople: false,
+      } as never);
+
+      const config = buildMapFilterConfig();
+      const result = await config.suggestionsProvider!(emptyFilters);
+
+      expect(result.people).toHaveLength(1);
+      expect(result.people[0].name).toBe('Alice');
+      expect(result.people[0].thumbnailUrl).toContain('/people/1/thumbnail');
+    });
+
+    it('should map global shared-space primary people to shared-space thumbnails', async () => {
+      vi.mocked(getFilterSuggestions).mockResolvedValueOnce({
+        countries: [],
+        cameraMakes: [],
+        tags: [],
+        people: [
+          {
+            id: 'space-person:space-person-1',
+            name: 'Alice',
+            primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-1' },
+          },
+        ],
+        ratings: [],
+        mediaTypes: [],
+        hasUnnamedPeople: false,
+      } as never);
+
+      const config = buildMapFilterConfig();
+      const result = await config.suggestionsProvider!(emptyFilters);
+
+      expect(result.people[0]).toEqual({
+        id: 'space-person:space-person-1',
+        name: 'Alice',
+        thumbnailUrl: '/api/shared-spaces/space-1/people/space-person-1/thumbnail',
+      });
+    });
+
+    it('should map global people by scoped filter id', async () => {
+      vi.mocked(getFilterSuggestions).mockResolvedValueOnce({
+        countries: [],
+        cameraMakes: [],
+        tags: [],
+        people: [
+          {
+            id: 'identity-group-1',
+            filterId: 'person:person-1',
+            name: 'Alice',
+            primaryProfile: { type: Type.UserPerson, id: 'person-1' },
+          },
+        ],
+        ratings: [],
+        mediaTypes: [],
+        hasUnnamedPeople: false,
+      } as never);
+
+      const config = buildMapFilterConfig();
+      const result = await config.suggestionsProvider!(emptyFilters);
+
+      expect(result.people[0]).toEqual(
+        expect.objectContaining({
+          id: 'person:person-1',
+          name: 'Alice',
+        }),
+      );
+    });
+
+    it('should map space-scoped people to shared-space thumbnails', async () => {
+      vi.mocked(getFilterSuggestions).mockResolvedValueOnce({
+        countries: [],
+        cameraMakes: [],
+        tags: [],
+        people: [{ id: 'space-person-1', name: 'Alice' }],
+        ratings: [],
+        mediaTypes: [],
+        hasUnnamedPeople: false,
+      } as never);
+
+      const config = buildMapFilterConfig('space-1');
+      const result = await config.suggestionsProvider!(emptyFilters);
+
+      expect(result.people[0]).toEqual({
+        id: 'space-person-1',
+        name: 'Alice',
+        thumbnailUrl: '/api/shared-spaces/space-1/people/space-person-1/thumbnail',
+      });
+    });
+
+    it('should map tags correctly', async () => {
+      vi.mocked(getFilterSuggestions).mockResolvedValueOnce({
+        countries: [],
+        cameraMakes: [],
+        tags: [{ id: 'tag-1', value: 'Nature' }],
+        people: [],
+        ratings: [],
+        mediaTypes: [],
+        hasUnnamedPeople: false,
+      } as never);
+
+      const config = buildMapFilterConfig();
+      const result = await config.suggestionsProvider!(emptyFilters);
+
+      expect(result.tags).toHaveLength(1);
+      expect(result.tags[0]).toEqual({ id: 'tag-1', name: 'Nature' });
+    });
+
+    it('forwards the #910 availability facets', async () => {
+      const config = buildMapFilterConfig();
+      const result = await config.suggestionsProvider!(emptyFilters);
+
+      expect(result.hasFavorites).toBe(false);
+      expect(result.hasAssetsInAlbum).toBe(true);
+      expect(result.hasAssetsNotInAlbum).toBe(true);
+    });
+  });
+
+  it('should pass withSharedSpaces to cameraModels provider when no spaceId', async () => {
+    vi.mocked(getSearchSuggestions).mockResolvedValue(['D850'] as never);
+
+    const config = buildMapFilterConfig();
+    await config.providers!.cameraModels!('Nikon');
+
+    expect(getSearchSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({ withSharedSpaces: true, make: 'Nikon' }),
+    );
+  });
+
+  it('should pass spaceId to cameraModels provider when spaceId given', async () => {
+    vi.mocked(getSearchSuggestions).mockResolvedValue(['D850'] as never);
+
+    const config = buildMapFilterConfig('space-123');
+    await config.providers!.cameraModels!('Nikon');
+
+    expect(getSearchSuggestions).toHaveBeenCalledWith(expect.objectContaining({ spaceId: 'space-123', make: 'Nikon' }));
+  });
+
+  describe('baselineProvider', () => {
+    it('offers a browse-mode baseline computed with no filters (#910)', async () => {
+      const config = buildMapFilterConfig();
+      vi.mocked(getFilterSuggestions).mockClear();
+
+      const baseline = await config.baselineProvider!();
+
+      expect(baseline).toBeDefined();
+      expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ withSharedSpaces: true }));
+      expect(getFilterSuggestions).not.toHaveBeenCalledWith(expect.objectContaining({ rating: expect.anything() }));
+    });
+
+    it('scopes the baseline by spaceId when provided', async () => {
+      const config = buildMapFilterConfig('space-123');
+      vi.mocked(getFilterSuggestions).mockClear();
+
+      await config.baselineProvider!();
+
+      expect(getFilterSuggestions).toHaveBeenCalledWith(expect.objectContaining({ spaceId: 'space-123' }));
+    });
+  });
+
+  it('should pass withSharedSpaces to cities provider when no spaceId', async () => {
+    vi.mocked(getSearchSuggestions).mockResolvedValue(['Paris'] as never);
+
+    const config = buildMapFilterConfig();
+    await config.providers!.cities!('France');
+
+    expect(getSearchSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({ country: 'France', withSharedSpaces: true }),
+    );
+  });
+
+  it('should pass spaceId to cities provider when spaceId given', async () => {
+    vi.mocked(getSearchSuggestions).mockResolvedValue(['Berlin'] as never);
+
+    const config = buildMapFilterConfig('space-123');
+    await config.providers!.cities!('Germany');
+
+    expect(getSearchSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({ country: 'Germany', spaceId: 'space-123' }),
+    );
+  });
+});

@@ -1,0 +1,179 @@
+<script lang="ts">
+  import SettingAccordion from '#lib/components/shared-components/settings/SettingAccordion.svelte';
+  import GroupSettings from '#lib/components/user-settings-page/group-settings.svelte';
+  import { OpenQueryParam, QueryParameter } from '#lib/constants.ts';
+  import { authManager } from '#lib/managers/auth-manager.svelte.ts';
+  import { createPreloadedQuery } from '#lib/queries/client.ts';
+  import { getUserConfigQuery } from '#lib/queries/config-user.query.ts';
+  import { oauth } from '#lib/utils.ts';
+  import {
+    mdiAccountGroupOutline,
+    mdiAccountMultipleOutline,
+    mdiAccountOutline,
+    mdiApi,
+    mdiBellOutline,
+    mdiCogOutline,
+    mdiDevices,
+    mdiDownload,
+    mdiFeatureSearchOutline,
+    mdiFormTextboxPassword,
+    mdiKeyOutline,
+    mdiLockSmart,
+    mdiServerOutline,
+    mdiShieldKeyOutline,
+    mdiTwoFactorAuthentication,
+  } from '@mdi/js';
+  import { t } from 'svelte-i18n';
+  import { page } from '$app/state';
+  import AppSettings from './AppSettings.svelte';
+  import ChangePasswordSettings from './ChangePasswordSettings.svelte';
+  import DeviceList from './DeviceList.svelte';
+  import DownloadSettings from './DownloadSettings.svelte';
+  import FeatureSettings from './FeatureSettings.svelte';
+  import NotificationsSettings from './NotificationsSettings.svelte';
+  import OAuthSettings from './OAuthSettings.svelte';
+  import ChangePinCodeSettings from './PinCodeSettings.svelte';
+  import SharingSettings from './SharingSettings.svelte';
+  import UserApiKeyList from './UserApiKeyList.svelte';
+  import UserPasskeyList from './UserPasskeyList.svelte';
+  import UserProfileSettings from './UserProfileSettings.svelte';
+  import UserPurchaseSettings from './UserPurchaseSettings.svelte';
+  import UserUsageStatistic from './UserUsageStatistic.svelte';
+
+  const query = createPreloadedQuery(getUserConfigQuery);
+  const config = $derived(query.data);
+  let oauthOpen =
+    oauth.isCallback(location) || page.url.searchParams.get(QueryParameter.OPEN_SETTING) === OpenQueryParam.OAUTH;
+</script>
+
+<SettingAccordion
+  icon={mdiCogOutline}
+  key="app-settings"
+  title={$t('app_settings')}
+  subtitle={$t('manage_the_app_settings')}
+>
+  <AppSettings />
+</SettingAccordion>
+
+<SettingAccordion icon={mdiAccountOutline} key="account" title={$t('account')} subtitle={$t('manage_your_account')}>
+  <UserProfileSettings />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiServerOutline}
+  key="user-usage-info"
+  title={$t('user_usage_stats')}
+  subtitle={$t('user_usage_stats_description')}
+>
+  <UserUsageStatistic />
+</SettingAccordion>
+
+<SettingAccordion icon={mdiApi} key="api-keys" title={$t('api_keys')} subtitle={$t('manage_your_api_keys')}>
+  <UserApiKeyList />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiDevices}
+  key="authorized-devices"
+  title={$t('authorized_devices')}
+  subtitle={$t('manage_your_devices')}
+>
+  <DeviceList />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiDownload}
+  key="download-settings"
+  title={$t('download_settings')}
+  subtitle={$t('download_settings_description')}
+>
+  <DownloadSettings />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiFeatureSearchOutline}
+  key="feature"
+  title={$t('features')}
+  subtitle={$t('features_setting_description')}
+>
+  <FeatureSettings />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiBellOutline}
+  key={OpenQueryParam.NOTIFICATIONS}
+  title={$t('notifications')}
+  subtitle={$t('notifications_setting_description')}
+>
+  <NotificationsSettings />
+</SettingAccordion>
+
+{#if config.oauth.enabled}
+  <SettingAccordion
+    icon={mdiTwoFactorAuthentication}
+    key={OpenQueryParam.OAUTH}
+    title={$t('oauth')}
+    subtitle={$t('manage_your_oauth_connection')}
+    isOpen={oauthOpen || undefined}
+  >
+    <OAuthSettings />
+  </SettingAccordion>
+{/if}
+
+{#if config.passkey.enabled}
+  <SettingAccordion
+    icon={mdiShieldKeyOutline}
+    key="passkeys"
+    title={$t('passkeys', { values: { count: 5 } })}
+    subtitle={$t('manage_your_passkeys')}
+  >
+    <UserPasskeyList />
+  </SettingAccordion>
+{/if}
+
+<SettingAccordion
+  icon={mdiFormTextboxPassword}
+  key="password"
+  title={$t('password')}
+  subtitle={$t('change_your_password')}
+>
+  <ChangePasswordSettings />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiAccountMultipleOutline}
+  key="user-groups"
+  title={$t('user_groups')}
+  subtitle={$t('manage_user_groups')}
+>
+  <GroupSettings user={authManager.user} />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiLockSmart}
+  key="user-pin-code-settings"
+  title={$t('user_pin_code_settings')}
+  subtitle={$t('user_pin_code_settings_description')}
+  autoScrollTo={true}
+>
+  <ChangePinCodeSettings />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiKeyOutline}
+  key={OpenQueryParam.PURCHASE_SETTINGS}
+  title={$t('user_purchase_settings')}
+  subtitle={$t('user_purchase_settings_description')}
+  autoScrollTo={true}
+>
+  <UserPurchaseSettings />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiAccountGroupOutline}
+  key={OpenQueryParam.SHARING}
+  title={$t('sharing')}
+  subtitle={$t('manage_sharing_with_other_users')}
+>
+  <SharingSettings />
+</SettingAccordion>

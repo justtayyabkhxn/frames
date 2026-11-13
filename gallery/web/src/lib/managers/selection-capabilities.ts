@@ -1,0 +1,132 @@
+import type { CommandContext } from '#lib/managers/command-context-manager.svelte.ts';
+
+/**
+One struct of booleans deciding which bulk-selection actions the current
+`CommandContext` allows. Pure and side-effect free: no `authManager`
+reads, no `$state`. See
+`specs/2026-07-24-selection-toolbar-consistency-design.md`
+for the rule derivation ("the regular shared album is the reference model").
+*/
+export interface SelectionCapabilities {
+  canSelectAll: boolean;
+  canDownload: boolean;
+  /**
+  CreateSharedLink. True when *any* of the selection is the user's own — the action shares the
+  owned subset, because `Permission.AssetShare` rejects the whole request if it names one asset
+  the caller does not own. A space Owner/Editor is the exception (#1018): they can share the
+  whole selection through the space, so the action is offered even when they own none of it.
+  */
+  canShare: boolean;
+  /**
+  #1018: the link must be created against the space rather than against asset ownership, because
+  the selection contains photos other members contributed. The modal warns before publishing, and
+  the resulting link stays tethered to the space. Only ever set for a space Owner/Editor.
+  */
+  shareScopedToSpace: boolean;
+  canAddToAlbum: boolean;
+  canFavorite: boolean;
+  /**
+  Rotate, ChangeDate, ChangeDescription, ChangeLocation. True on the editable *subset* of
+  the selection (#734) — the same shape `canShare` already uses for the owned subset — not
+  all-or-nothing ownership.
+  
+  Does NOT cover Archive/SetVisibility: those need `canSetVisibility` instead, because
+  rbac-3 restricts visibility changes to owned assets, so riding along on the editable
+  subset would produce guaranteed 403s for a space editor's non-owned assets.
+  */
+  canEditMetadata: boolean;
+  /** Archive, SetVisibility. Owner-only — see `canEditMetadata`'s doc comment for why. */
+  canSetVisibility: boolean;
+  canTag: boolean;
+  canDelete: boolean;
+  canSetCover: boolean;
+  canRemoveFromAlbum: boolean;
+  canRemoveFromSpace: boolean;
+}
+
+const NO_CAPABILITIES: SelectionCapabilities = {
+  canSelectAll: false,
+  canDownload: false,
+  canShare: false,
+  shareScopedToSpace: false,
+  canAddToAlbum: false,
+  canFavorite: false,
+  canEditMetadata: false,
+  canSetVisibility: false,
+  canTag: false,
+  canDelete: false,
+  canSetCover: false,
+  canRemoveFromAlbum: false,
+  canRemoveFromSpace: false,
+};
+
+export function getSelectionCapabilities(ctx: CommandContext, tagsEnabled: boolean): SelectionCapabilities {
+  const sel = ctx.selection;
+  if (sel === null) {
+    // No toolbar is rendered at all when there is no active selection.
+    return { ...NO_CAPABILITIES };
+  }
+
+  const album = ctx.album;
+  const space = ctx.space;
+  const isRegularAlbum = album !== null && space === null;
+  const isDirectSpace = space !== null && album === null;
+  const isSpaceAlbum = album !== null && space !== null;
+
+  // isEditorOfContext / canRemoveFromAlbum both branch on the same surface
+  // discriminators, so resolve them together instead of repeating the
+  // isRegularAlbum / isDirectSpace / isSpaceAlbum ternary chain twice.
+  let isEditorOfContext = false;
+  let canRemoveFromAlbum = false;
+  if (isRegularAlbum && album) {
+    isEditorOfContext = album.isOwner || album.isEditor;
+    canRemoveFromAlbum = album.isOwner || sel.isAllUserOwned;
+  } else if (isDirectSpace && space) {
+    isEditorOfContext = space.canWrite;
+    // canRemoveFromAlbum stays false — there is no album on a direct-space surface.
+  } else if (isSpaceAlbum && album && space) {
+    // "canManage" — space editor/owner OR album editor/owner. No own-asset arm
+    // (decision C): AlbumAssetDelete is role-gated server-side, ownership grants nothing.
+    isEditorOfContext = space.canWrite || album.isEditor;
+    canRemoveFromAlbum = space.canWrite || album.isEditor;
+  }
+
+  const canRemoveFromSpace = isDirectSpace && space !== null && space.canWrite;
+
+  // A space Owner/Editor is the one role that can act on assets they do not own: the server's
+  // #764 contribution path (album.service.tryContributeDeniedAssets) accepts them into any album
+  // linked to a space where the caller is Owner/Editor. A regular album editor has no such path,
+  // so this arm is deliberately keyed on `space`, not on `isEditorOfContext`.
+  const isSpaceEditor = space !== null && space.canWrite;
+
+  // #734: an editable subset, not all-or-nothing — the same shape canShare already uses for
+  // the owned subset. `undefined` means unresolved, which SelectionToolbar treats as denied
+  // (hidden) rather than pending — see that component's resolution effect.
+  const editable = sel.editableSelectedAssetIds;
+  const hasEditable = sel.isAllUserOwned || (editable !== undefined && editable.length > 0);
+
+  return {
+    canSelectAll: true,
+    canDownload: true,
+    // Not `isAllUserOwned`: the action sends only the owned subset, so it stays useful on a
+    // mixed selection and is denied only when nothing in the selection is the user's — unless the
+    // space editor arm (#1018) covers the rest through the space.
+    canShare: sel.ownedSelectedAssetIds.length > 0 || isSpaceEditor,
+    shareScopedToSpace: isSpaceEditor && !sel.isAllUserOwned,
+    canAddToAlbum: sel.isAllUserOwned || isSpaceEditor,
+    // Not `isAllUserOwned` (#763): a favorite is a per-user row in the `asset_favorite` overlay,
+    // not a flag on the asset, so favoriting never mutates someone else's asset. Any viewer who
+    // can see the selection may favorite it — including a shared-space member favoriting another
+    // member's photo. Mirrors `canFavoriteSelected` in selection-command-handlers.ts.
+    canFavorite: true,
+    canEditMetadata: hasEditable,
+    // Archive / SetVisibility are NOT metadata edits: rbac-3 restricts visibility changes to
+    // owned assets, so they must not ride on canEditMetadata the way they used to.
+    canSetVisibility: sel.isAllUserOwned,
+    canTag: hasEditable && tagsEnabled,
+    canDelete: sel.isAllUserOwned,
+    canSetCover: isEditorOfContext && sel.selectedAssetIds.length === 1,
+    canRemoveFromAlbum,
+    canRemoveFromSpace,
+  };
+}

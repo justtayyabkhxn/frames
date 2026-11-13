@@ -1,0 +1,1117 @@
+import TestWrapper from '#lib/components/TestWrapper.svelte';
+import { sdkMock } from '#lib/gallery/__mocks__/sdk.mock.ts';
+import { spacesQueryKey } from '#lib/gallery/spaces/space.query.ts';
+import { authManager } from '#lib/managers/auth-manager.svelte.ts';
+import { queryClient } from '#lib/queries/client.ts';
+import { isSuggestionSnoozed, snoozeSuggestions } from '#lib/utils/face-suggestion-snooze.ts';
+import { factory } from '#test/unit/factories.ts';
+import {
+  SharedSpaceRole,
+  Type,
+  type PersonFaceSuggestionPageResponseDto,
+  type PersonResponseDto,
+  type PersonStatisticsResponseDto,
+  type SharedSpaceMemberResponseDto,
+  type SharedSpaceResponseDto,
+} from '@immich/sdk';
+import { modalManager, toastManager } from '@immich/ui';
+import type { Component } from 'svelte';
+import { addMessages } from 'svelte-i18n';
+import { expect } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page, userEvent } from 'vitest/browser';
+import PersonDetailPage from './+page.svelte';
+
+const { afterNavigateMock, featureFlagsMock, gotoMock, invalidateAllMock, mockAssetMultiSelectManager, mockPage } =
+  vi.hoisted(() => {
+    return {
+      afterNavigateMock: vi.fn(),
+      featureFlagsMock: { value: { peopleStatistics: true } },
+      gotoMock: vi.fn(),
+      invalidateAllMock: vi.fn(),
+      mockAssetMultiSelectManager: {
+        selectionActive: false,
+        assets: [],
+        clear: vi.fn(),
+        isAllUserOwned: true,
+        isAllFavorite: false,
+        isAllArchived: false,
+      },
+      mockPage: {
+        url: new URL('https://gallery.test/people/person-1'),
+        route: { id: '/(user)/people/[personId]/[[photos=photos]]/[[assetId=id]]' },
+        params: { personId: 'person-1' },
+      },
+    };
+  });
+
+vi.mock('#lib/managers/feature-flags-manager.svelte.js', () => ({
+  featureFlagsManager: featureFlagsMock,
+}));
+
+vi.mock('$app/navigation', async () => ({
+  ...(await import('#test/unit/mocks/app-navigation.ts')),
+  afterNavigate: afterNavigateMock,
+  goto: gotoMock,
+  invalidateAll: invalidateAllMock,
+  refreshAll: invalidateAllMock,
+}));
+
+vi.mock('$app/stores', () => ({
+  page: {
+    subscribe: (run: (value: typeof mockPage) => void) => {
+      run(mockPage);
+      return () => {};
+    },
+  },
+  navigating: {
+    subscribe: (run: (value: null) => void) => {
+      run(null);
+      return () => {};
+    },
+  },
+}));
+
+vi.mock('#lib/managers/asset-multi-select-manager.svelte.js', () => ({
+  assetMultiSelectManager: mockAssetMultiSelectManager,
+}));
+
+vi.mock('@immich/ui', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@immich/ui')>();
+  const { default: MockContextMenuButton } = await import('#lib/gallery/__mocks__/action-context-menu.stub.svelte');
+  return {
+    ...original,
+    ContextMenuButton: MockContextMenuButton,
+    modalManager: { show: vi.fn(), showDialog: vi.fn() },
+    toastManager: { primary: vi.fn(), success: vi.fn(), warning: vi.fn(), danger: vi.fn() },
+  };
+});
+
+vi.mock('#lib/components/OnEvents.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/timeline/Timeline.svelte', async () => {
+  const { default: MockComponent } =
+    await import('./../../../../spaces/[spaceId]/people/[personId]/[[photos=photos]]/[[assetId=id]]/mock-space-person-timeline.test-wrapper.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/assets/thumbnail/ImageThumbnail.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/image-thumbnail.stub.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/components/people/people-merge-selector.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/people-merge-selector.stub.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/modals/RepresentativeFacePickerModal.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+vi.mock('#lib/gallery/people/PersonSuggestionReviewModal.svelte', async () => {
+  const { default: MockComponent } = await import('#lib/gallery/__mocks__/noop-component.svelte');
+  return { default: MockComponent };
+});
+
+function makePerson(overrides: Partial<PersonResponseDto> = {}): PersonResponseDto {
+  return {
+    otherPeople: [],
+    sharedBy: [],
+    sharedWith: [],
+    id: 'person-1',
+    name: 'Alice',
+    birthDate: null,
+    thumbnailPath: '/thumb.jpg',
+    isHidden: false,
+    isFavorite: false,
+    color: undefined,
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    type: 'person',
+    species: null,
+    ...overrides,
+  };
+}
+
+// eslint-disable-next-line unicorn/no-unnecessary-parameters
+function makeMember(userId: string, role: SharedSpaceRole): SharedSpaceMemberResponseDto {
+  return {
+    userId,
+    role,
+    email: `${userId}@test.dev`,
+    name: userId,
+    joinedAt: '2026-01-01T00:00:00.000Z',
+    sharePersonMetadata: true,
+    showInTimeline: true,
+  };
+}
+
+// The viewer's role in each space comes from the spaces list (getAllSpaces embeds members).
+function mockSpaceRoles(roles: Record<string, SharedSpaceRole>) {
+  sdkMock.getAllSpaces.mockResolvedValue(
+    Object.entries(roles).map(([id, role]) =>
+      factory.sharedSpace({ id, members: [makeMember('current-user-id', role)] }),
+    ),
+  );
+}
+
+function makeSuggestion(overrides: Partial<PersonFaceSuggestionPageResponseDto['items'][number]> = {}) {
+  return {
+    assetFaceId: 'face-1',
+    assetId: 'asset-1',
+    distance: 0.6,
+    imageWidth: 100,
+    imageHeight: 100,
+    boundingBoxX1: 10,
+    boundingBoxX2: 40,
+    boundingBoxY1: 10,
+    boundingBoxY2: 40,
+    ...overrides,
+  };
+}
+
+async function renderPage({
+  person = makePerson(),
+  statistics = { assets: 5, faces: 6 },
+}: {
+  person?: PersonResponseDto;
+  statistics?: PersonStatisticsResponseDto;
+} = {}) {
+  authManager.setUser(factory.user({ id: 'current-user-id' }));
+  authManager.setPreferences(factory.preferences());
+
+  const props = {
+    data: {
+      person,
+      statistics,
+      meta: { title: person.name || 'Person' },
+    },
+  };
+
+  return await render(TestWrapper as Component<{ component: typeof PersonDetailPage; componentProps: typeof props }>, {
+    component: PersonDetailPage,
+    componentProps: props,
+  });
+}
+
+describe('Person detail page', () => {
+  beforeAll(() => {
+    // The `dev` locale renders keys; give it the two plural strings the header counts use.
+    addMessages('dev', {
+      assets_count: '{count, plural, one {# asset} other {# assets}}',
+      faces_count: '{count, plural, one {# face} other {# faces}}',
+    });
+  });
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    queryClient.removeQueries({ queryKey: spacesQueryKey });
+    gotoMock.mockResolvedValue(undefined);
+    invalidateAllMock.mockResolvedValue(undefined);
+    mockAssetMultiSelectManager.selectionActive = false;
+    mockAssetMultiSelectManager.assets = [];
+    sdkMock.getPerson.mockResolvedValue(makePerson());
+    sdkMock.getPersonFaceSuggestions.mockResolvedValue({ total: 0, items: [] });
+    featureFlagsMock.value.peopleStatistics = true;
+  });
+
+  it.each([
+    { type: 'person', nextType: 'pet', label: 'change_type_to_pet' },
+    { type: 'pet', nextType: 'person', label: 'change_type_to_person' },
+  ])('changes a $type cluster to $nextType', async ({ type, nextType, label }) => {
+    const person = makePerson({ type });
+    sdkMock.updatePerson.mockResolvedValue(makePerson({ type: nextType }));
+
+    await renderPage({ person });
+    await userEvent.click(page.getByText(label));
+
+    await vi.waitFor(() =>
+      expect(sdkMock.updatePerson).toHaveBeenCalledWith({
+        id: person.id,
+        personUpdateDto: { type: nextType },
+      }),
+    );
+    expect(invalidateAllMock).toHaveBeenCalled();
+    expect(toastManager.primary).toHaveBeenCalledWith('person_type_changed');
+  });
+
+  it('does not offer type changes for a space-primary profile', async () => {
+    await renderPage({
+      person: makePerson({ primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-1' } }),
+    });
+
+    await expect.element(page.getByText('change_type_to_pet')).not.toBeInTheDocument();
+    await expect.element(page.getByText('change_type_to_person')).not.toBeInTheDocument();
+  });
+
+  it('uses same-person repair when merging a personal person with a space-primary candidate', async () => {
+    await renderPage();
+
+    await userEvent.click(page.getByText('merge_people'));
+    await userEvent.click(page.getByTestId('merge-space-candidate'));
+
+    expect(sdkMock.mergeScopedPeople).toHaveBeenCalledWith({
+      mergeScopedPeopleDto: {
+        target: { type: 'person', id: 'person-1' },
+        sources: [{ type: 'space-person', id: 'space-person-candidate', spaceId: 'space-2' }],
+      },
+    });
+    expect(sdkMock.mergePersonLegacy).not.toHaveBeenCalled();
+  });
+
+  it('shows the descriptive message and does not merge a classic merge blocked across owners', async () => {
+    vi.mocked(sdkMock.isHttpError).mockImplementation((error) => !!(error as { __http?: boolean })?.__http);
+    sdkMock.mergePersonLegacy.mockRejectedValueOnce({
+      __http: true,
+      status: 403,
+      data: { code: 'cross_owner_merge_blocked', message: 'An administrator can enable it.' },
+      message: 'raw',
+    });
+
+    await renderPage();
+
+    await userEvent.click(page.getByText('merge_people'));
+    await userEvent.click(page.getByTestId('merge-personal-candidate'));
+
+    await vi.waitFor(() => expect(toastManager.danger).toHaveBeenCalled());
+    expect(sdkMock.mergePersonLegacy).toHaveBeenCalledTimes(1);
+    expect(modalManager.showDialog).not.toHaveBeenCalled();
+  });
+
+  it('re-runs a classic merge with the cross-owner acknowledgement once the user confirms', async () => {
+    vi.mocked(sdkMock.isHttpError).mockImplementation((error) => !!(error as { __http?: boolean })?.__http);
+    sdkMock.mergePersonLegacy
+      .mockRejectedValueOnce({
+        __http: true,
+        status: 409,
+        data: { code: 'cross_owner_merge_confirmation_required', impactedOwnerCount: 1 },
+        message: 'raw',
+      })
+      .mockResolvedValueOnce([{ id: 'person-candidate', success: true }]);
+    vi.mocked(modalManager.showDialog as (...args: unknown[]) => Promise<boolean>).mockResolvedValue(true);
+
+    await renderPage();
+
+    await userEvent.click(page.getByText('merge_people'));
+    await userEvent.click(page.getByTestId('merge-personal-candidate'));
+
+    await vi.waitFor(() => expect(sdkMock.mergePersonLegacy).toHaveBeenCalledTimes(2));
+    expect(sdkMock.mergePersonLegacy).toHaveBeenNthCalledWith(1, {
+      id: 'person-1',
+      mergePersonDto: { ids: ['person-candidate'] },
+    });
+    expect(sdkMock.mergePersonLegacy).toHaveBeenNthCalledWith(2, {
+      id: 'person-1',
+      mergePersonDto: { ids: ['person-candidate'], confirmCrossOwner: true },
+    });
+  });
+
+  it('renders asset and face counts in the person header', async () => {
+    await renderPage({
+      person: makePerson({ name: 'Alice' }),
+      statistics: { assets: 7, faces: 10 },
+    });
+
+    await expect.element(page.getByText('7 assets')).toBeInTheDocument();
+    await expect.element(page.getByText('10 faces')).toBeInTheDocument();
+  });
+
+  it('hides the face count line when the peopleStatistics feature flag is disabled', async () => {
+    featureFlagsMock.value.peopleStatistics = false;
+    await renderPage({
+      person: makePerson({ name: 'Alice' }),
+      statistics: { assets: 7, faces: 10 },
+    });
+
+    await expect.element(page.getByText('7 assets')).toBeInTheDocument();
+    await expect.element(page.getByText('10 faces')).not.toBeInTheDocument();
+  });
+
+  it('keeps the page person as the repair target when a space candidate is promoted by auto-swap', async () => {
+    await renderPage({ person: makePerson({ name: '' }) });
+
+    await userEvent.click(page.getByText('merge_people'));
+    await userEvent.click(page.getByTestId('merge-swapped-space-candidate'));
+
+    expect(sdkMock.mergeScopedPeople).toHaveBeenCalledWith({
+      mergeScopedPeopleDto: {
+        target: { type: 'person', id: 'person-1' },
+        sources: [{ type: 'space-person', id: 'space-person-candidate', spaceId: 'space-2' }],
+      },
+    });
+    expect(sdkMock.getPerson).toHaveBeenCalledWith({ id: 'person-1' });
+  });
+
+  it('routes swapped space candidates to their space-person detail page', async () => {
+    await renderPage();
+
+    await userEvent.click(page.getByText('merge_people'));
+    await userEvent.click(page.getByTestId('swap-space-candidate'));
+
+    expect(gotoMock).toHaveBeenCalledWith(
+      '/spaces/space-2/people/space-person-candidate?previousRoute=%2Fpeople&action=merge',
+    );
+  });
+
+  it('searches merge candidates with shared spaces enabled', async () => {
+    await renderPage();
+
+    await userEvent.click(page.getByText('merge_people'));
+    await userEvent.click(page.getByTestId('search-merge-candidates'));
+
+    expect(sdkMock.searchPerson).toHaveBeenCalledWith({ name: 'Alice', withHidden: true, withSharedSpaces: true });
+  });
+
+  it('loads the global person timeline with shared-space assets included', async () => {
+    await renderPage();
+
+    const options = JSON.parse(page.getByTestId('timeline-stub').element().dataset.options ?? '{}');
+    expect(options).toEqual(
+      expect.objectContaining({
+        personIds: ['person-1'],
+        visibility: 'timeline',
+        withSharedSpaces: true,
+      }),
+    );
+  });
+
+  it('uses the scoped person token for identity-wide shared-space timelines', async () => {
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        filterId: 'space-person:space-person-1',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-1' },
+      }),
+    });
+
+    const options = JSON.parse(page.getByTestId('timeline-stub').element().dataset.options ?? '{}');
+    expect(options).toEqual(
+      expect.objectContaining({
+        personIds: ['space-person:space-person-1'],
+        visibility: 'timeline',
+        withSharedSpaces: true,
+      }),
+    );
+  });
+
+  it('renders person timeline grouping controls and passes mobile grouping props', async () => {
+    await renderPage();
+
+    await expect.element(page.getByTestId('timeline-desktop-grouping-control')).toBeInTheDocument();
+    await expect.element(page.getByTestId('timeline-grouping-day')).toHaveAttribute('aria-pressed', 'true');
+    await expect
+      .element(page.getByTestId('timeline-mobile-grouping-props'))
+      .toMatchTextContent(JSON.stringify({ grouping: 'day', hasHandler: true }));
+  });
+
+  it('shows the add-all-to-collection button when the surface has results', async () => {
+    await renderPage({ statistics: { assets: 3, faces: 6 } });
+
+    await expect.element(page.getByTestId('add-all-to-collection')).toBeInTheDocument();
+  });
+
+  it('hides the add-all-to-collection button when empty', async () => {
+    await renderPage({ statistics: { assets: 0, faces: 6 } });
+
+    await expect.element(page.getByTestId('timeline-stub')).toBeInTheDocument();
+    await expect.element(page.getByTestId('add-all-to-collection')).not.toBeInTheDocument();
+  });
+
+  it('keeps the grouping control outside the scrolling timeline so it stays visible while scrolling', async () => {
+    await renderPage();
+
+    const main = page.getByRole('main');
+    const timeline = page.getByTestId('space-person-timeline');
+    const header = page.getByTestId('person-timeline-header');
+    const control = await page.getByTestId('timeline-desktop-grouping-control').findElement();
+
+    // Regression guard for Hagen's report: the switcher must not scroll away with the photo
+    // grid, so it must live outside the timeline scroll container and the person header
+    // (both of which scroll) — pinned in the sticky page chrome instead, exactly like Tags.
+    await expect.element(timeline).not.toContainElement(control);
+    await expect.element(header).not.toContainElement(control);
+    await expect.element(main).toContainElement(control);
+  });
+
+  it('changes person timeline grouping while preserving person scope without temporal chips', async () => {
+    await renderPage();
+
+    await userEvent.click(page.getByTestId('timeline-grouping-year'));
+
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"grouping":"year"');
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"personIds":["person-1"]');
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"withSharedSpaces":true');
+    await expect.element(page.getByTestId('active-filters-bar')).not.toBeInTheDocument();
+    await expect.element(page.getByTestId('timeline-anchor')).toMatchTextContent('null');
+  });
+
+  it('activating person year and month buckets preserves person scope without temporal chips', async () => {
+    await renderPage();
+
+    await userEvent.click(page.getByTestId('activate-year-bucket'));
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"grouping":"month"');
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"personIds":["person-1"]');
+    await expect.element(page.getByTestId('timeline-options')).not.toMatchTextContent('"takenAfter"');
+    await expect.element(page.getByTestId('timeline-options')).not.toMatchTextContent('"takenBefore"');
+    await expect.element(page.getByTestId('active-filters-bar')).not.toBeInTheDocument();
+    await expect.element(page.getByTestId('timeline-anchor')).toMatchTextContent('{"year":2015}');
+
+    await userEvent.click(page.getByTestId('activate-month-bucket'));
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"grouping":"day"');
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"personIds":["person-1"]');
+    await expect.element(page.getByTestId('timeline-options')).not.toMatchTextContent('"takenAfter"');
+    await expect.element(page.getByTestId('timeline-options')).not.toMatchTextContent('"takenBefore"');
+    await expect.element(page.getByTestId('active-filters-bar')).not.toBeInTheDocument();
+    await expect.element(page.getByTestId('timeline-anchor')).toMatchTextContent('{"year":2015,"month":8}');
+  });
+
+  it('person bucket activation keeps scope without rendering ActiveFiltersBar', async () => {
+    await renderPage();
+
+    await userEvent.click(page.getByTestId('activate-year-bucket'));
+
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"grouping":"month"');
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"personIds":["person-1"]');
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"withSharedSpaces":true');
+    await expect.element(page.getByTestId('active-filters-bar')).not.toBeInTheDocument();
+    await expect.element(page.getByTestId('timeline-anchor')).toMatchTextContent('{"year":2015}');
+  });
+
+  it('selection mode hides timeline grouping controls on the person page', async () => {
+    mockAssetMultiSelectManager.selectionActive = true;
+
+    await renderPage();
+
+    await expect.element(page.getByTestId('timeline-desktop-grouping-control')).not.toBeInTheDocument();
+  });
+
+  it('ignores person bucket activation while selection mode is active', async () => {
+    mockAssetMultiSelectManager.selectionActive = true;
+
+    await renderPage();
+    await userEvent.click(page.getByTestId('activate-year-bucket'));
+
+    await expect.element(page.getByTestId('timeline-options')).toMatchTextContent('"grouping":"day"');
+    await expect.element(page.getByTestId('timeline-anchor')).toMatchTextContent('null');
+    await expect.element(page.getByTestId('active-filters-bar')).not.toBeInTheDocument();
+  });
+
+  it('uses the shared-space thumbnail for a space-primary identity-wide person page', async () => {
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        filterId: 'space-person:space-person-1',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-1' },
+      }),
+    });
+
+    expect(page.getByRole('img', { name: 'Alice' }).element().getAttribute('src')).toContain(
+      '/shared-spaces/space-1/people/space-person-1/thumbnail?updatedAt=2026-01-02T00%3A00%3A00.000Z',
+    );
+  });
+
+  it('hides space-person write actions when the current user is a space viewer', async () => {
+    mockSpaceRoles({ 'viewer-space-detail': SharedSpaceRole.Viewer });
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'viewer-space-detail' },
+      }),
+    });
+
+    await vi.waitFor(() => expect(queryClient.getQueryData(spacesQueryKey)).toBeDefined());
+    await expect.element(page.getByText('set_date_of_birth')).not.toBeInTheDocument();
+    await expect.element(page.getByText('hide_person')).not.toBeInTheDocument();
+    await expect.element(page.getByText('select_representative_face')).not.toBeInTheDocument();
+  });
+
+  it('hides the merge option for a space-primary person the actor cannot edit', async () => {
+    mockSpaceRoles({ 'viewer-space-detail-merge-gate': SharedSpaceRole.Viewer });
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'viewer-space-detail-merge-gate' },
+      }),
+    });
+
+    await vi.waitFor(() => expect(queryClient.getQueryData(spacesQueryKey)).toBeDefined());
+    await expect.element(page.getByText('merge_people')).not.toBeInTheDocument();
+  });
+
+  it('offers space-person write actions until the spaces list resolves, then hides them from a viewer', async () => {
+    let resolveSpaces!: (spaces: SharedSpaceResponseDto[]) => void;
+    sdkMock.getAllSpaces.mockReturnValue(new Promise((resolve) => (resolveSpaces = resolve)));
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'loading-space-detail' },
+      }),
+    });
+
+    await vi.waitFor(() => expect(sdkMock.getAllSpaces).toHaveBeenCalledOnce());
+    await expect.element(page.getByText('set_date_of_birth')).toBeInTheDocument();
+
+    resolveSpaces([
+      factory.sharedSpace({
+        id: 'loading-space-detail',
+        members: [makeMember('current-user-id', SharedSpaceRole.Viewer)],
+      }),
+    ]);
+
+    await expect.element(page.getByText('set_date_of_birth')).not.toBeInTheDocument();
+    expect(sdkMock.getMembers).not.toHaveBeenCalled();
+  });
+
+  it('keeps space-person write actions for space editors', async () => {
+    mockSpaceRoles({ 'editor-space-detail': SharedSpaceRole.Editor });
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'editor-space-detail' },
+      }),
+    });
+
+    await expect.element(page.getByText('set_date_of_birth')).toBeInTheDocument();
+    await expect.element(page.getByText('hide_person')).toBeInTheDocument();
+    await expect.element(page.getByText('select_representative_face')).toBeInTheDocument();
+  });
+
+  // #1098: a space editor naming a person from someone else's library owns none of the existing
+  // people, so an owner-only search suggested nothing.
+  it('suggests shared-space people while a space editor renames a space-primary person', async () => {
+    mockSpaceRoles({ 'editor-space-rename': SharedSpaceRole.Editor });
+    sdkMock.searchPerson.mockResolvedValue([
+      makePerson({
+        id: 'space-person-norgy',
+        name: 'Norgy',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-norgy', spaceId: 'editor-space-rename' },
+      }),
+    ]);
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        name: '',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'editor-space-rename' },
+      }),
+    });
+
+    await vi.waitFor(() => expect(sdkMock.getAllSpaces).toHaveBeenCalled());
+    await userEvent.click(page.getByTitle('edit_name'));
+    await userEvent.type(page.getByPlaceholder('name_or_nickname'), 'Norg');
+
+    expect(sdkMock.searchPerson).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'N', withSharedSpaces: true }),
+      expect.anything(),
+    );
+    const suggestion = await page.getByRole('img', { name: 'Norgy' }).findElement();
+    expect(suggestion.getAttribute('src')).toContain(
+      '/shared-spaces/editor-space-rename/people/space-person-norgy/thumbnail',
+    );
+  });
+
+  it('offers to merge into a shared-space person whose name the renamed person now matches', async () => {
+    mockSpaceRoles({ 'editor-space-merge': SharedSpaceRole.Editor });
+    const norgy = makePerson({
+      id: 'space-person-norgy',
+      name: 'Norgy',
+      primaryProfile: { type: Type.SpacePerson, id: 'space-person-norgy', spaceId: 'editor-space-merge' },
+    });
+    sdkMock.searchPerson.mockResolvedValue([norgy]);
+    vi.mocked(modalManager.show).mockResolvedValue(undefined as never);
+    sdkMock.updateSpacePerson.mockResolvedValue({ id: 'space-person-1', name: 'Norgy' } as never);
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        name: '',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'editor-space-merge' },
+      }),
+    });
+
+    await vi.waitFor(() => expect(sdkMock.getAllSpaces).toHaveBeenCalled());
+    await userEvent.click(page.getByTitle('edit_name'));
+    await userEvent.type(page.getByPlaceholder('name_or_nickname'), 'Norgy');
+    await userEvent.click(page.getByText('done'));
+
+    await vi.waitFor(() =>
+      expect(sdkMock.searchPerson).toHaveBeenCalledWith({ name: 'Norgy', withHidden: true, withSharedSpaces: true }),
+    );
+    await vi.waitFor(() =>
+      expect(modalManager.show).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ personToBeMergedInto: norgy }),
+      ),
+    );
+  });
+
+  it('opens the representative face picker from the person menu', async () => {
+    await renderPage();
+
+    await userEvent.click(page.getByText('select_representative_face'));
+
+    expect(modalManager.show).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        title: 'select_representative_face',
+        loadFaces: expect.any(Function),
+        updateFace: expect.any(Function),
+        canUpdate: true,
+        getThumbnailUrl: expect.any(Function),
+      }),
+    );
+  });
+
+  it('uses exact-face SDK calls for personal representative selection', async () => {
+    sdkMock.getPersonFaces.mockResolvedValue({ faces: [], hasNextPage: false });
+    sdkMock.updateRepresentativeFace.mockResolvedValue(makePerson({ updatedAt: '2026-02-01T00:00:00.000Z' }));
+    await renderPage();
+
+    await userEvent.click(page.getByText('select_representative_face'));
+    const props = vi.mocked(modalManager.show).mock.calls[0][1] as unknown as {
+      loadFaces: (request: { page: number; size: number }) => Promise<unknown>;
+      updateFace: (faceId: string) => Promise<unknown>;
+    };
+
+    await props.loadFaces({ page: 2, size: 50 });
+    await props.updateFace('face-1');
+
+    expect(sdkMock.getPersonFaces).toHaveBeenCalledWith({ id: 'person-1', page: 2, size: 50 });
+    expect(sdkMock.updateRepresentativeFace).toHaveBeenCalledWith({
+      id: 'person-1',
+      representativeFaceUpdateDto: { assetFaceId: 'face-1' },
+    });
+  });
+
+  it('does not enter timeline single-select mode for representative face picker', async () => {
+    await renderPage();
+
+    await userEvent.click(page.getByText('select_representative_face'));
+
+    expect(modalManager.show).toHaveBeenCalled();
+    await expect.element(page.getByTestId('timeline-stub')).not.toHaveAttribute('singleSelect');
+    await expect.element(page.getByTestId('timeline-stub')).not.toHaveAttribute('isSelectionMode');
+  });
+
+  it('detaches the personal profile after confirmation', async () => {
+    vi.mocked(modalManager.showDialog as (...args: unknown[]) => Promise<boolean>).mockResolvedValue(true);
+    await renderPage();
+
+    await userEvent.click(page.getByText('separate_from_grouped_person'));
+
+    expect(sdkMock.detachScopedPerson).toHaveBeenCalledWith({
+      detachScopedPersonDto: { profile: { type: 'person', id: 'person-1' } },
+    });
+    expect(invalidateAllMock).toHaveBeenCalled();
+  });
+});
+
+describe('face suggestions', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    queryClient.removeQueries({ queryKey: spacesQueryKey });
+    gotoMock.mockResolvedValue(undefined);
+    invalidateAllMock.mockResolvedValue(undefined);
+    mockAssetMultiSelectManager.selectionActive = false;
+    mockAssetMultiSelectManager.assets = [];
+    sdkMock.getPerson.mockResolvedValue(makePerson());
+    sdkMock.getPersonFaceSuggestions.mockResolvedValue({ total: 0, items: [] });
+    sdkMock.confirmPersonFaceSuggestion.mockResolvedValue(undefined as never);
+    sdkMock.dismissPersonFaceSuggestion.mockResolvedValue(undefined as never);
+    sdkMock.ignorePersonFaceSuggestion.mockResolvedValue(undefined as never);
+    sdkMock.getSpacePersonFaceSuggestions.mockResolvedValue({ total: 0, items: [] });
+    sdkMock.confirmSpacePersonFaceSuggestion.mockResolvedValue(undefined as never);
+    sdkMock.dismissSpacePersonFaceSuggestion.mockResolvedValue(undefined as never);
+    sdkMock.ignoreSpacePersonFaceSuggestion.mockResolvedValue(undefined as never);
+    mockSpaceRoles({
+      'space-suggest-banner': SharedSpaceRole.Editor,
+      'space-suggest-thumbnail': SharedSpaceRole.Editor,
+      'space-suggest-modal': SharedSpaceRole.Editor,
+      'space-snooze-consistency': SharedSpaceRole.Editor,
+    });
+  });
+
+  it('renders the banner when the API returns suggestions for a named owned person', async () => {
+    sdkMock.getPersonFaceSuggestions.mockResolvedValue({
+      total: 4,
+      items: [
+        {
+          assetFaceId: 'f1',
+          assetId: 'a1',
+          distance: 0.6,
+          imageWidth: 100,
+          imageHeight: 100,
+          boundingBoxX1: 10,
+          boundingBoxX2: 40,
+          boundingBoxY1: 10,
+          boundingBoxY2: 40,
+        },
+      ],
+    });
+    await renderPage({ person: makePerson({ name: 'Alice' }) });
+    await expect.element(page.getByTestId('person-suggestion-banner')).toBeInTheDocument();
+    expect(sdkMock.getPersonFaceSuggestions).toHaveBeenCalledWith({ id: 'person-1', page: 1, size: 5 });
+  });
+
+  // S12.3 (pin): the new canEditSpacePerson gate (S12.2) must never suppress the banner for a personal
+  // (non-space) person — that flag is a space-write-role check, not a general "may this viewer act" gate, and
+  // it must stay true unconditionally when there is no space profile to check a role against.
+  it('pin: a personal (non-space) person always renders the banner for its owner', async () => {
+    sdkMock.getPersonFaceSuggestions.mockResolvedValue({
+      total: 2,
+      items: [makeSuggestion()],
+    });
+    await renderPage({ person: makePerson({ name: 'Alice', primaryProfile: undefined }) });
+
+    await expect.element(page.getByTestId('person-suggestion-banner')).toBeInTheDocument();
+  });
+
+  it('renders no banner when the API returns total 0 (server read-gate: edges 7/13)', async () => {
+    sdkMock.getPersonFaceSuggestions.mockResolvedValue({ total: 0, items: [] });
+    await renderPage({ person: makePerson({ name: 'Alice' }) });
+    await new Promise((r) => setTimeout(r, 0));
+    await expect.element(page.getByTestId('person-suggestion-banner')).not.toBeInTheDocument();
+  });
+
+  // A space member who owns no person row for the identity reaches the shared person through this
+  // (global) route from the main People list — their primaryProfile is the space profile. Suggestions
+  // must come from the space endpoint there, not be skipped, otherwise the banner is only ever
+  // reachable inside /spaces/... and a non-owner never sees it (#834 follow-up).
+  it('loads suggestions from the space endpoint for a space-primary person', async () => {
+    sdkMock.getSpacePersonFaceSuggestions.mockResolvedValue({
+      total: 4,
+      items: [makeSuggestion({ assetFaceId: 'face-1' })],
+    });
+
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        name: 'Alice',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-suggest-banner' },
+      }),
+    });
+
+    await expect.element(page.getByTestId('person-suggestion-banner')).toBeInTheDocument();
+    expect(sdkMock.getSpacePersonFaceSuggestions).toHaveBeenCalledWith({
+      id: 'space-suggest-banner',
+      personId: 'space-person-1',
+      page: 1,
+      size: 5,
+    });
+    expect(sdkMock.getPersonFaceSuggestions).not.toHaveBeenCalled();
+  });
+
+  // S12.2: client-side defence in depth, mirroring S12.1 on the space route. The server already returns
+  // `{ total: 0 }` to non-editors (covered above), but that is enforced only by the read endpoint. This test
+  // uses the SAME non-zero suggestion data for both halves, differing only in role, so it cannot pass on
+  // `total: 0` alone. One spaces list carries both roles, so each render reads its own space's role.
+  it('gates the banner on canEditSpacePerson: a space viewer with pending suggestions renders none, an editor with the same data does', async () => {
+    sdkMock.getSpacePersonFaceSuggestions.mockResolvedValue({
+      total: 3,
+      items: [makeSuggestion({ assetFaceId: 'face-1' })],
+    });
+
+    mockSpaceRoles({
+      'space-suggest-gate-viewer': SharedSpaceRole.Viewer,
+      'space-suggest-gate-editor': SharedSpaceRole.Editor,
+    });
+    const viewerRender = await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        name: 'Alice',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-suggest-gate-viewer' },
+      }),
+    });
+    await vi.waitFor(() => expect(queryClient.getQueryData(spacesQueryKey)).toBeDefined());
+    await expect.element(page.getByTestId('person-suggestion-banner')).not.toBeInTheDocument();
+    await viewerRender.unmount();
+
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        name: 'Alice',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-suggest-gate-editor' },
+      }),
+    });
+    await expect.element(page.getByTestId('person-suggestion-banner')).toBeInTheDocument();
+  });
+
+  it('renders no banner for a space-primary person when the space endpoint returns total 0', async () => {
+    sdkMock.getSpacePersonFaceSuggestions.mockResolvedValue({ total: 0, items: [] });
+
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        name: 'Alice',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-suggest-viewer' },
+      }),
+    });
+
+    await vi.waitFor(() => expect(sdkMock.getSpacePersonFaceSuggestions).toHaveBeenCalled());
+    await expect.element(page.getByTestId('person-suggestion-banner')).not.toBeInTheDocument();
+  });
+
+  it('shows the space thumbnail as the banner reference for a space-primary person', async () => {
+    sdkMock.getSpacePersonFaceSuggestions.mockResolvedValue({
+      total: 1,
+      items: [makeSuggestion({ assetFaceId: 'face-1' })],
+    });
+
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        name: 'Alice',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-suggest-thumbnail' },
+      }),
+    });
+
+    const reference = await page.getByTestId('suggestion-banner-reference').findElement();
+    expect(reference.getAttribute('src')).toContain(
+      '/shared-spaces/space-suggest-thumbnail/people/space-person-1/thumbnail',
+    );
+  });
+
+  it('opens the review modal with space SDK actions for a space-primary person', async () => {
+    let closeModal!: (value: { confirmed: number }) => void;
+    sdkMock.getSpacePersonFaceSuggestions
+      .mockResolvedValueOnce({ total: 1, items: [makeSuggestion({ assetFaceId: 'face-1' })] })
+      .mockResolvedValueOnce({ total: 0, items: [] });
+    vi.mocked(modalManager.show).mockReturnValue(
+      new Promise((resolve) => {
+        closeModal = resolve;
+      }) as never,
+    );
+
+    await renderPage({
+      person: makePerson({
+        id: 'space-person-1',
+        name: 'Alice',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-suggest-modal' },
+      }),
+    });
+
+    await userEvent.click(page.getByTestId('suggestion-review-btn'));
+
+    const modalProps = vi.mocked(modalManager.show).mock.calls[0][1] as unknown as {
+      loadPage: (request: { page: number; size: number }) => Promise<PersonFaceSuggestionPageResponseDto>;
+      confirm: (assetFaceId: string) => Promise<void>;
+      dismiss: (assetFaceId: string) => Promise<void>;
+      ignore: (assetFaceId: string) => Promise<void>;
+    };
+
+    await modalProps.loadPage({ page: 2, size: 50 });
+    expect(sdkMock.getSpacePersonFaceSuggestions).toHaveBeenLastCalledWith({
+      id: 'space-suggest-modal',
+      personId: 'space-person-1',
+      page: 2,
+      size: 50,
+    });
+
+    await modalProps.confirm('face-1');
+    expect(sdkMock.confirmSpacePersonFaceSuggestion).toHaveBeenCalledWith({
+      id: 'space-suggest-modal',
+      personId: 'space-person-1',
+      assetFaceId: 'face-1',
+    });
+
+    await modalProps.dismiss('face-2');
+    expect(sdkMock.dismissSpacePersonFaceSuggestion).toHaveBeenCalledWith({
+      id: 'space-suggest-modal',
+      personId: 'space-person-1',
+      assetFaceId: 'face-2',
+    });
+
+    await modalProps.ignore('face-3');
+    expect(sdkMock.ignoreSpacePersonFaceSuggestion).toHaveBeenCalledWith({
+      id: 'space-suggest-modal',
+      personId: 'space-person-1',
+      assetFaceId: 'face-3',
+    });
+
+    expect(sdkMock.confirmPersonFaceSuggestion).not.toHaveBeenCalled();
+
+    closeModal({ confirmed: 0 });
+
+    await vi.waitFor(() => {
+      expect(sdkMock.getSpacePersonFaceSuggestions).toHaveBeenLastCalledWith({
+        id: 'space-suggest-modal',
+        personId: 'space-person-1',
+        page: 1,
+        size: 5,
+      });
+    });
+  });
+
+  it('opens the review modal with personal SDK actions including ignore', async () => {
+    let closeModal!: (value: { confirmed: number }) => void;
+    sdkMock.getPersonFaceSuggestions
+      .mockResolvedValueOnce({ total: 1, items: [makeSuggestion({ assetFaceId: 'face-1' })] })
+      .mockResolvedValueOnce({ total: 0, items: [] });
+    vi.mocked(modalManager.show).mockReturnValue(
+      new Promise((resolve) => {
+        closeModal = resolve;
+      }) as never,
+    );
+
+    await renderPage({ person: makePerson({ name: 'Alice' }) });
+
+    await userEvent.click(page.getByTestId('suggestion-review-btn'));
+
+    const modalProps = vi.mocked(modalManager.show).mock.calls[0][1] as unknown as {
+      loadPage: (request: { page: number; size: number }) => Promise<PersonFaceSuggestionPageResponseDto>;
+      confirm: (assetFaceId: string) => Promise<void>;
+      dismiss: (assetFaceId: string) => Promise<void>;
+      ignore: (assetFaceId: string) => Promise<void>;
+    };
+
+    await modalProps.loadPage({ page: 2, size: 50 });
+    expect(sdkMock.getPersonFaceSuggestions).toHaveBeenLastCalledWith({
+      id: 'person-1',
+      page: 2,
+      size: 50,
+    });
+
+    await modalProps.confirm('face-1');
+    expect(sdkMock.confirmPersonFaceSuggestion).toHaveBeenCalledWith({ id: 'person-1', assetFaceId: 'face-1' });
+
+    await modalProps.dismiss('face-2');
+    expect(sdkMock.dismissPersonFaceSuggestion).toHaveBeenCalledWith({ id: 'person-1', assetFaceId: 'face-2' });
+
+    await modalProps.ignore('face-3');
+    expect(sdkMock.ignorePersonFaceSuggestion).toHaveBeenCalledWith({ id: 'person-1', assetFaceId: 'face-3' });
+
+    closeModal({ confirmed: 0 });
+
+    await vi.waitFor(() => {
+      expect(sdkMock.getPersonFaceSuggestions).toHaveBeenLastCalledWith({ id: 'person-1', page: 1, size: 5 });
+    });
+  });
+
+  it('keeps modal actions scoped to the person the review was opened for after route navigation', async () => {
+    let closeModal!: (value: { confirmed: number }) => void;
+    sdkMock.getPersonFaceSuggestions
+      .mockResolvedValueOnce({ total: 1, items: [makeSuggestion({ assetFaceId: 'face-1' })] })
+      .mockResolvedValueOnce({ total: 2, items: [makeSuggestion({ assetFaceId: 'face-2' })] })
+      .mockResolvedValueOnce({ total: 0, items: [] });
+    vi.mocked(modalManager.show).mockReturnValue(
+      new Promise((resolve) => {
+        closeModal = resolve;
+      }) as never,
+    );
+
+    const secondPerson = makePerson({
+      id: 'person-2',
+      name: 'Bob',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    });
+    const view = await renderPage({ person: makePerson({ name: 'Alice' }) });
+
+    await userEvent.click(page.getByTestId('suggestion-review-btn'));
+
+    const modalProps = vi.mocked(modalManager.show).mock.calls[0][1] as unknown as {
+      loadPage: (request: { page: number; size: number }) => Promise<PersonFaceSuggestionPageResponseDto>;
+      confirm: (assetFaceId: string) => Promise<void>;
+      dismiss: (assetFaceId: string) => Promise<void>;
+      ignore: (assetFaceId: string) => Promise<void>;
+    };
+
+    await view.rerender({
+      component: PersonDetailPage,
+      componentProps: {
+        data: {
+          person: secondPerson,
+          statistics: { assets: 5, faces: 6 },
+          meta: { title: 'Bob' },
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(sdkMock.getPersonFaceSuggestions).toHaveBeenLastCalledWith({ id: 'person-2', page: 1, size: 5 });
+    });
+
+    await modalProps.loadPage({ page: 2, size: 50 });
+    await modalProps.confirm('face-1');
+    await modalProps.dismiss('face-2');
+    await modalProps.ignore('face-3');
+
+    expect(sdkMock.getPersonFaceSuggestions).toHaveBeenLastCalledWith({
+      id: 'person-1',
+      page: 2,
+      size: 50,
+    });
+    expect(sdkMock.confirmPersonFaceSuggestion).toHaveBeenCalledWith({ id: 'person-1', assetFaceId: 'face-1' });
+    expect(sdkMock.dismissPersonFaceSuggestion).toHaveBeenCalledWith({ id: 'person-1', assetFaceId: 'face-2' });
+    expect(sdkMock.ignorePersonFaceSuggestion).toHaveBeenCalledWith({ id: 'person-1', assetFaceId: 'face-3' });
+
+    closeModal({ confirmed: 0 });
+
+    await vi.waitFor(() => {
+      expect(sdkMock.getPersonFaceSuggestions).toHaveBeenLastCalledWith({ id: 'person-1', page: 1, size: 5 });
+    });
+  });
+
+  // S12.11/F32a: cross-route snooze consistency (pin). The space route's snoozeId is `person.id` (its own
+  // SharedSpacePersonResponseDto id — see space-person-detail-page.spec.ts); this route's snoozeId for the
+  // identical space-primary profile is `getSuggestionTarget(person).personId`. Rendering both routes' pages in
+  // one spec file isn't practical (each pulls in a distinct set of top-level `vi.mock()`s), so this drives the
+  // REAL, unmocked face-suggestion-snooze module directly for the "other route" half of each assertion —
+  // exactly the calls that route's own banner would make with the same id.
+  //
+  // Pin, not a fresh red/green: the server always sets `person.id === primaryProfile.id` for a space-primary
+  // identity (FaceIdentityRepository.mapAccessiblePerson), so with realistic fixtures this passes even against
+  // the pre-fix code that derived the key from `person.id` directly — the two values coincide here regardless.
+  // What this guards is the WIRING: that `snoozeId` is actually threaded from `getSuggestionTarget(person)`,
+  // not a value that merely happens to match. Confirmed by mutating `snoozeId` to a wrong constant and back
+  // (see the slice-12 report's Pin evidence) — this test goes red under that mutation and green again on revert.
+  describe('cross-route snooze consistency (F32a)', () => {
+    const PROFILE_ID = 'space-person-1';
+    const spacePrimaryPerson = () =>
+      makePerson({
+        id: PROFILE_ID,
+        name: 'Alice',
+        primaryProfile: { type: Type.SpacePerson, id: PROFILE_ID, spaceId: 'space-snooze-consistency' },
+      });
+
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    it('a snooze recorded by the space route (keyed on the raw profile id) suppresses this route’s banner', async () => {
+      sdkMock.getSpacePersonFaceSuggestions.mockResolvedValue({
+        total: 3,
+        items: [makeSuggestion()],
+      });
+      // The snooze module keys on the authenticated user (both `user` AND `preferences` — see
+      // AuthManager#authenticated), so the (real, unmocked) session has to be established before recording it,
+      // exactly as it would be by the time the space route runs.
+      authManager.setUser(factory.user({ id: 'current-user-id' }));
+      authManager.setPreferences(factory.preferences());
+      // What clicking "Not now" on /spaces/… would do: it passes snoozeId={person.id}, the space-person's own
+      // (raw) id — identical to PROFILE_ID here.
+      snoozeSuggestions(PROFILE_ID, 3);
+
+      await renderPage({ person: spacePrimaryPerson() });
+
+      await vi.waitFor(() => expect(sdkMock.getSpacePersonFaceSuggestions).toHaveBeenCalled());
+      await expect.element(page.getByTestId('person-suggestion-banner')).not.toBeInTheDocument();
+    });
+
+    it('a snooze recorded on this route reads back as snoozed under the raw profile id the space route uses', async () => {
+      sdkMock.getSpacePersonFaceSuggestions.mockResolvedValue({
+        total: 3,
+        items: [makeSuggestion()],
+      });
+
+      await renderPage({ person: spacePrimaryPerson() });
+      await expect.element(page.getByTestId('person-suggestion-banner')).toBeInTheDocument();
+      await userEvent.click(page.getByTestId('suggestion-snooze-btn'));
+      await expect.element(page.getByTestId('person-suggestion-banner')).not.toBeInTheDocument();
+
+      // What the space route's banner would check for the same profile: isSuggestionSnoozed(person.id, total).
+      expect(isSuggestionSnoozed(PROFILE_ID, 3)).toBe(true);
+    });
+  });
+});

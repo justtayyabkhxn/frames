@@ -1,0 +1,459 @@
+import { createFilterState } from '#lib/components/filter-panel/filter-panel.ts';
+import {
+  buildPhotosTimelineOptions,
+  getPhotosPersonFilterId,
+  handlePhotosRemoveFilter,
+} from '#lib/utils/photos-filter-options.ts';
+import { AssetOrder, AssetTypeEnum, AssetVisibility, Type } from '@immich/sdk';
+import { describe, expect, it } from 'vitest';
+
+/** The signed-in user whose personal timeline /photos is. */
+const MY_USER_ID = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
+
+describe('buildPhotosTimelineOptions', () => {
+  it('should return base options with no filters', () => {
+    const options = buildPhotosTimelineOptions(createFilterState(), MY_USER_ID);
+    expect(options).toEqual({
+      userId: MY_USER_ID,
+      visibility: AssetVisibility.Timeline,
+      withStacked: true,
+      withPartners: true,
+      withSharedSpaces: true,
+      order: AssetOrder.Desc,
+    });
+  });
+
+  it('should use personIds (not spacePersonIds) for people filter', () => {
+    const filters = { ...createFilterState(), personIds: ['person-1', 'person-2'] };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.personIds).toEqual(['person-1', 'person-2']);
+    expect(options).not.toHaveProperty('spacePersonIds');
+  });
+
+  it('should include city and country for location filter', () => {
+    const filters = { ...createFilterState(), country: 'Germany', city: 'Berlin' };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.country).toBe('Germany');
+    expect(options.city).toBe('Berlin');
+  });
+
+  it('should include make and model for camera filter', () => {
+    const filters = { ...createFilterState(), make: 'Sony', model: 'A7III' };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.make).toBe('Sony');
+    expect(options.model).toBe('A7III');
+  });
+
+  it('should include tagIds for tags filter', () => {
+    const filters = { ...createFilterState(), tagIds: ['tag-1'] };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.tagIds).toEqual(['tag-1']);
+  });
+
+  it('should include rating for rating filter', () => {
+    const filters = { ...createFilterState(), rating: 4 };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.rating).toBe(4);
+  });
+
+  it('should include trimmed description/filename/ocr text filters', () => {
+    const filters = { ...createFilterState(), description: '  beach  ', originalFileName: 'IMG_001', ocr: 'invoice' };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.description).toBe('beach');
+    expect(options.originalFileName).toBe('IMG_001');
+    expect(options.ocr).toBe('invoice');
+  });
+
+  it('should omit empty / whitespace-only text filters', () => {
+    const filters = { ...createFilterState(), description: ' '.repeat(3), originalFileName: '', ocr: undefined };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options).not.toHaveProperty('description');
+    expect(options).not.toHaveProperty('originalFileName');
+    expect(options).not.toHaveProperty('ocr');
+  });
+
+  it('should map mediaType image to AssetTypeEnum.Image', () => {
+    const filters = { ...createFilterState(), mediaType: 'image' as const };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.$type).toBe(AssetTypeEnum.Image);
+  });
+
+  it('should map mediaType video to AssetTypeEnum.Video', () => {
+    const filters = { ...createFilterState(), mediaType: 'video' as const };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.$type).toBe(AssetTypeEnum.Video);
+  });
+
+  it('should not include $type when mediaType is all', () => {
+    const options = buildPhotosTimelineOptions(createFilterState(), MY_USER_ID);
+    expect(options).not.toHaveProperty('$type');
+  });
+
+  it('should default to desc order when sortOrder is relevance', () => {
+    const filters = { ...createFilterState(), sortOrder: 'relevance' as const };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.order).toBe(AssetOrder.Desc);
+  });
+
+  it('should set ascending order', () => {
+    const filters = { ...createFilterState(), sortOrder: 'asc' as const };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.order).toBe(AssetOrder.Asc);
+  });
+
+  it('should set year-only date range using UTC (consistent with buildFilterContext)', () => {
+    const filters = { ...createFilterState(), selectedYear: 2023 };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.takenAfter).toBe('2023-01-01T00:00:00.000Z');
+    expect(options.takenBefore).toBe('2024-01-01T00:00:00.000Z');
+  });
+
+  it('should set year+month date range using UTC (consistent with buildFilterContext)', () => {
+    const filters = { ...createFilterState(), selectedYear: 2023, selectedMonth: 8 };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.takenAfter).toBe('2023-08-01T00:00:00.000Z');
+    expect(options.takenBefore).toBe('2023-09-01T00:00:00.000Z');
+  });
+
+  it('should set bounded custom date range using UTC from buildFilterContext', () => {
+    const filters = { ...createFilterState(), dateAfter: '2024-01-01', dateBefore: '2024-12-31' };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.takenAfter).toBe('2024-01-01T00:00:00.000Z');
+    expect(options.takenBefore).toBe('2025-01-01T00:00:00.000Z');
+  });
+
+  it('should set from-only custom date range using UTC from buildFilterContext', () => {
+    const filters = { ...createFilterState(), dateAfter: '2024-01-01' };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.takenAfter).toBe('2024-01-01T00:00:00.000Z');
+    expect(options).not.toHaveProperty('takenBefore');
+  });
+
+  it('should set to-only custom date range using UTC from buildFilterContext', () => {
+    const filters = { ...createFilterState(), dateBefore: '2024-12-31' };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options).not.toHaveProperty('takenAfter');
+    expect(options.takenBefore).toBe('2025-01-01T00:00:00.000Z');
+  });
+
+  it('should preserve withPartners and withSharedSpaces when filters are active', () => {
+    const filters = { ...createFilterState(), country: 'Japan', rating: 5 };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.withPartners).toBe(true);
+    expect(options.withSharedSpaces).toBe(true);
+  });
+
+  it('should include isFavorite and keep partner/shared-space scope active when favorites is selected (#763 slice 4)', () => {
+    const filters = { ...createFilterState(), isFavorite: true };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+
+    expect(options.isFavorite).toBe(true);
+    expect(options.withPartners).toBe(true);
+    expect(options.withSharedSpaces).toBe(true);
+  });
+
+  it('should include has-no-album when selected', () => {
+    const filters = { ...createFilterState(), isNotInAlbum: true };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+
+    expect(options.isNotInAlbum).toBe(true);
+  });
+
+  it('should omit has-no-album when it is false', () => {
+    const filters = { ...createFilterState(), isNotInAlbum: false };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+
+    expect(options).not.toHaveProperty('isNotInAlbum');
+  });
+
+  it('should include has-album when selected', () => {
+    const filters = { ...createFilterState(), isInAlbum: true };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+
+    expect(options.isInAlbum).toBe(true);
+  });
+
+  it('should omit has-album when it is false', () => {
+    const filters = { ...createFilterState(), isInAlbum: false };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+
+    expect(options).not.toHaveProperty('isInAlbum');
+  });
+
+  it('forwards the new filter dimensions to the timeline query', () => {
+    const options = buildPhotosTimelineOptions(
+      {
+        ...createFilterState(),
+        lensModel: 'RF24-70mm F2.8 L IS USM',
+        state: 'State of Berlin',
+        albumId: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+        ownerId: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+      },
+      MY_USER_ID,
+    );
+
+    expect(options).toMatchObject({
+      lensModel: 'RF24-70mm F2.8 L IS USM',
+      state: 'State of Berlin',
+      albumId: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      ownerId: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+    });
+  });
+
+  it('should handle multiple simultaneous filters', () => {
+    const filters = {
+      ...createFilterState(),
+      personIds: ['p1'],
+      country: 'Germany',
+      city: 'Berlin',
+      make: 'Sony',
+      tagIds: ['t1', 't2'],
+      rating: 3,
+      mediaType: 'image' as const,
+      isNotInAlbum: true,
+      sortOrder: 'asc' as const,
+      selectedYear: 2023,
+    };
+    const options = buildPhotosTimelineOptions(filters, MY_USER_ID);
+    expect(options.personIds).toEqual(['p1']);
+    expect(options.country).toBe('Germany');
+    expect(options.city).toBe('Berlin');
+    expect(options.make).toBe('Sony');
+    expect(options.tagIds).toEqual(['t1', 't2']);
+    expect(options.rating).toBe(3);
+    expect(options.isNotInAlbum).toBe(true);
+    expect(options.$type).toBe(AssetTypeEnum.Image);
+    expect(options.order).toBe(AssetOrder.Asc);
+    expect(options.takenAfter).toBeDefined();
+  });
+
+  it('should not include empty personIds array', () => {
+    const options = buildPhotosTimelineOptions(createFilterState(), MY_USER_ID);
+    expect(options).not.toHaveProperty('personIds');
+  });
+
+  it('should not include empty tagIds array', () => {
+    const options = buildPhotosTimelineOptions(createFilterState(), MY_USER_ID);
+    expect(options).not.toHaveProperty('tagIds');
+  });
+
+  it('should not include undefined optional fields', () => {
+    const options = buildPhotosTimelineOptions(createFilterState(), MY_USER_ID);
+    expect(options).not.toHaveProperty('city');
+    expect(options).not.toHaveProperty('country');
+    expect(options).not.toHaveProperty('make');
+    expect(options).not.toHaveProperty('model');
+    expect(options).not.toHaveProperty('rating');
+    expect(options).not.toHaveProperty('takenAfter');
+    expect(options).not.toHaveProperty('takenBefore');
+  });
+
+  describe('userId: the owner gate is ANDed with the album gate (D3)', () => {
+    // /photos is the caller's PERSONAL timeline. The server only defaults `userId` to the caller
+    // when neither albumId nor spaceId is present (timeline.service.ts timeBucketChecks) — that
+    // branch is load-bearing for the ALBUM page, where album ACCESS is the whole scope and a viewer
+    // must see the owner's assets (medium E22). So the personal timeline has to state its own scope:
+    // if /photos sends `albumId` without `userId`, its scope silently collapses to "the album",
+    // and `?albumId=A&ownerId=<co-member>` starts listing that co-member's assets — plus the album
+    // OWNER's favourites for the Favorites chip (isFavorite is the owner's flag) — on MY timeline.
+    it('always sends userId, so an album chip narrows the personal timeline instead of replacing it', () => {
+      const options = buildPhotosTimelineOptions(
+        { ...createFilterState(), albumId: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa' },
+        MY_USER_ID,
+      );
+
+      expect(options.userId).toBe(MY_USER_ID);
+      expect(options.albumId).toBe('aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa');
+      // Both scoping widenings stay on: the album chip narrows within (me + partners + my timeline
+      // spaces), it does not swap that scope out.
+      expect(options.withPartners).toBe(true);
+      expect(options.withSharedSpaces).toBe(true);
+    });
+
+    it('sends userId with no album chip too (the scope is stated, not inferred)', () => {
+      const options = buildPhotosTimelineOptions(createFilterState(), MY_USER_ID);
+      expect(options.userId).toBe(MY_USER_ID);
+    });
+
+    it('keeps the owner gate under the favorites chip (#763: the widenings now stay too)', () => {
+      const options = buildPhotosTimelineOptions(
+        { ...createFilterState(), isFavorite: true, albumId: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa' },
+        MY_USER_ID,
+      );
+
+      // The owner gate is the point of this test and is unchanged.
+      expect(options.userId).toBe(MY_USER_ID);
+      // #763: the widenings used to be dropped here, because `isFavorite` was the asset OWNER's
+      // flag and the server rejected the combination. It is a per-user overlay row now, so the
+      // chip narrows to MY favourites and partner/space content stays legitimately in scope.
+      expect(options.withPartners).toBe(true);
+      expect(options.withSharedSpaces).toBe(true);
+    });
+  });
+});
+
+describe('handlePhotosRemoveFilter', () => {
+  it('should remove a specific person from personIds', () => {
+    const filters = { ...createFilterState(), personIds: ['p1', 'p2', 'p3'] };
+    const result = handlePhotosRemoveFilter(filters, 'person', 'p2');
+    expect(result.personIds).toEqual(['p1', 'p3']);
+  });
+
+  it('should clear location (both country and city)', () => {
+    const filters = { ...createFilterState(), country: 'Germany', city: 'Berlin' };
+    const result = handlePhotosRemoveFilter(filters, 'location');
+    expect(result.country).toBeUndefined();
+    expect(result.city).toBeUndefined();
+  });
+
+  it('should clear the description / filename / ocr text filters by chip type', () => {
+    const filters = { ...createFilterState(), description: 'beach', originalFileName: 'IMG', ocr: 'invoice' };
+    expect(handlePhotosRemoveFilter(filters, 'description').description).toBeUndefined();
+    expect(handlePhotosRemoveFilter(filters, 'filename').originalFileName).toBeUndefined();
+    expect(handlePhotosRemoveFilter(filters, 'ocr').ocr).toBeUndefined();
+  });
+
+  it('should clear camera (both make and model)', () => {
+    const filters = { ...createFilterState(), make: 'Sony', model: 'A7III' };
+    const result = handlePhotosRemoveFilter(filters, 'camera');
+    expect(result.make).toBeUndefined();
+    expect(result.model).toBeUndefined();
+  });
+
+  it('should remove a specific tag from tagIds', () => {
+    const filters = { ...createFilterState(), tagIds: ['t1', 't2'] };
+    const result = handlePhotosRemoveFilter(filters, 'tag', 't1');
+    expect(result.tagIds).toEqual(['t2']);
+  });
+
+  it('should clear rating', () => {
+    const filters = { ...createFilterState(), rating: 4 };
+    const result = handlePhotosRemoveFilter(filters, 'rating');
+    expect(result.rating).toBeUndefined();
+  });
+
+  it('should reset mediaType to all', () => {
+    const filters = { ...createFilterState(), mediaType: 'video' as const };
+    const result = handlePhotosRemoveFilter(filters, 'media');
+    expect(result.mediaType).toBe('all');
+  });
+
+  it('should handle mediaType alias', () => {
+    const filters = { ...createFilterState(), mediaType: 'image' as const };
+    const result = handlePhotosRemoveFilter(filters, 'mediaType');
+    expect(result.mediaType).toBe('all');
+  });
+
+  it('should clear favorites filter', () => {
+    const filters = { ...createFilterState(), isFavorite: true };
+
+    expect(handlePhotosRemoveFilter(filters, 'favorites').isFavorite).toBeUndefined();
+    expect(handlePhotosRemoveFilter(filters, 'isFavorite').isFavorite).toBeUndefined();
+  });
+
+  it('should clear has-no-album filter', () => {
+    const filters = { ...createFilterState(), isNotInAlbum: true };
+
+    expect(handlePhotosRemoveFilter(filters, 'albums').isNotInAlbum).toBeUndefined();
+    expect(handlePhotosRemoveFilter(filters, 'isNotInAlbum').isNotInAlbum).toBeUndefined();
+  });
+
+  it('should clear has-album filter', () => {
+    const filters = { ...createFilterState(), isInAlbum: true };
+
+    expect(handlePhotosRemoveFilter(filters, 'albums').isInAlbum).toBeUndefined();
+    expect(handlePhotosRemoveFilter(filters, 'isInAlbum').isInAlbum).toBeUndefined();
+  });
+
+  it('should clear both album booleans when removing the albums filter', () => {
+    const filters = { ...createFilterState(), isNotInAlbum: true, isInAlbum: true };
+    const cleared = handlePhotosRemoveFilter(filters, 'albums');
+
+    expect(cleared.isNotInAlbum).toBeUndefined();
+    expect(cleared.isInAlbum).toBeUndefined();
+  });
+
+  it('should preserve sortOrder when removing filters', () => {
+    const filters = { ...createFilterState(), sortOrder: 'asc' as const, rating: 5 };
+    const result = handlePhotosRemoveFilter(filters, 'rating');
+    expect(result.sortOrder).toBe('asc');
+    expect(result.rating).toBeUndefined();
+  });
+
+  it('should preserve other filters when removing one', () => {
+    const filters = { ...createFilterState(), country: 'Germany', rating: 4, personIds: ['p1'] };
+    const result = handlePhotosRemoveFilter(filters, 'rating');
+    expect(result.country).toBe('Germany');
+    expect(result.personIds).toEqual(['p1']);
+    expect(result.rating).toBeUndefined();
+  });
+
+  it('should clear timeline (both year and month)', () => {
+    const filters = {
+      ...createFilterState(),
+      dateAfter: '2024-01-01',
+      dateBefore: '2024-12-31',
+      selectedYear: 2023,
+      selectedMonth: 8,
+    };
+    const result = handlePhotosRemoveFilter(filters, 'timeline');
+    expect(result.dateAfter).toBeUndefined();
+    expect(result.dateBefore).toBeUndefined();
+    expect(result.selectedYear).toBeUndefined();
+    expect(result.selectedMonth).toBeUndefined();
+  });
+
+  it('should clear timeline when only year is set', () => {
+    const filters = { ...createFilterState(), selectedYear: 2023 };
+    const result = handlePhotosRemoveFilter(filters, 'timeline');
+    expect(result.selectedYear).toBeUndefined();
+    expect(result.selectedMonth).toBeUndefined();
+  });
+
+  it('clears ownerId for the owner chip (delegates to the shared handleRemoveFilter)', () => {
+    const filters = { ...createFilterState(), ownerId: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb' };
+    const result = handlePhotosRemoveFilter(filters, 'owner');
+    expect(result.ownerId).toBeUndefined();
+  });
+
+  it('clears only temporal filters through the timeline chip removal path', () => {
+    const filters = {
+      ...createFilterState(),
+      personIds: ['person-1'],
+      tagIds: ['tag-1'],
+      dateAfter: '2024-01-01',
+      dateBefore: '2024-12-31',
+      selectedYear: 2015,
+      selectedMonth: 8,
+    };
+
+    expect(handlePhotosRemoveFilter(filters, 'timeline')).toEqual({
+      ...filters,
+      dateAfter: undefined,
+      dateBefore: undefined,
+      selectedYear: undefined,
+      selectedMonth: undefined,
+    });
+  });
+});
+
+describe('getPhotosPersonFilterId', () => {
+  it('uses the scoped filterId when suggestions include one', () => {
+    expect(
+      getPhotosPersonFilterId({
+        id: 'identity-group-1',
+        filterId: 'person:person-1',
+        primaryProfile: { type: Type.UserPerson, id: 'person-1' },
+      }),
+    ).toBe('person:person-1');
+  });
+
+  it('falls back to a primary profile scoped id', () => {
+    expect(
+      getPhotosPersonFilterId({
+        id: 'identity-group-1',
+        primaryProfile: { type: Type.SpacePerson, id: 'space-person-1', spaceId: 'space-1' },
+      }),
+    ).toBe('space-person:space-person-1');
+  });
+});

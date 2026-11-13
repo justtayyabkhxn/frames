@@ -1,0 +1,100 @@
+<script lang="ts">
+  import SettingInputField from '#lib/components/shared-components/settings/SettingInputField.svelte';
+  import SettingSwitch from '#lib/components/shared-components/settings/SettingSwitch.svelte';
+  import SettingButtonsRow from '#lib/components/shared-components/settings/SystemConfigButtonRow.svelte';
+  import { SettingInputFieldType } from '#lib/constants.ts';
+  import FormatMessage from '#lib/elements/FormatMessage.svelte';
+  import { featureFlagsManager } from '#lib/managers/feature-flags-manager.svelte.ts';
+  import { createPreloadedQuery } from '#lib/queries/client.ts';
+  import { getAdminConfigQuery } from '#lib/queries/config-admin.query.ts';
+  import { Link, Text } from '@immich/ui';
+  import { cloneDeep } from 'lodash-es';
+  import { t } from 'svelte-i18n';
+  import { fade } from 'svelte/transition';
+  import SettingSelect from './SettingSelect.svelte';
+
+  const query = createPreloadedQuery(getAdminConfigQuery);
+  const config = $derived(query.data);
+
+  const disabled = $derived(featureFlagsManager.value.configFile);
+  let configToEdit = $state(cloneDeep(config));
+
+  let cronExpressionOptions = $derived([
+    { text: $t('interval.night_at_midnight'), value: '0 0 * * *' },
+    { text: $t('interval.night_at_twoam'), value: '0 02 * * *' },
+    { text: $t('interval.day_at_onepm'), value: '0 13 * * *' },
+    { text: $t('interval.hours', { values: { hours: 6 } }), value: '0 */6 * * *' },
+  ]);
+</script>
+
+<div>
+  <div in:fade={{ duration: 500 }}>
+    <form autocomplete="off" onsubmit={(event) => event.preventDefault()}>
+      <div class="ms-4 mt-4 flex flex-col gap-4">
+        <SettingSwitch
+          title={$t('admin.backup_database_enable_description')}
+          {disabled}
+          bind:checked={configToEdit.backup.database.enabled}
+        />
+
+        <SettingSelect
+          options={cronExpressionOptions}
+          disabled={disabled || !configToEdit.backup.database.enabled}
+          name="expression"
+          label={$t('admin.cron_expression_presets')}
+          bind:value={configToEdit.backup.database.cronExpression}
+        />
+
+        <SettingInputField
+          inputType={SettingInputFieldType.TEXT}
+          required={true}
+          disabled={disabled || !configToEdit.backup.database.enabled}
+          label={$t('admin.cron_expression')}
+          bind:value={configToEdit.backup.database.cronExpression}
+          isEdited={configToEdit.backup.database.cronExpression !== config.backup.database.cronExpression}
+        >
+          {#snippet descriptionSnippet()}
+            <p class="text-sm dark:text-immich-dark-fg">
+              <FormatMessage key="admin.cron_expression_description">
+                {#snippet children({ message })}
+                  <Link href="https://crontab.guru/#{configToEdit.backup.database.cronExpression.replaceAll(' ', '_')}">
+                    {message}
+                    <br />
+                  </Link>
+                {/snippet}
+              </FormatMessage>
+            </p>
+          {/snippet}
+        </SettingInputField>
+
+        <SettingInputField
+          inputType={SettingInputFieldType.NUMBER}
+          required={true}
+          label={$t('admin.backup_keep_last_amount')}
+          {disabled}
+          bind:value={configToEdit.backup.database.keepLastAmount}
+          isEdited={configToEdit.backup.database.keepLastAmount !== config.backup.database.keepLastAmount}
+        />
+
+        <!-- Gallery-fork: offered only on the S3 storage backend, which is where the bucket, credentials,
+             region and endpoint these objects are written with come from; the key prefix is fixed at
+             `backups/`. There is nothing to configure beyond the switch, and the group is absent rather
+             than disabled when it cannot apply. -->
+        {#if featureFlagsManager.value.s3Storage}
+          <hr />
+
+          <SettingSwitch
+            title={$t('admin.backup_s3_enabled')}
+            subtitle={$t('admin.backup_s3_enabled_description')}
+            {disabled}
+            bind:checked={configToEdit.backup.database.s3.enabled}
+          />
+
+          <Text size="small" color="muted">{$t('admin.backup_s3_credentials_hint')}</Text>
+        {/if}
+
+        <SettingButtonsRow {disabled} bind:configToEdit keys={['backup']} />
+      </div>
+    </form>
+  </div>
+</div>

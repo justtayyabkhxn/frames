@@ -1,0 +1,38 @@
+<script lang="ts">
+  interface Props {
+    filters: string[];
+    labels?: string[];
+    selected: string;
+    label: string;
+    onSelect: (selected: string) => void;
+  }
+
+  const { filters, selected, label, labels, onSelect }: Props = $props();
+
+  const id = $props.id();
+</script>
+
+<fieldset
+  class="flex h-full rounded-2xl bg-gray-200 ring-gray-400 has-focus-visible:ring dark:bg-immich-dark-gray dark:ring-gray-600"
+>
+  <legend class="sr-only">{label}</legend>
+  {#each filters as filter, index (`${id}-${index}`)}
+    <div class="group">
+      <input
+        type="radio"
+        name={id}
+        id="{id}-{index}"
+        class="peer sr-only"
+        value={filter}
+        checked={filter === selected}
+        onchange={() => onSelect(filter)}
+      />
+      <label
+        for="{id}-{index}"
+        class="flex h-full cursor-pointer items-center px-4 text-sm group-first-of-type:rounded-s-2xl group-last-of-type:rounded-e-2xl peer-checked:bg-gray-300 hover:bg-gray-300 peer-checked:dark:bg-gray-700 dark:hover:bg-gray-800"
+      >
+        {labels?.[index] ?? filter}
+      </label>
+    </div>
+  {/each}
+</fieldset>

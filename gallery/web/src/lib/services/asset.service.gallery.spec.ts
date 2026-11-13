@@ -1,0 +1,432 @@
+import { libraryView } from '#lib/gallery/library-view/library-view.svelte.ts';
+import { assetMultiSelectManager } from '#lib/managers/asset-multi-select-manager.svelte.ts';
+import { authManager } from '#lib/managers/auth-manager.svelte.ts';
+import { eventManager } from '#lib/managers/event-manager.svelte.ts';
+import AssetAddToCollectionModal from '#lib/modals/AssetAddToCollectionModal.svelte';
+import AssetTagModal from '#lib/modals/AssetTagModal.svelte';
+import SharedLinkCreateModal from '#lib/modals/SharedLinkCreateModal.svelte';
+import { queryClient } from '#lib/queries/client.ts';
+import { getUserConfigQuery } from '#lib/queries/config-user.query.ts';
+import { getAssetActions, getAssetBulkActions, handleDownloadAsset } from '#lib/services/asset.service.ts';
+import { downloadUrl, setSharedLink } from '#lib/utils.ts';
+import { getFormatter } from '#lib/utils/i18n.ts';
+import { factory } from '#test/unit/factories.ts';
+import { LibraryView, updateAsset, updateAssetFavorites, type AssetResponseDto, type UserConfigDto } from '@immich/sdk';
+import { modalManager, toastManager } from '@immich/ui';
+import { vitest } from 'vitest';
+
+vitest.mock('@immich/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@immich/ui')>()),
+  toastManager: {
+    primary: vitest.fn(),
+    warning: vitest.fn(),
+    danger: vitest.fn(),
+  },
+  modalManager: { show: vitest.fn() },
+}));
+
+vitest.mock('#lib/managers/asset-multi-select-manager.svelte.js', () => ({
+  assetMultiSelectManager: { assets: [{ id: 'x1' }, { id: 'x2' }] },
+}));
+
+// Spied rather than replaced by a factory: a factory that re-imports the real module deadlocks the
+// browser runner on the module cycle through `#lib/utils.ts`, and a bare factory would drop the
+// module's other exports, which its importers need.
+vitest.mock(import('#lib/utils/i18n.ts'), { spy: true });
+
+vitest.mock('@immich/sdk', async () => {
+  const originalModule = await vitest.importActual<typeof import('@immich/sdk')>('@immich/sdk');
+  return {
+    ...originalModule,
+    updateAsset: vitest.fn(),
+    updateAssetFavorites: vitest.fn(),
+  };
+});
+
+vitest.mock('#lib/managers/asset-viewer-manager.svelte.js', () => ({
+  assetViewerManager: {
+    setAsset: vitest.fn(),
+  },
+}));
+
+vitest.mock(import('#lib/utils.ts'), { spy: true });
+
+vi.mock('$app/navigation', async () => ({ ...(await import('#test/unit/mocks/app-navigation.ts')), goto: vi.fn() }));
+
+beforeEach(() => {
+  // Never let a test start a real browser download.
+  vitest.mocked(downloadUrl).mockImplementation(() => {});
+});
+
+describe('AssetService', () => {
+  describe('getAssetActions', () => {
+    beforeEach(() => {
+      authManager.setPreferences(factory.preferences());
+      queryClient.setQueryData(getUserConfigQuery().queryKey, {
+        machineLearning: {
+          enabled: false,
+          clip: { enabled: false },
+          duplicateDetection: { enabled: false },
+          facialRecognition: { enabled: false },
+          ocr: { enabled: false },
+        },
+      } as UserConfigDto);
+    });
+
+    it('should offer the share action if the user owns the asset', () => {
+      const ownerId = 'owner';
+      authManager.setUser(factory.user({ id: ownerId }));
+      setSharedLink(undefined);
+      const asset = factory.asset({ ownerId });
+      const assetActions = getAssetActions(() => '', asset);
+      expect(assetActions.Share.$if?.()).toStrictEqual(true);
+    });
+
+    it('should offer the share action if a shared link stripped the asset owner', () => {
+      // A `showMetadata: false` shared link returns SanitizedAssetResponseDto, which omits `ownerId`
+      // altogether, so ownership is unknowable client-side. The owner still has to get the button.
+      authManager.setUser(factory.user({ id: 'owner' }));
+      setSharedLink(factory.sharedLink({ allowDownload: false }));
+      const { ownerId: _, ...sanitized } = factory.asset();
+      const assetActions = getAssetActions(() => '', sanitized as AssetResponseDto);
+      expect(assetActions.Share.$if?.()).toStrictEqual(true);
+    });
+
+    it('should not offer the share action if the user does not own the asset', () => {
+      // Server-side `Permission.AssetShare` is owner ∪ partner only — album or space membership
+      // grants no share access, so a shared-album/space viewer would get
+      // "Not found or no asset.share access" from POST /shared-links (#871).
+      authManager.setUser(factory.user({ id: 'non-owner' }));
+      setSharedLink(undefined);
+      const asset = factory.asset({ ownerId: 'owner' });
+      const assetActions = getAssetActions(() => '', asset);
+      expect(assetActions.Share.$if?.()).toStrictEqual(false);
+    });
+  });
+
+  describe('handleDownloadAsset', () => {
+    it('should request attachment disposition for single-asset downloads', async () => {
+      const $t = vitest.fn().mockReturnValue('formatter');
+      vitest.mocked(getFormatter).mockResolvedValue($t);
+      const asset = factory.asset({ id: 'asset-1', originalFileName: 'asset.jpg', thumbhash: 'cache-1' });
+
+      await handleDownloadAsset(asset, { edited: false });
+
+      expect(vitest.mocked(downloadUrl)).toHaveBeenCalledWith(
+        expect.stringContaining('/api/assets/asset-1/original'),
+        'asset.jpg',
+      );
+      expect(vitest.mocked(downloadUrl).mock.calls[0][0]).toContain('download=true');
+      expect(vitest.mocked(downloadUrl).mock.calls[0][0]).toContain('edited=false');
+      expect(vitest.mocked(downloadUrl).mock.calls[0][0]).toContain('c=cache-1');
+    });
+  });
+});
+
+describe('view in timeline', () => {
+  it('#1038: goes back to both library views, so the photo is on the timeline', async () => {
+    libraryView.current = LibraryView.Personal;
+    const action = getAssetActions(() => '', factory.asset()).ViewInTimeline;
+
+    await action.onAction({ action, event: new Event('click') });
+
+    expect(libraryView.current).toBe('both');
+  });
+});
+
+describe('add to album/space entry points', () => {
+  beforeEach(() => vitest.mocked(modalManager.show).mockClear());
+
+  it('timeline bulk "+" opens the unified collection modal with the selected ids', () => {
+    const action = getAssetBulkActions(((k: string) => k) as never).AddToAlbum;
+    action.onAction({ action, event: new Event('click') });
+    expect(modalManager.show).toHaveBeenCalledWith(AssetAddToCollectionModal, {
+      assetIds: ['x1', 'x2'],
+    });
+  });
+
+  it('single-photo viewer "+" opens the unified collection modal with the one id', () => {
+    const asset = factory.asset({ id: 'single-1' });
+    const action = getAssetActions(() => '', asset).AddToAlbum;
+    action.onAction({ action, event: new Event('click') });
+    expect(modalManager.show).toHaveBeenCalledWith(AssetAddToCollectionModal, { assetIds: ['single-1'] });
+  });
+
+  // #889: the viewer used to offer every personal album for a space photo the caller does not own.
+  // The server can only ever accept those as #764 contributions into an album linked to the space,
+  // so an unrestricted picker guaranteed "assets cannot be added to the album".
+  describe('single-photo viewer "+" on a space surface', () => {
+    // `authManager.authenticated` — and with it the ownership check — is false unless BOTH the
+    // user and the preferences are set, so setting only the user would make every case look
+    // non-owned and the assertions unfalsifiable.
+    beforeEach(() => authManager.setPreferences(factory.preferences()));
+    afterEach(() => authManager.reset());
+
+    it('opens the same picker as the timeline when a space editor opens a photo they do not own (#1119)', () => {
+      authManager.setUser(factory.user({ id: 'editor-1' }));
+      const asset = factory.asset({ id: 'not-mine', ownerId: 'someone-else' });
+
+      const action = getAssetActions(() => '', asset, undefined, {
+        space: { id: 'space-1', canWrite: true },
+      }).AddToAlbum;
+      action.onAction({ action, event: new Event('click') });
+
+      expect(action.$if?.()).toBe(true);
+      expect(modalManager.show).toHaveBeenCalledWith(AssetAddToCollectionModal, {
+        assetIds: ['not-mine'],
+      });
+    });
+
+    it('leaves the picker unrestricted for a photo the space editor owns', () => {
+      authManager.setUser(factory.user({ id: 'editor-1' }));
+      const asset = factory.asset({ id: 'mine', ownerId: 'editor-1' });
+
+      const action = getAssetActions(() => '', asset, undefined, {
+        space: { id: 'space-1', canWrite: true },
+      }).AddToAlbum;
+      action.onAction({ action, event: new Event('click') });
+
+      expect(action.$if?.()).toBe(true);
+      expect(modalManager.show).toHaveBeenCalledWith(AssetAddToCollectionModal, {
+        assetIds: ['mine'],
+      });
+    });
+
+    it('hides the action for a space viewer looking at a photo they do not own', () => {
+      authManager.setUser(factory.user({ id: 'viewer-1' }));
+      const asset = factory.asset({ id: 'not-mine', ownerId: 'someone-else' });
+
+      const action = getAssetActions(() => '', asset, undefined, {
+        space: { id: 'space-1', canWrite: false },
+      }).AddToAlbum;
+
+      expect(action.$if?.()).toBe(false);
+    });
+
+    it('keeps the action off a space surface for a photo the user does not own', () => {
+      // Partner-shared assets legitimately reach the caller's own album through
+      // Permission.AssetShare, which the viewer cannot evaluate — so it must not gate on ownership
+      // outside a space.
+      authManager.setUser(factory.user({ id: 'partner-of-owner' }));
+      const asset = factory.asset({ id: 'partners-photo', ownerId: 'the-partner' });
+
+      const action = getAssetActions(() => '', asset).AddToAlbum;
+      action.onAction({ action, event: new Event('click') });
+
+      expect(action.$if?.()).toBe(true);
+      expect(modalManager.show).toHaveBeenCalledWith(AssetAddToCollectionModal, {
+        assetIds: ['partners-photo'],
+      });
+    });
+  });
+});
+
+// #853: the bulk share action (immich-31976 turned it into an ActionItem) must send only the owned
+// subset — the server rejects the whole request if it names one asset the caller does not own.
+describe('bulk CreateSharedLink action', () => {
+  const selection = assetMultiSelectManager as unknown as { ownedAssets?: { id: string }[] };
+
+  beforeEach(() => {
+    vitest.mocked(modalManager.show).mockClear();
+    vitest.mocked(toastManager.warning).mockClear();
+    authManager.setPreferences(factory.preferences());
+    authManager.setUser(factory.user({ id: 'me' }));
+  });
+  afterEach(() => {
+    authManager.reset();
+    delete selection.ownedAssets;
+  });
+
+  it('shares only the owned assets and reports how many were left out', async () => {
+    selection.ownedAssets = [{ id: 'x1' }];
+    const action = getAssetBulkActions(((k: string) => k) as never).CreateSharedLink;
+    await action.onAction({ action, event: new Event('click') });
+    expect(modalManager.show).toHaveBeenCalledWith(SharedLinkCreateModal, { assetIds: ['x1'], excludedCount: 1 });
+  });
+
+  it('warns instead of opening the modal when nothing in the selection is owned', async () => {
+    selection.ownedAssets = [];
+    const action = getAssetBulkActions(((k: string) => k) as never).CreateSharedLink;
+    await action.onAction({ action, event: new Event('click') });
+    expect(modalManager.show).not.toHaveBeenCalled();
+    expect(toastManager.warning).toHaveBeenCalledWith('shared_link_nothing_owned_to_share');
+  });
+});
+
+// #734: SelectionToolbar resolves which of a mixed selection a space Owner/Editor may edit and hands
+// it to the bulk Tag action (immich-31976 turned TagAction.svelte into this ActionItem).
+describe('bulk Tag action', () => {
+  const selection = assetMultiSelectManager as unknown as { isAllUserOwned?: boolean };
+  const tagAction = (options?: { editableSelectedAssetIds?: string[] }) =>
+    getAssetBulkActions(((k: string) => k) as never, undefined, options).Tag;
+
+  beforeEach(() => {
+    vitest.mocked(modalManager.show).mockClear();
+    vitest.mocked(toastManager.warning).mockClear();
+    authManager.setPreferences(factory.preferences({ tags: { enabled: true, sidebarWeb: false } }));
+    authManager.setUser(factory.user({ id: 'me' }));
+    selection.isAllUserOwned = false;
+  });
+  afterEach(() => {
+    authManager.reset();
+    delete selection.isAllUserOwned;
+  });
+
+  it('never opens the tag modal when a mixed selection resolves to nothing editable', async () => {
+    const action = tagAction({ editableSelectedAssetIds: [] });
+    expect(action.$if?.()).toBe(false);
+    await action.onAction({ action, event: new Event('click') });
+    expect(modalManager.show).not.toHaveBeenCalled();
+  });
+
+  it('sends only the editable subset when the selection is mixed', async () => {
+    const action = tagAction({ editableSelectedAssetIds: ['x1'] });
+    expect(action.$if?.()).toBe(true);
+    await action.onAction({ action, event: new Event('click') });
+    expect(modalManager.show).toHaveBeenCalledWith(AssetTagModal, { assetIds: ['x1'] });
+    expect(toastManager.warning).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the all-owned behaviour on surfaces that do not resolve editability', async () => {
+    selection.isAllUserOwned = true;
+    const action = tagAction();
+    expect(action.$if?.()).toBe(true);
+    await action.onAction({ action, event: new Event('click') });
+    expect(modalManager.show).toHaveBeenCalledWith(AssetTagModal, { assetIds: ['x1', 'x2'] });
+  });
+});
+
+describe('favorite actions — per-user, un-gated from ownership (#763 slice 5)', () => {
+  let emitSpy: ReturnType<typeof vitest.spyOn>;
+
+  beforeEach(() => {
+    authManager.reset();
+    setSharedLink(undefined);
+    emitSpy = vitest.spyOn(eventManager, 'emit');
+  });
+
+  afterEach(() => {
+    emitSpy.mockRestore();
+    authManager.reset();
+    setSharedLink(undefined);
+  });
+
+  it('shows Favorite to an authenticated NON-OWNER when not yet favorited by them', () => {
+    const ownerId = 'owner';
+    const user = factory.user({ id: 'non-owner' });
+    authManager.setPreferences(factory.preferences());
+    authManager.setUser(user);
+    const asset = factory.asset({ ownerId, isFavorite: false });
+
+    const assetActions = getAssetActions(() => '', asset);
+
+    expect(assetActions.Favorite.$if?.()).toBe(true);
+    expect(assetActions.Unfavorite.$if?.()).toBe(false);
+  });
+
+  it('shows Unfavorite to a non-owner who HAS favorited (viewer state, not owner state)', () => {
+    const ownerId = 'owner';
+    const user = factory.user({ id: 'non-owner' });
+    authManager.setPreferences(factory.preferences());
+    authManager.setUser(user);
+    const asset = factory.asset({ ownerId, isFavorite: true });
+
+    const assetActions = getAssetActions(() => '', asset);
+
+    expect(assetActions.Unfavorite.$if?.()).toBe(true);
+    expect(assetActions.Favorite.$if?.()).toBe(false);
+  });
+
+  it('owner behavior unchanged (regression)', () => {
+    const ownerId = 'owner';
+    const user = factory.user({ id: ownerId });
+    authManager.setPreferences(factory.preferences());
+    authManager.setUser(user);
+
+    const notFavorited = factory.asset({ ownerId, isFavorite: false });
+    const notFavoritedActions = getAssetActions(() => '', notFavorited);
+    expect(notFavoritedActions.Favorite.$if?.()).toBe(true);
+    expect(notFavoritedActions.Unfavorite.$if?.()).toBe(false);
+
+    const favorited = factory.asset({ ownerId, isFavorite: true });
+    const favoritedActions = getAssetActions(() => '', favorited);
+    expect(favoritedActions.Favorite.$if?.()).toBe(false);
+    expect(favoritedActions.Unfavorite.$if?.()).toBe(true);
+  });
+
+  it('shared-link session: neither action available (and thus the f shortcut is inert)', () => {
+    const user = factory.user();
+    authManager.setPreferences(factory.preferences());
+    authManager.setUser(user);
+    setSharedLink(factory.sharedLink());
+
+    const notFavorited = factory.asset({ ownerId: user.id, isFavorite: false });
+    const notFavoritedActions = getAssetActions(() => '', notFavorited);
+    expect(notFavoritedActions.Favorite.$if?.()).toBe(false);
+    expect(notFavoritedActions.Unfavorite.$if?.()).toBe(false);
+
+    const favorited = factory.asset({ ownerId: user.id, isFavorite: true });
+    const favoritedActions = getAssetActions(() => '', favorited);
+    expect(favoritedActions.Favorite.$if?.()).toBe(false);
+    expect(favoritedActions.Unfavorite.$if?.()).toBe(false);
+  });
+
+  it('handleFavorite calls the canonical endpoint and emits a flipped AssetUpdate', async () => {
+    const $t = vitest.fn().mockReturnValue('formatter');
+    vitest.mocked(getFormatter).mockResolvedValue($t);
+    vitest.mocked(updateAssetFavorites).mockResolvedValue(undefined as never);
+
+    const ownerId = 'owner';
+    const user = factory.user({ id: 'non-owner' });
+    authManager.setPreferences(factory.preferences());
+    authManager.setUser(user);
+    const asset = factory.asset({ id: 'asset-1', ownerId, isFavorite: false });
+
+    const assetActions = getAssetActions(() => '', asset);
+    await assetActions.Favorite.onAction({ action: assetActions.Favorite, event: new Event('click') });
+
+    expect(updateAssetFavorites).toHaveBeenCalledWith({
+      assetFavoriteUpdateDto: { ids: [asset.id], isFavorite: true },
+    });
+    expect(emitSpy).toHaveBeenCalledWith('AssetUpdate', expect.objectContaining({ id: asset.id, isFavorite: true }));
+    expect(updateAsset).not.toHaveBeenCalled();
+  });
+
+  it('handleUnfavorite mirrors with isFavorite: false', async () => {
+    const $t = vitest.fn().mockReturnValue('formatter');
+    vitest.mocked(getFormatter).mockResolvedValue($t);
+    vitest.mocked(updateAssetFavorites).mockResolvedValue(undefined as never);
+
+    const ownerId = 'owner';
+    const user = factory.user({ id: 'non-owner' });
+    authManager.setPreferences(factory.preferences());
+    authManager.setUser(user);
+    const asset = factory.asset({ id: 'asset-1', ownerId, isFavorite: true });
+
+    const assetActions = getAssetActions(() => '', asset);
+    await assetActions.Unfavorite.onAction({ action: assetActions.Unfavorite, event: new Event('click') });
+
+    expect(updateAssetFavorites).toHaveBeenCalledWith({
+      assetFavoriteUpdateDto: { ids: [asset.id], isFavorite: false },
+    });
+    expect(emitSpy).toHaveBeenCalledWith('AssetUpdate', expect.objectContaining({ id: asset.id, isFavorite: false }));
+    expect(updateAsset).not.toHaveBeenCalled();
+  });
+
+  it('on endpoint error, no AssetUpdate is emitted (state untouched)', async () => {
+    const $t = vitest.fn().mockReturnValue('formatter');
+    vitest.mocked(getFormatter).mockResolvedValue($t);
+    vitest.mocked(updateAssetFavorites).mockRejectedValue(new Error('network error'));
+
+    const ownerId = 'owner';
+    const user = factory.user({ id: 'non-owner' });
+    authManager.setPreferences(factory.preferences());
+    authManager.setUser(user);
+    const asset = factory.asset({ id: 'asset-1', ownerId, isFavorite: false });
+
+    const assetActions = getAssetActions(() => '', asset);
+    await assetActions.Favorite.onAction({ action: assetActions.Favorite, event: new Event('click') });
+
+    expect(emitSpy).not.toHaveBeenCalledWith('AssetUpdate', expect.anything());
+  });
+});

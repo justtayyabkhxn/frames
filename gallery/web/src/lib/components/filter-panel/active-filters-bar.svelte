@@ -1,0 +1,351 @@
+<script lang="ts">
+  import { Icon } from '@immich/ui';
+  import {
+    mdiAccount,
+    mdiAccountOutline,
+    mdiCalendar,
+    mdiCalendarRange,
+    mdiCamera,
+    mdiCameraIris,
+    mdiClose,
+    mdiFileOutline,
+    mdiFolderMultipleImage,
+    mdiHeart,
+    mdiHeartOutline,
+    mdiImage,
+    mdiImageAlbum,
+    mdiImageMultipleOutline,
+    mdiMagnify,
+    mdiMapMarker,
+    mdiOcr,
+    mdiPlus,
+    mdiStar,
+    mdiTag,
+    mdiTextSearch,
+    mdiVideo,
+  } from '@mdi/js';
+  import { t, type Translations } from 'svelte-i18n';
+  import type { FilterState, PinnedFilterChip } from './filter-panel';
+
+  const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+  interface Props {
+    filters: FilterState;
+    resultCount?: number;
+    personNames?: Map<string, string>;
+    tagNames?: Map<string, string>;
+    albumNames?: Map<string, string>;
+    ownerNames?: Map<string, string>;
+    onRemoveFilter: (type: string, id?: string) => void;
+    onClearAll: () => void;
+    searchQuery?: string;
+    onClearSearch?: () => void;
+    embedded?: boolean;
+    /**
+    When provided (and there are results), shows an "Add all N to…" action that hands the current
+    filter result off to a collection picker. Surfaces where adding the visible assets to an
+    album/space doesn't apply (tags, trash, locked, partners) simply pass no handler.
+    */
+    onAddAllToCollection?: () => void;
+    /** Remembered choices, shown first; Clear all leaves them. */
+    pinned?: PinnedFilterChip[];
+  }
+
+  let {
+    filters,
+    resultCount,
+    personNames,
+    tagNames,
+    albumNames,
+    ownerNames,
+    onRemoveFilter,
+    onClearAll,
+    searchQuery = '',
+    onClearSearch,
+    embedded = false,
+    onAddAllToCollection,
+    pinned = [],
+  }: Props = $props();
+
+  interface Chip {
+    type: string;
+    id?: string;
+    icon: string;
+    label?: string;
+    labelKey?: Translations;
+    labelValues?: Record<string, string | number>;
+  }
+
+  interface ChipPill {
+    label: string;
+    icon: string;
+    title?: string;
+    onRemove: () => void;
+    testId: string;
+    closeTestId: string;
+  }
+
+  function formatDateOnly(value: string): string {
+    return DATE_FORMATTER.format(new Date(`${value}T00:00:00.000Z`));
+  }
+
+  function buildCustomDateLabel(
+    dateAfter: string | undefined,
+    dateBefore: string | undefined,
+  ): Pick<Chip, 'label' | 'labelKey' | 'labelValues'> | undefined {
+    if (dateAfter && dateBefore) {
+      return { label: `${formatDateOnly(dateAfter)} - ${formatDateOnly(dateBefore)}` };
+    }
+    if (dateAfter) {
+      return { labelKey: 'filter_chip_after', labelValues: { date: formatDateOnly(dateAfter) } };
+    }
+    if (dateBefore) {
+      return { labelKey: 'filter_chip_before', labelValues: { date: formatDateOnly(dateBefore) } };
+    }
+  }
+
+  let chips = $derived.by(() => {
+    const result: Chip[] = [];
+
+    // Person chips (one per selected person)
+    for (const personId of filters.personIds) {
+      const name = personNames?.get(personId) ?? personId;
+      result.push({ type: 'person', id: personId, icon: mdiAccount, label: name });
+    }
+
+    // Location chip (city + state + country fold into ONE chip — getActiveFilterCount already
+    // counts all three as a single filter, so all three must render — and clear — together)
+    const locationParts = [filters.city, filters.state, filters.country].filter(Boolean);
+    if (locationParts.length > 0) {
+      result.push({ type: 'location', icon: mdiMapMarker, label: locationParts.join(', ') });
+    }
+
+    // Camera chip (make + model fold into ONE chip — getActiveFilterCount counts them once).
+    // Render whenever EITHER is present: a model-only asset (no make) still applies a ?model=
+    // filter server-side, so it must surface a removable chip rather than being invisible.
+    const cameraParts = [filters.make, filters.model].filter(Boolean);
+    if (cameraParts.length > 0) {
+      result.push({ type: 'camera', icon: mdiCamera, label: cameraParts.join(' ') });
+    }
+
+    // Tag chips (one per selected tag)
+    for (const tagId of filters.tagIds) {
+      const name = tagNames?.get(tagId) ?? tagId;
+      result.push({ type: 'tag', id: tagId, icon: mdiTag, label: name });
+    }
+
+    // Rating chip
+    if (filters.rating !== undefined) {
+      result.push({
+        type: 'rating',
+        icon: mdiStar,
+        labelKey: 'filter_chip_rating',
+        // A number, not a string: the ICU plural in `filter_chip_rating` needs a real numeric
+        // value to pick the "one"/"other" category (matches `filter_result_count`'s `count`).
+        labelValues: { rating: filters.rating },
+      });
+    }
+
+    // Media type chip
+    if (filters.mediaType === 'image') {
+      result.push({ type: 'mediaType', icon: mdiImage, labelKey: 'photos_only' });
+    } else if (filters.mediaType === 'video') {
+      result.push({ type: 'mediaType', icon: mdiVideo, labelKey: 'videos_only' });
+    }
+
+    // Favorites chip (isFavorite === false is also an active, counted filter and must render too —
+    // it silently had no chip and no Clear-all before this)
+    if (filters.isFavorite === true) {
+      result.push({ type: 'favorites', icon: mdiHeart, labelKey: 'favorites' });
+    } else if (filters.isFavorite === false) {
+      result.push({ type: 'favorites', icon: mdiHeartOutline, labelKey: 'filter_not_favorite' });
+    }
+
+    // Albums chip
+    if (filters.isNotInAlbum === true) {
+      result.push({ type: 'albums', icon: mdiImageAlbum, labelKey: 'filter_has_no_album' });
+    }
+    if (filters.isInAlbum === true) {
+      result.push({ type: 'albums', icon: mdiImageMultipleOutline, labelKey: 'filter_has_album' });
+    }
+
+    // Text filter chips
+    if (filters.description?.trim()) {
+      result.push({ type: 'description', icon: mdiTextSearch, label: filters.description.trim() });
+    }
+    if (filters.originalFileName?.trim()) {
+      result.push({ type: 'filename', icon: mdiFileOutline, label: filters.originalFileName.trim() });
+    }
+    if (filters.ocr?.trim()) {
+      result.push({ type: 'ocr', icon: mdiOcr, label: filters.ocr.trim() });
+    }
+
+    // Timeline chip
+    const customDateLabel = buildCustomDateLabel(filters.dateAfter, filters.dateBefore);
+    if (customDateLabel) {
+      result.push({ type: 'timeline', icon: mdiCalendarRange, ...customDateLabel });
+    } else if (filters.selectedYear !== undefined) {
+      const label =
+        filters.selectedMonth === undefined
+          ? String(filters.selectedYear)
+          : `${MONTH_LABELS[filters.selectedMonth - 1]} ${filters.selectedYear}`;
+      result.push({ type: 'timeline', icon: mdiCalendar, label });
+    }
+
+    // Lens chip (appended: distinct dimension from the camera make/model chip above)
+    if (filters.lensModel) {
+      result.push({ type: 'lens', icon: mdiCameraIris, label: filters.lensModel });
+    }
+
+    // Album chip (resolved to a name via the albumNames prop — falls back to the raw id, same
+    // pattern as personNames/tagNames)
+    if (filters.albumId) {
+      const name = albumNames?.get(filters.albumId) ?? filters.albumId;
+      result.push({ type: 'album', id: filters.albumId, icon: mdiFolderMultipleImage, label: name });
+    }
+
+    // Owner chip (resolved to a name via the ownerNames prop — falls back to the raw id)
+    if (filters.ownerId) {
+      const name = ownerNames?.get(filters.ownerId) ?? filters.ownerId;
+      result.push({ type: 'owner', id: filters.ownerId, icon: mdiAccountOutline, label: name });
+    }
+
+    return result;
+  });
+
+  let hasActiveFilters = $derived(chips.length > 0 || searchQuery.trim().length > 0);
+  let showAddAll = $derived(!!onAddAllToCollection && hasActiveFilters && resultCount !== undefined && resultCount > 0);
+  let showCountSeparator = $derived(resultCount !== undefined && (pinned.length > 0 || hasActiveFilters));
+</script>
+
+{#snippet chipPill({ label, icon, title, onRemove, testId, closeTestId }: ChipPill)}
+  <span
+    class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200/70 bg-gray-100 py-1 pr-1 pl-2.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:border-white/10 dark:bg-white/6 dark:text-gray-200 dark:hover:bg-white/10"
+    {title}
+    data-testid={testId}
+  >
+    <Icon {icon} size="14" class="text-gray-500 dark:text-gray-400" />
+    <span>{label}</span>
+    <button
+      type="button"
+      class="flex size-[18px] items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-300/70 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-white/10 dark:hover:text-gray-200"
+      onclick={onRemove}
+      aria-label={$t('filter_remove_chip', { values: { label } })}
+      data-testid={closeTestId}
+    >
+      <Icon icon={mdiClose} size="12" />
+    </button>
+  </span>
+{/snippet}
+
+<div
+  class="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2 {embedded
+    ? ''
+    : 'border-b border-gray-200/60 px-4 py-2.5 dark:border-white/10'}"
+  data-testid="active-filters-bar"
+>
+  <!--
+    Below `sm` the chips are one horizontally-scrollable row with the actions underneath, so the bar
+    is a fixed two rows however many filters are on. It used to wrap to roughly a row per chip, and
+    on a phone that ate the screen the search results were supposed to be using (#1028): four rows
+    for a single search chip, six once a few filters were added.
+
+    `sm:contents` dissolves this wrapper from `sm` up, leaving every desktop viewport with exactly
+    the single wrapping row it has always had.
+  -->
+  <div class="flex scrollbar-hidden items-center gap-2 overflow-x-auto pe-1 sm:contents">
+    {#if resultCount !== undefined}
+      <span class="shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400" data-testid="result-count">
+        {$t('filter_result_count', { values: { count: resultCount } })}
+      </span>
+    {/if}
+
+    {#if showCountSeparator}
+      <span class="size-1 shrink-0 rounded-full bg-gray-400/60 dark:bg-gray-500/60" aria-hidden="true"></span>
+    {/if}
+
+    {#if searchQuery.trim()}
+      <span
+        class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-immich-primary/30 bg-immich-primary/10 py-1 pr-1 pl-2.5 text-xs font-medium text-immich-primary dark:border-immich-dark-primary/30 dark:bg-immich-dark-primary/10 dark:text-immich-dark-primary"
+        data-testid="search-chip"
+      >
+        <Icon icon={mdiMagnify} size="14" />
+        <span>{searchQuery}</span>
+        <button
+          type="button"
+          class="flex size-[18px] items-center justify-center rounded-full text-immich-primary/60 transition-colors hover:bg-immich-primary/15 hover:text-immich-primary dark:text-immich-dark-primary/60 dark:hover:bg-immich-dark-primary/20 dark:hover:text-immich-dark-primary"
+          onclick={() => onClearSearch?.()}
+          aria-label={$t('filter_sheet_picker_clear_search')}
+          data-testid="search-chip-close"
+        >
+          <Icon icon={mdiClose} size="12" />
+        </button>
+      </span>
+    {/if}
+
+    {#each pinned as chip (chip.type)}
+      {@render chipPill({
+        label: $t(chip.labelKey),
+        icon: chip.icon,
+        title: $t(chip.titleKey),
+        onRemove: chip.onRemove,
+        testId: 'pinned-chip',
+        closeTestId: 'pinned-chip-close',
+      })}
+    {/each}
+
+    {#each chips as chip (`${chip.type}-${chip.id ?? chip.labelKey ?? chip.label}`)}
+      {@render chipPill({
+        label: chip.labelKey ? $t(chip.labelKey, { values: chip.labelValues }) : (chip.label ?? ''),
+        icon: chip.icon,
+        onRemove: () => onRemoveFilter(chip.type, chip.id),
+        testId: 'active-chip',
+        closeTestId: 'chip-close',
+      })}
+    {/each}
+  </div>
+
+  {#if showAddAll || hasActiveFilters}
+    <!-- `sm:ms-auto` reproduces the `ml-auto` these two buttons used to carry individually: from
+         `sm` up the chips are siblings again, so pushing the group right right-aligns the actions
+         exactly as before. -->
+    <div class="flex items-center gap-2 sm:ms-auto">
+      {#if showAddAll}
+        <button
+          type="button"
+          class="inline-flex min-w-0 items-center gap-1.5 rounded-full bg-immich-primary/10 py-1 ps-2.5 pe-3.5 text-xs font-semibold text-immich-primary transition-colors hover:bg-immich-primary/16 dark:bg-immich-dark-primary/10 dark:text-immich-dark-primary dark:hover:bg-immich-dark-primary/20"
+          onclick={() => onAddAllToCollection?.()}
+          data-testid="add-all-to-collection"
+        >
+          <Icon icon={mdiPlus} size="15" class="shrink-0" />
+          <!-- Truncated rather than swapped for a shorter string: the accessible name then stays
+               the full label at every width, so what a screen reader announces still matches what
+               is on screen (WCAG 2.5.3). -->
+          <span class="truncate">{$t('add_all_search_results', { values: { count: resultCount ?? 0 } })}</span>
+        </button>
+      {/if}
+
+      {#if hasActiveFilters}
+        <button
+          type="button"
+          class="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-immich-primary transition-colors hover:bg-immich-primary/10 dark:text-immich-dark-primary dark:hover:bg-immich-dark-primary/10"
+          onclick={() => {
+            onClearAll();
+            if (searchQuery) {
+              onClearSearch?.();
+            }
+          }}
+          data-testid="clear-all-btn"
+        >
+          {$t('clear_all')}
+        </button>
+      {/if}
+    </div>
+  {/if}
+</div>

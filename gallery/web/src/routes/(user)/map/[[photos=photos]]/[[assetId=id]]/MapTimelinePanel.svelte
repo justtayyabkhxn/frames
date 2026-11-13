@@ -1,0 +1,209 @@
+<script lang="ts">
+  import ActionMenuItem from '#lib/components/ActionMenuItem.svelte';
+  import { createFilterState, type FilterState } from '#lib/components/filter-panel/filter-panel.ts';
+  import ButtonContextMenu from '#lib/components/shared-components/context-menu/ButtonContextMenu.svelte';
+  import type { SelectionBBox } from '#lib/components/shared-components/map/types.ts';
+  import AssetSelectControlBar from '#lib/components/timeline/AssetSelectControlBar.svelte';
+  import Timeline from '#lib/components/timeline/Timeline.svelte';
+  import TimelineRouteGroupingBar from '#lib/components/timeline/TimelineRouteGroupingBar.svelte';
+  import ChangeDate from '#lib/components/timeline/actions/ChangeDateAction.svelte';
+  import ChangeDescription from '#lib/components/timeline/actions/ChangeDescriptionAction.svelte';
+  import ChangeLocation from '#lib/components/timeline/actions/ChangeLocationAction.svelte';
+  import DeleteAssets from '#lib/components/timeline/actions/DeleteAssetsAction.svelte';
+  import DownloadAction from '#lib/components/timeline/actions/DownloadAction.svelte';
+  import FavoriteAction from '#lib/components/timeline/actions/FavoriteAction.svelte';
+  import LinkLivePhotoAction from '#lib/components/timeline/actions/LinkLivePhotoAction.svelte';
+  import SelectAllAssets from '#lib/components/timeline/actions/SelectAllAction.svelte';
+  import SetVisibilityAction from '#lib/components/timeline/actions/SetVisibilityAction.svelte';
+  import Portal from '#lib/elements/Portal.svelte';
+  import { timelineGroupingProps } from '#lib/gallery/filtered-timeline/timeline-grouping.svelte.ts';
+  import { assetMultiSelectManager } from '#lib/managers/asset-multi-select-manager.svelte.ts';
+  import { TimelineManager } from '#lib/managers/timeline-manager/timeline-manager.svelte.ts';
+  import { getAssetBulkActions } from '#lib/services/asset.service.ts';
+  import { getStackBulkActions } from '#lib/services/stack.service.ts';
+  import { type OnLink, type OnUnlink } from '#lib/utils/actions.ts';
+  import { buildMapTimelineOptions } from '#lib/utils/map-filter-options.ts';
+  import { clearTimelineTemporalFilter } from '#lib/utils/timeline-temporal-filters.ts';
+  import { ActionButton, CloseButton, CommandPaletteDefaultProvider, Icon } from '@immich/ui';
+  import { mdiDotsVertical, mdiImageMultiple } from '@mdi/js';
+  import { ceil, floor } from 'lodash-es';
+  import { t } from 'svelte-i18n';
+
+  interface Props {
+    bbox: SelectionBBox;
+    selectedClusterIds: Set<string>;
+    onClose: () => void;
+    spaceId?: string;
+    filters?: FilterState;
+    onFiltersChange?: (filters: FilterState) => void;
+  }
+
+  let {
+    bbox,
+    selectedClusterIds,
+    onClose,
+    spaceId,
+    filters = $bindable(createFilterState()),
+    onFiltersChange,
+  }: Props = $props();
+
+  let timelineManager = $state<TimelineManager>() as TimelineManager;
+
+  // The panel's OWN count, not the cluster selection's size (Task 10). The header used to be fed
+  // `selectedClusterIds.size` from the page — a click-time snapshot that no filter change ever
+  // recomputed, so it kept claiming "50 assets" over the five pins a rating filter had left. This
+  // is the count of what the panel actually lists: the server's bucket counts until a month loads,
+  // and the loaded assets (client-side `assetFilter` exclusions already applied) after.
+  const assetCount = $derived(timelineManager?.assetCount ?? 0);
+  const timelineGrouping = timelineGroupingProps(() => timelineManager, {
+    hideWhenEmpty: false,
+    lockWhileSelecting: true,
+  });
+  let selectedAssets = $derived(assetMultiSelectManager.assets);
+  let isLinkActionAvailable = $derived.by(() => {
+    const isLivePhoto = selectedAssets.length === 1 && !!selectedAssets[0].livePhotoVideoId;
+    const isLivePhotoCandidate =
+      selectedAssets.length === 2 &&
+      selectedAssets.some((asset) => asset.isImage) &&
+      selectedAssets.some((asset) => asset.isVideo);
+
+    return assetMultiSelectManager.isAllUserOwned && (isLivePhoto || isLivePhotoCandidate);
+  });
+
+  const handleLink: OnLink = ({ still, motion }) => {
+    timelineManager.removeAssets([motion.id]);
+    timelineManager.upsertAssets([still]);
+  };
+
+  const handleUnlink: OnUnlink = ({ still, motion }) => {
+    timelineManager.upsertAssets([motion]);
+    timelineManager.upsertAssets([still]);
+  };
+
+  const handleSetVisibility = (assetIds: string[]) => {
+    timelineManager.removeAssets(assetIds);
+    assetMultiSelectManager.clear();
+  };
+
+  const handleEscape = () => {
+    assetMultiSelectManager.clear();
+  };
+
+  const clearTemporalFilter = () => {
+    filters = clearTimelineTemporalFilter(filters);
+    timelineGrouping.temporalAnchor = undefined;
+    // #767 fresh instance: this used to only mutate the bound `filters`, leaving the map page's
+    // URL-backed from/to params in place — a reload, Back, or shared link brought the "cleared"
+    // filter right back. Mirror the page's other mutation sites (FilterPanel's onFiltersChange).
+    onFiltersChange?.(filters);
+  };
+
+  const timelineBoundingBox = $derived(
+    `${floor(bbox.west, 6)},${floor(bbox.south, 6)},${ceil(bbox.east, 6)},${ceil(bbox.north, 6)}`,
+  );
+
+  // No $mapSettings here: the cluster panel is scoped by the active filters and nothing else, so it
+  // returns exactly the assets behind the pins. See buildMapTimelineOptions.
+  const timelineOptions = $derived.by(() => {
+    return {
+      ...buildMapTimelineOptions(filters, timelineBoundingBox, selectedClusterIds, spaceId),
+      withStacked: true,
+      grouping: timelineGrouping.grouping,
+    };
+  });
+
+  $effect.pre(() => {
+    void timelineOptions;
+    assetMultiSelectManager.clear();
+  });
+</script>
+
+<aside class="flex size-full flex-col overflow-hidden bg-immich-bg contain-content dark:bg-immich-dark-bg">
+  <div class="flex items-center justify-between border-b border-gray-200 pe-1 pb-1 dark:border-immich-dark-gray">
+    <div class="flex items-center gap-2">
+      <Icon icon={mdiImageMultiple} size="20" />
+      <p
+        class="text-sm font-medium text-immich-fg dark:text-immich-dark-fg"
+        data-testid="map-panel-asset-count"
+        data-asset-count={assetCount}
+      >
+        {$t('assets_count', { values: { count: assetCount } })}
+      </p>
+    </div>
+    <CloseButton onclick={onClose} />
+  </div>
+
+  <TimelineRouteGroupingBar
+    class="px-2 py-1 md:flex"
+    {...timelineGrouping.barProps}
+    {filters}
+    resultCount={assetCount}
+    onClearTemporalFilter={clearTemporalFilter}
+  />
+
+  <div class="min-h-0 flex-1">
+    <Timeline
+      bind:timelineManager
+      enableRouting={false}
+      options={timelineOptions}
+      onEscape={handleEscape}
+      assetInteraction={assetMultiSelectManager}
+      showArchiveIcon
+      withStacked
+      {...timelineGrouping.timelineProps}
+    />
+  </div>
+</aside>
+
+{#if assetMultiSelectManager.selectionActive}
+  {const Actions = $derived(getAssetBulkActions($t))}
+  {const StackActions = $derived(getStackBulkActions($t))}
+  <CommandPaletteDefaultProvider name={$t('assets')} actions={Object.values(Actions)} />
+
+  <Portal target="body">
+    <AssetSelectControlBar>
+      <ActionButton action={Actions.CreateSharedLink} />
+      <SelectAllAssets {timelineManager} assetInteraction={assetMultiSelectManager} />
+      <ActionButton action={Actions.AddToAlbum} />
+
+      <FavoriteAction
+        removeFavorite={assetMultiSelectManager.isAllFavorite}
+        onFavorite={(ids, isFavorite) => timelineManager.update(ids, (asset) => (asset.isFavorite = isFavorite))}
+      />
+
+      {#if assetMultiSelectManager.isAllUserOwned}
+        <ButtonContextMenu icon={mdiDotsVertical} title={$t('menu')}>
+          <DownloadAction menuItem />
+          <ActionMenuItem action={StackActions.Stack} />
+          <ActionMenuItem action={StackActions.Unstack} />
+          {#if isLinkActionAvailable}
+            <LinkLivePhotoAction
+              menuItem
+              unlink={assetMultiSelectManager.assets.length === 1}
+              onLink={handleLink}
+              onUnlink={handleUnlink}
+            />
+          {/if}
+          <ChangeDate menuItem />
+          <ChangeDescription menuItem />
+          <ChangeLocation menuItem />
+          <ActionMenuItem action={Actions.Archive} />
+          <ActionMenuItem action={Actions.Unarchive} />
+          <ActionMenuItem action={Actions.Tag} />
+          <DeleteAssets
+            menuItem
+            onAssetDelete={(assetIds) => timelineManager.removeAssets(assetIds)}
+            onUndoDelete={(assets) => timelineManager.upsertAssets(assets)}
+          />
+          <SetVisibilityAction menuItem onVisibilitySet={handleSetVisibility} />
+          <hr />
+          <ActionMenuItem action={Actions.RegenerateThumbnailJob} />
+          <ActionMenuItem action={Actions.RefreshMetadataJob} />
+          <ActionMenuItem action={Actions.TranscodeVideoJob} />
+        </ButtonContextMenu>
+      {:else}
+        <DownloadAction />
+      {/if}
+    </AssetSelectControlBar>
+  </Portal>
+{/if}
