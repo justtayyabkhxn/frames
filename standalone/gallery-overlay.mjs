@@ -101,6 +101,7 @@ const EDITS = [
   ['web/src/app.html', 'To use Immich,', 'To use Frames,'],
   ['web/src/lib/components/layouts/AuthPageLayout.svelte', 'alt="Gallery logo"', 'alt="Frames logo"'],
   ['web/src/lib/components/shared-components/Logo.svelte', 'alt="Gallery logo"', 'alt="Frames logo"'],
+  ['web/src/lib/utils/handle-error.ts', '(Immich Server Error)', '(Frames error)'],
 ];
 
 /** Product names in translations; Frames is a single offline app, not "Immich" or "(Noodle) Gallery". */

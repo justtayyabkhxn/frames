@@ -15,6 +15,11 @@ import { registerSearch } from './search.mjs';
 
 const require = (f) => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), 'utf8'));
 const DEFAULTS = require('./config-defaults.json');
+// Offline: the map uses Frames' own basemap tiles (rendered locally from the place data), not an online style
+Object.assign(DEFAULTS.map, {
+  lightStyle: '/api/frames/map-style/light.json',
+  darkStyle: '/api/frames/map-style/dark.json',
+});
 const VIEWS = require('./config-views.json');
 const MEMORY_TYPES = [
   'on_this_day',
@@ -151,6 +156,34 @@ export function registerServer(router, ctx, A) {
     smartSearchHasCutoff: false,
     spatialScene: false,
     trash: true,
+  }));
+  /** MapLibre style over Frames' local raster tiles; dark inverts them. */
+  A.get('/frames/map-style/:theme', (req, { theme }) => ({
+    version: 8,
+    sources: {
+      frames: {
+        type: 'raster',
+        tiles: [`http://${req.headers.host}/apps/memories/api/map/tiles/{z}/{x}/{y}.png`],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      },
+    },
+    layers: [
+      {
+        id: 'background',
+        type: 'background',
+        paint: { 'background-color': theme.startsWith('dark') ? '#151515' : '#f2efe9' },
+      },
+      {
+        id: 'frames',
+        type: 'raster',
+        source: 'frames',
+        paint: theme.startsWith('dark')
+          ? { 'raster-brightness-min': 1, 'raster-brightness-max': 0.15, 'raster-saturation': -0.6 }
+          : {},
+      },
+    ],
   }));
   A.get('/server/version', () => ({ major, minor, patch, prerelease: 0, featureLevel: 0 }));
   A.get('/server/version-history', () => []);

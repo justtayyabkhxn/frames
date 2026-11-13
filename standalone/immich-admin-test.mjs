@@ -31,4 +31,10 @@ await api('PUT', '/api/jobs/library', { command: 'start' });
 assert.equal(scanned, 1);
 for (const p of ['/api/libraries', '/api/workflows', '/api/plugins/methods', '/api/admin/integrity/summary'])
   assert.ok(await api('GET', p), p);
+// Map: style and tiles come from Frames itself, nothing online
+const cfg = await api('GET', '/api/server/config');
+assert.equal(cfg.mapLightStyleUrl, '/api/frames/map-style/light.json');
+const style = await api('GET', '/api/frames/map-style/dark.json');
+assert.match(style.sources.frames.tiles[0], /^http:\/\/[^/]*\/apps\/memories\/api\/map\/tiles\//);
+assert.doesNotMatch(JSON.stringify(style), /openfreemap|openstreetmap\.org\/[^c]/);
 console.log('ok');

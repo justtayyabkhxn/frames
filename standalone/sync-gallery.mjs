@@ -27,13 +27,22 @@ const copy = (rel) =>
     filter: (p) => !SKIP.has(path.basename(p)),
   });
 
-// Replace sources but keep installed node_modules and build output, so a re-sync needs no reinstall
-for (const rel of ['web', 'packages/sdk', 'i18n', 'patches']) {
+/** Delete files under dest/rel that no longer exist in Gallery (folders stay, so open shells/editors don't block). */
+function prune(rel) {
   const dir = path.join(dest, rel);
-  if (fs.existsSync(dir))
-    for (const e of fs.readdirSync(dir))
-      if (!SKIP.has(e)) fs.rmSync(path.join(dir, e), { recursive: true, force: true });
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP.has(e.name)) continue;
+    const r = path.join(rel, e.name);
+    if (e.isDirectory()) prune(r);
+    else if (!fs.existsSync(path.join(src, r))) fs.rmSync(path.join(dest, r), { force: true });
+  }
+}
+
+// Overwrite sources in place, keeping installed node_modules and build output (no reinstall on re-sync)
+for (const rel of ['web', 'packages/sdk', 'i18n', 'patches']) {
   if (fs.existsSync(path.join(src, rel))) copy(rel);
+  prune(rel);
 }
 for (const rel of ['package.json', 'pnpm-lock.yaml', '.pnpmfile.cjs', '.npmrc', '.nvmrc'])
   if (fs.existsSync(path.join(src, rel))) copy(rel);
